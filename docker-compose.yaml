@@ -1,0 +1,78 @@
+version: '3'
+
+services:
+  base: &base
+    image: chatwoot/chatwoot:latest
+    env_file: .envinovai ## Change this file for customized env variables
+    volumes:
+      - ./data/storage:/app/storage
+
+  rails:
+    <<: *base
+    env_file: .envinovai ## Change this file for customized env variables
+    depends_on:
+      - postgres
+      - redis
+    ports:
+      - '127.0.0.1:4500:4500'
+    environment:
+      - NODE_ENV=production
+      - RAILS_ENV=production
+      - INSTALLATION_ENV=docker
+    entrypoint: docker/entrypoints/rails.sh
+    command: ['bundle', 'exec', 'rails', 's', '-p', '4500', '-b', '0.0.0.0']
+    restart: always
+
+  sidekiq:
+    <<: *base
+    env_file: .envinovai ## Change this file for customized env variables
+    depends_on:
+      - postgres
+      - redis
+    environment:
+      - NODE_ENV=production
+      - RAILS_ENV=production
+      - INSTALLATION_ENV=docker
+    command: ['bundle', 'exec', 'sidekiq', '-C', 'config/sidekiq.yml']
+    restart: always
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: always
+    ports:
+      - '127.0.0.1:5490:5432'
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_DB=chatwoot
+      - POSTGRES_USER=postgres
+      # Please provide your own password.
+      - POSTGRES_PASSWORD=invoAI@76825
+
+  redis:
+    image: redis:alpine
+    restart: always
+    command: redis-server --requirepass invoAI@76825
+    volumes:
+      - ./data/redis:/data
+    ports:
+      - '127.0.0.1:6390:6379'
+    environment:
+      - REDIS_PASSWORD=invoAI@76825
+
+  # Sistema de Workflows de Chatbot
+  chatbot-workflows:
+    build: ./workflows
+    ports:
+      - '127.0.0.1:3001:3001'
+    env_file: env-workflows
+    environment:
+      - CHATWOOT_BASE_URL=https://crm.inovaianalytics.com.br
+      - PORT=3001
+    volumes:
+      - ./workflows/chatbot-workflow-system.js:/app/chatbot-workflow-system.js
+      - ./data/workflows-logs:/app/logs
+    restart: unless-stopped
+    depends_on:
+      - postgres
+      - redis

@@ -1,0 +1,40 @@
+version: '3'
+
+services:
+  chatbot-workflows:
+    build: .
+    ports:
+      - "3001:3001"
+    environment:
+      - CHATWOOT_BASE_URL=https://crm.inovaianalytics.com.br
+      - CHATWOOT_API_TOKEN=${CHATWOOT_API_TOKEN}
+      - WHATSAPP_API_TOKEN=${WHATSAPP_API_TOKEN}
+      - WHATSAPP_PHONE_ID=${WHATSAPP_PHONE_ID}
+      - PORT=3001
+    volumes:
+      - ./workflows:/app/workflows
+      - ./logs:/app/logs
+    restart: unless-stopped
+    depends_on:
+      - redis-workflows
+
+  redis-workflows:
+    image: redis:alpine
+    ports:
+      - "6391:6379"
+    volumes:
+      - ./data/redis-workflows:/data
+    restart: unless-stopped
+    command: redis-server --requirepass invoAI@76825
+    environment:
+      - REDIS_PASSWORD=invoAI@76825
+
+  nginx-workflows:
+    image: nginx:alpine
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx-workflows.conf:/etc/nginx/conf.d/default.conf
+    depends_on:
+      - chatbot-workflows
+    restart: unless-stopped 

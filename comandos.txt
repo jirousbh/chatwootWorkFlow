@@ -1,0 +1,8 @@
+psql -h localhost -p 5490 -U postgres -W invoAI@76825 -d chatwoot #logar servidor psql
+
+https://crm.inovaianalytics.com.br/super_admin/installation_configs #endereço configurações especiais
+
+update installation_configs SET locked = false; #debloqueio de opções para white label
+
+para a api funcionar o nginx precisa da seguinte configuração dentro do headers:
+underscores_in_headers on;

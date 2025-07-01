@@ -1,0 +1,9 @@
+# Ignorar a pasta de dados
+/data/
+
+# Outras regras comuns
+node_modules/
+.env
+.env.*
+.DS_Store
+*.log 

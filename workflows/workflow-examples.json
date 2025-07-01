@@ -1,0 +1,170 @@
+{
+  "workflows": {
+    "fluxo_comercial_wizard": {
+      "name": "Fluxo Comercial Wizard",
+      "description": "Fluxo para captação de leads da Wizard",
+      "blocks": {
+        "bloco_1": {
+          "id": "bloco_1",
+          "name": "Início",
+          "message": "Oi {{nome}}, aqui é o Rafa da Wizard BH Buritis! 🌟\nVi que você se interessou pelos nossos cursos de inglês. Ainda tem vontade de aprender com a gente?",
+          "buttons": [
+            { "text": "Sim", "next_block": "bloco_2" },
+            { "text": "Quero saber mais", "next_block": "bloco_2" },
+            { "text": "Não", "next_block": "finalizar", "tag": "lead_frio" }
+          ]
+        },
+        "bloco_2": {
+          "id": "bloco_2",
+          "name": "Objetivo do Aluno",
+          "message": "Legal! Qual o seu principal objetivo com o inglês?",
+          "buttons": [
+            { "text": "✈️ Viagem", "next_block": "bloco_3a" },
+            { "text": "💼 Carreira", "next_block": "bloco_3b" },
+            { "text": "📚 Faculdade/intercâmbio", "next_block": "bloco_3c" },
+            { "text": "Outro", "next_block": "bloco_3d" }
+          ]
+        },
+        "bloco_3a": {
+          "id": "bloco_3a",
+          "name": "Objetivo - Viagem",
+          "message": "Perfeito! Para viagens, recomendamos nosso curso de inglês conversacional. Você tem alguma viagem planejada?",
+          "buttons": [
+            { "text": "Sim, tenho planos", "next_block": "bloco_4a", "tag": "viagem_planejada" },
+            { "text": "Ainda não, mas quero estar preparado", "next_block": "bloco_4b", "tag": "viagem_futura" }
+          ]
+        },
+        "bloco_3b": {
+          "id": "bloco_3b",
+          "name": "Objetivo - Carreira",
+          "message": "Excelente escolha! O inglês é fundamental para o mercado de trabalho. Qual sua área de atuação?",
+          "buttons": [
+            { "text": "Tecnologia", "next_block": "bloco_4c", "tag": "area_tech" },
+            { "text": "Administração", "next_block": "bloco_4d", "tag": "area_admin" },
+            { "text": "Outras áreas", "next_block": "bloco_4e", "tag": "area_outras" }
+          ]
+        },
+        "bloco_3c": {
+          "id": "bloco_3c",
+          "name": "Objetivo - Faculdade/Intercâmbio",
+          "message": "Ótimo! Para faculdade e intercâmbio, você precisará de um inglês mais acadêmico. Qual seu nível atual?",
+          "buttons": [
+            { "text": "Básico", "next_block": "bloco_4f", "tag": "nivel_basico" },
+            { "text": "Intermediário", "next_block": "bloco_4g", "tag": "nivel_intermediario" },
+            { "text": "Avançado", "next_block": "bloco_4h", "tag": "nivel_avancado" }
+          ]
+        },
+        "bloco_4a": {
+          "id": "bloco_4a",
+          "name": "Viagem Planejada",
+          "message": "Que legal! Para quando está planejada sua viagem? Isso nos ajuda a definir o melhor cronograma de estudos.",
+          "buttons": [
+            { "text": "Próximos 3 meses", "next_block": "bloco_5a", "tag": "urgencia_alta" },
+            { "text": "3-6 meses", "next_block": "bloco_5b", "tag": "urgencia_media" },
+            { "text": "Mais de 6 meses", "next_block": "bloco_5c", "tag": "urgencia_baixa" }
+          ]
+        },
+        "bloco_5a": {
+          "id": "bloco_5a",
+          "name": "Agendamento Urgente",
+          "message": "Perfeito! Com essa urgência, vou te conectar com nossa equipe de vendas agora mesmo. Qual o melhor horário para um contato hoje?",
+          "buttons": [
+            { "text": "Manhã (9h-12h)", "next_block": "finalizar", "tag": "contato_manha" },
+            { "text": "Tarde (14h-17h)", "next_block": "finalizar", "tag": "contato_tarde" },
+            { "text": "Noite (18h-20h)", "next_block": "finalizar", "tag": "contato_noite" }
+          ]
+        }
+      }
+    },
+    "fluxo_suporte_tecnico": {
+      "name": "Fluxo de Suporte Técnico",
+      "description": "Fluxo para atendimento de suporte técnico",
+      "blocks": {
+        "inicio": {
+          "id": "inicio",
+          "name": "Bem-vindo ao Suporte",
+          "message": "Olá {{nome}}! 👋\nComo posso te ajudar hoje?",
+          "buttons": [
+            { "text": "🔧 Problema técnico", "next_block": "problema_tecnico" },
+            { "text": "❓ Dúvida sobre produto", "next_block": "duvida_produto" },
+            { "text": "📋 Solicitar orçamento", "next_block": "orcamento" }
+          ]
+        },
+        "problema_tecnico": {
+          "id": "problema_tecnico",
+          "name": "Problema Técnico",
+          "message": "Entendo! Vamos resolver isso. Qual tipo de problema você está enfrentando?",
+          "buttons": [
+            { "text": "Sistema não funciona", "next_block": "sistema_offline", "tag": "problema_sistema" },
+            { "text": "Erro de login", "next_block": "erro_login", "tag": "problema_login" },
+            { "text": "Lentidão", "next_block": "lentidao", "tag": "problema_performance" }
+          ]
+        },
+        "sistema_offline": {
+          "id": "sistema_offline",
+          "name": "Sistema Offline",
+          "message": "Vou verificar o status do sistema agora mesmo. Enquanto isso, pode me dizer:\n\n1. Qual navegador está usando?\n2. Aparece alguma mensagem de erro?",
+          "buttons": [
+            { "text": "Chrome", "next_block": "diagnostico_chrome", "tag": "navegador_chrome" },
+            { "text": "Firefox", "next_block": "diagnostico_firefox", "tag": "navegador_firefox" },
+            { "text": "Outro", "next_block": "diagnostico_outro", "tag": "navegador_outro" }
+          ]
+        }
+      }
+    },
+    "fluxo_vendas_ecommerce": {
+      "name": "Fluxo de Vendas E-commerce",
+      "description": "Fluxo para vendas online",
+      "blocks": {
+        "boas_vindas": {
+          "id": "boas_vindas",
+          "name": "Boas-vindas",
+          "message": "Oi {{nome}}! 🛍️\nBem-vindo(a) à nossa loja! Temos as melhores ofertas para você hoje.",
+          "buttons": [
+            { "text": "🛒 Ver produtos", "next_block": "categorias" },
+            { "text": "🔥 Ofertas especiais", "next_block": "ofertas" },
+            { "text": "📞 Falar com vendedor", "next_block": "atendente" }
+          ]
+        },
+        "categorias": {
+          "id": "categorias",
+          "name": "Categorias",
+          "message": "Qual categoria te interessa mais?",
+          "buttons": [
+            { "text": "👕 Roupas", "next_block": "roupas", "tag": "interesse_roupas" },
+            { "text": "📱 Eletrônicos", "next_block": "eletronicos", "tag": "interesse_eletronicos" },
+            { "text": "🏠 Casa e Jardim", "next_block": "casa", "tag": "interesse_casa" }
+          ]
+        },
+        "roupas": {
+          "id": "roupas",
+          "name": "Categoria Roupas",
+          "message": "Ótima escolha! Temos uma coleção incrível de roupas. Qual seu estilo preferido?",
+          "buttons": [
+            { "text": "Casual", "next_block": "casual", "tag": "estilo_casual" },
+            { "text": "Esportivo", "next_block": "esportivo", "tag": "estilo_esportivo" },
+            { "text": "Elegante", "next_block": "elegante", "tag": "estilo_elegante" }
+          ]
+        }
+      }
+    }
+  },
+  "tags": {
+    "lead_frio": "Lead que não demonstrou interesse",
+    "lead_quente": "Lead com alto interesse",
+    "viagem_planejada": "Cliente com viagem planejada",
+    "area_tech": "Área de atuação: Tecnologia",
+    "urgencia_alta": "Alta urgência para início",
+    "contato_manha": "Preferência de contato: Manhã",
+    "problema_sistema": "Problema relacionado ao sistema",
+    "navegador_chrome": "Usuário do Chrome",
+    "interesse_roupas": "Interesse em roupas",
+    "estilo_casual": "Estilo casual"
+  },
+  "configuracoes": {
+    "max_buttons": 3,
+    "timeout_conversa": 3600,
+    "max_tentativas": 3,
+    "idioma_padrao": "pt-BR"
+  }
+} 
