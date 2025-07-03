@@ -1,0 +1,218 @@
+{
+    "name": "Fluxo Completo de Automação – Chatbot Rafa | Wizard BH Buritis",
+    "blocks": {
+      "bloco_1": {
+        "id": "bloco_1",
+        "name": "Início - Entrada no fluxo comercial",
+        "buttons": [
+          {
+            "text": "Sim",
+            "next_block": "bloco_2"
+          },
+          {
+            "text": "Quero saber mais",
+            "next_block": "bloco_2"
+          },
+          {
+            "tag": "lead_frio",
+            "text": "Não",
+            "next_block": "finalizar"
+          }
+        ],
+        "message": "Oi {{nome}}, aqui é o Rafa da Wizard BH Buritis! 🌟\nVi que você se interessou pelos nossos cursos de inglês. Ainda tem vontade de aprender com a gente?"
+      },
+      "bloco_2": {
+        "id": "bloco_2",
+        "name": "Objetivo do Aluno",
+        "buttons": [
+          {
+            "text": "✈️ Viagem",
+            "next_block": "bloco_3a"
+          },
+          {
+            "text": "💼 Carreira",
+            "next_block": "bloco_3b"
+          },
+          {
+            "text": "📚 Faculdade/intercâmbio",
+            "next_block": "bloco_3c"
+          },
+          {
+            "text": "Outro",
+            "next_block": "bloco_3d"
+          }
+        ],
+        "message": "Legal! Qual o seu principal objetivo com o inglês?"
+      },
+      "bloco_4": {
+        "id": "bloco_4",
+        "name": "Metodologia Wizard",
+        "buttons": [
+          {
+            "text": "Tudo certo!",
+            "next_block": "bloco_5"
+          },
+          {
+            "tag": "duvida_metodologia",
+            "text": "Tenho dúvidas!",
+            "next_block": "atendimento_humano"
+          }
+        ],
+        "message": "Antes de te mostrar os planos, deixa eu te explicar como funciona nosso método.\n\n📘 CONNECTIONS: aula em turma, mesmo nível, professor conduz\n📱 INTERACTIVE: autonomia, diferentes níveis, professor mentor\n\nAgora vamos entender como a metodologia da Wizard realmente funciona? Dá o play nesse vídeo 😉\n🎥 https://youtu.be/MN8vncZ8Iok?si=Q9orpQMaKXs3gvXS\n\nE com qual dessas experiências você se identifica mais? Connections ou Interactive?\n\nTudo certo até aqui? Qualquer dúvida me chama!\n\n📌 OBS: Método Wizard trabalha fala, escuta, leitura e escrita desde a primeira aula – aprendizado 3x mais rápido e fluência em até 2 anos!"
+      },
+      "bloco_5": {
+        "id": "bloco_5",
+        "name": "Apresentação de Planos",
+        "buttons": [
+          {
+            "tag": "interesse_signature",
+            "text": "Signature",
+            "next_block": "bloco_6a"
+          },
+          {
+            "tag": "interesse_essential",
+            "text": "Essential",
+            "next_block": "bloco_6a"
+          },
+          {
+            "tag": "interesse_digital_plus",
+            "text": "Digital Plus",
+            "next_block": "bloco_6a"
+          },
+          {
+            "tag": "interesse_light",
+            "text": "Light",
+            "next_block": "bloco_6a"
+          },
+          {
+            "tag": "precisa_ajuda",
+            "text": "Preciso de ajuda",
+            "next_block": "bloco_6b"
+          }
+        ],
+        "message": "Agora vou te mostrar nossos planos:\n\n💎 **Wizard Signature** – 13x R$419,90\n✅ Monitoria ilimitada\n✅ Reposição de aulas sem custo\n✅ Revisão nas férias\n✅ Isenção no segundo idioma\n💡 Para quem busca resultado rápido com suporte total.\n\n🔶 **Wizard Essential** – 13x R$389,90\n✅ 2 monitorias/mês de 30 min\n✅ 3 reposições gratuitas (demais R$50)\n✅ Isenção no segundo idioma\n💡 Equilíbrio entre valor e suporte.\n\n🟢 **Wizard Digital Plus** – 13x R$349,00\n✅ 100% online com aulas ao vivo\n✅ Experiência CONNECTIONS ou INTERACTIVE\n✅ Reposição com valor fixo\n💡 Flexibilidade com alto nível de acompanhamento.\n\n🔵 **Wizard Light** – 13x R$329,00 (somente INTERACTIVE)\n✅ Online ao vivo e mais acessível\n✅ Experiência INTERACTIVE\n❌ Sem reposição de aulas\n💡 Pra quem quer economia sem perder qualidade.\n\nCom base no que te mostrei, qual desses planos combina mais com você?"
+      },
+      "bloco_7": {
+        "id": "bloco_7",
+        "tag": "aula_demo_enviada",
+        "name": "Aula Demonstrativa",
+        "message": "Quer ver como funciona na prática? Separamos uma aula demonstrativa gratuita pra você!\n🎥 https://youtu.be/iOwwtn3fWm4?si=zr16kkn4kAHiaMND",
+        "next_block": "bloco_8"
+      },
+      "bloco_8": {
+        "id": "bloco_8",
+        "name": "Follow-up 24h com Promoção",
+        "buttons": [
+          {
+            "tag": "interesse_promocao",
+            "text": "Quero aproveitar",
+            "next_block": "atendimento_humano"
+          },
+          {
+            "tag": "lead_morno",
+            "text": "Não posso agora",
+            "next_block": "finalizar"
+          }
+        ],
+        "message": "Oi {{nome}}, vi que você ainda não respondeu. Aproveita que estamos com uma condição sensacional:\n🔥 O plano Signature pelo valor do Digital Plus – só por tempo limitado!"
+      },
+      "bloco_2b": {
+        "id": "bloco_2b",
+        "name": "Objetivo do Aluno - Atendimento",
+        "buttons": [
+          {
+            "text": "✈️ Viagem",
+            "next_block": "bloco_3a"
+          },
+          {
+            "text": "💼 Carreira",
+            "next_block": "bloco_3b"
+          },
+          {
+            "text": "📚 Faculdade/intercâmbio",
+            "next_block": "bloco_3c"
+          },
+          {
+            "text": "Outro",
+            "next_block": "bloco_3d"
+          }
+        ],
+        "message": "Legal! Que bom ter você aqui! E conta pra gente como podemos te ajudar… Qual o seu principal objetivo com o inglês?"
+      },
+      "bloco_3a": {
+        "id": "bloco_3a",
+        "tag": "objetivo_viagem",
+        "name": "Objetivo - Viagem",
+        "message": "Show! Já sabe o país que quer visitar?",
+        "next_block": "bloco_4"
+      },
+      "bloco_3b": {
+        "id": "bloco_3b",
+        "tag": "objetivo_carreira",
+        "name": "Objetivo - Carreira",
+        "message": "Bacana! Em qual área você atua? Podemos focar nisso.",
+        "next_block": "bloco_4"
+      },
+      "bloco_3c": {
+        "id": "bloco_3c",
+        "tag": "objetivo_faculdade",
+        "name": "Objetivo - Faculdade/Intercâmbio",
+        "message": "Legal! Já tem destino de intercâmbio ou curso em mente?",
+        "next_block": "bloco_4"
+      },
+      "bloco_3d": {
+        "id": "bloco_3d",
+        "tag": "objetivo_outro",
+        "name": "Objetivo - Outro",
+        "message": "Conta pra mim o que você espera do inglês, quero te ajudar!",
+        "next_block": "bloco_4"
+      },
+      "bloco_6a": {
+        "id": "bloco_6a",
+        "tag": "lead_quente",
+        "name": "Ajuda para Escolher - Plano Escolhido",
+        "message": "Perfeito! Vamos agora encaminhar para nosso especialista que vai organizar com você todos os outros detalhes do seu curso! Muito Obrigado e seja bem vindo à Wizard BH Buritis!",
+        "next_block": "finalizar"
+      },
+      "bloco_6b": {
+        "id": "bloco_6b",
+        "tag": "precisa_ajuda",
+        "name": "Ajuda para Escolher - Precisa de Ajuda",
+        "message": "Então não se preocupe que nosso especialista continuará seu Atendimento e vai tirar todas as suas dúvidas! Desde já agradeço e qualquer coisa é só chamar!",
+        "next_block": "atendimento_humano"
+      },
+      "finalizar": {
+        "id": "finalizar",
+        "name": "Encerramento",
+        "type": "end",
+        "message": "Obrigado por conversar comigo! Se precisar de mais alguma coisa, é só chamar. Tenha um ótimo dia! 😊"
+      },
+      "atendimento_humano": {
+        "id": "atendimento_humano",
+        "tag": "encaminhado_atendimento",
+        "name": "Encaminhar para Atendimento Humano",
+        "message": "Perfeito! Vou te conectar agora mesmo com nossa equipe especializada que vai te ajudar com todas as suas dúvidas e organizar seu curso! 😊\n\nEm instantes você receberá o contato de um de nossos especialistas.",
+        "next_block": "finalizar"
+      }
+    },
+    "triggers": [
+      "oi",
+      "olá",
+      "hello",
+      "start",
+      "iniciar",
+      "wizard",
+      "inglês",
+      "curso"
+    ],
+    "auto_followup": {
+      "bloco_7": {
+        "delay": 1800000,
+        "condition": "inactive"
+      },
+      "bloco_8": {
+        "delay": 72000000,
+        "condition": "inactive"
+      }
+    }
+  }

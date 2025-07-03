@@ -50,9 +50,20 @@ class ChatwootWorkflowsApp {
     }
 
     showApp() {
-        document.getElementById('loginModal').classList.remove('show');
+        // Fechar o modal de login corretamente
+        const loginModalEl = document.getElementById('loginModal');
+        const loginModal = bootstrap.Modal.getInstance(loginModalEl) || new bootstrap.Modal(loginModalEl);
+        loginModal.hide();
         document.getElementById('app').classList.remove('d-none');
         document.getElementById('currentUser').textContent = this.user.username;
+        // Adiciona listener para o modal de senha
+        const form = document.getElementById('changePasswordForm');
+        if (form) {
+            form.onsubmit = (e) => {
+                e.preventDefault();
+                this.changePassword();
+            };
+        }
     }
 
     async login() {
@@ -127,11 +138,24 @@ class ChatwootWorkflowsApp {
     }
 
     async loadInitialData() {
-        await Promise.all([
-            this.loadAccounts(),
-            this.loadWorkflowTemplates(),
-            this.loadActiveWorkflows()
-        ]);
+        // 1. Carregar contas
+        await this.loadAccounts();
+        // 2. Carregar inboxes de todas as contas
+        this.inboxes = [];
+        for (const account of this.accounts) {
+            try {
+                const inboxes = await this.apiRequest(`/api/accounts/${account.id}/inboxes`);
+                if (Array.isArray(inboxes)) {
+                    this.inboxes = this.inboxes.concat(inboxes);
+                }
+            } catch (e) {
+                console.warn('Erro ao carregar inboxes da conta', account.id, e);
+            }
+        }
+        // 3. Carregar templates (opcional, não afeta nomes)
+        await this.loadWorkflowTemplates();
+        // 4. Carregar fluxos ativos
+        await this.loadActiveWorkflows();
     }
 
     async loadAccounts() {
@@ -237,20 +261,29 @@ class ChatwootWorkflowsApp {
     populateActiveWorkflows() {
         const container = document.getElementById('activeWorkflows');
         container.innerHTML = '';
-
         if (this.activeWorkflows.length === 0) {
             container.innerHTML = '<p class="text-muted text-center">Nenhum fluxo ativo</p>';
             return;
         }
-
         this.activeWorkflows.forEach(workflow => {
+            // Buscar nome da conta e da caixa, garantindo comparação por string
+            let accountName = workflow.account_id;
+            let inboxName = workflow.inbox_id;
+            if (this.accounts && this.accounts.length > 0) {
+                const account = this.accounts.find(acc => String(acc.id) === String(workflow.account_id));
+                if (account) accountName = account.name;
+            }
+            if (this.inboxes && this.inboxes.length > 0) {
+                const inbox = this.inboxes.find(inb => String(inb.id) === String(workflow.inbox_id));
+                if (inbox) inboxName = inbox.name;
+            }
             const item = document.createElement('div');
             item.className = 'workflow-item';
             item.innerHTML = `
                 <div class="workflow-info">
                     <h6 class="workflow-name">${workflow.workflow_name}</h6>
                     <p class="workflow-details">
-                        Conta: ${workflow.account_id} | Caixa: ${workflow.inbox_id}
+                        Conta: ${accountName} | Caixa: ${inboxName}
                     </p>
                 </div>
                 <div class="workflow-actions">
@@ -324,7 +357,7 @@ class ChatwootWorkflowsApp {
                     <div class="block-header">
                         <h6 class="block-title">${block.name || blockId}</h6>
                         <span class="block-type ${isStart ? 'start' : ''} ${isEnd ? 'end' : ''} default">
-                            ${isStart ? 'Início' : isEnd ? 'Fim' : 'Bloco'}
+                            ${isStart ? 'Início' : isEnd ? 'Fim' : blockId}
                         </span>
                     </div>
                     <div class="block-message">${block.message || ''}</div>
@@ -424,6 +457,36 @@ class ChatwootWorkflowsApp {
                 alertDiv.remove();
             }
         }, 5000);
+    }
+
+    showChangePasswordModal() {
+        const modal = new bootstrap.Modal(document.getElementById('changePasswordModal'));
+        document.getElementById('changePasswordForm').reset();
+        document.getElementById('changePasswordError').classList.add('d-none');
+        modal.show();
+    }
+
+    async changePassword() {
+        const currentPassword = document.getElementById('currentPassword').value;
+        const newPassword = document.getElementById('newPassword').value;
+        const errorDiv = document.getElementById('changePasswordError');
+        try {
+            const response = await this.apiRequest('/api/auth/change-password', {
+                method: 'POST',
+                body: JSON.stringify({ currentPassword, newPassword })
+            });
+            if (response.success) {
+                errorDiv.classList.add('d-none');
+                bootstrap.Modal.getInstance(document.getElementById('changePasswordModal')).hide();
+                this.showAlert('Senha alterada com sucesso!', 'success');
+            } else {
+                errorDiv.textContent = response.error || 'Erro ao alterar senha';
+                errorDiv.classList.remove('d-none');
+            }
+        } catch (error) {
+            errorDiv.textContent = 'Erro de conexão';
+            errorDiv.classList.remove('d-none');
+        }
     }
 }
 

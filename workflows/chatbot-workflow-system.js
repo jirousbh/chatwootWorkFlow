@@ -247,6 +247,26 @@ async function createInitialUser() {
   }
 }
 
+// Função para adicionar labels ao contato no Chatwoot
+async function addLabelsToContact(contactId, labels) {
+  try {
+    // Buscar o ID interno do contato se necessário
+    let internalId = contactId;
+    if (typeof contactId === 'string' && contactId.startsWith('+')) {
+      const foundId = await getContactIdByPhone(contactId);
+      if (foundId) internalId = foundId;
+    }
+    await axios.post(
+      `${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/contacts/${internalId}/labels`,
+      { labels },
+      { headers: { 'api_access_token': CHATWOOT_API_TOKEN } }
+    );
+    console.log(`✅ Labels [${labels.join(', ')}] adicionadas ao contato ${internalId}`);
+  } catch (error) {
+    console.error('Erro ao adicionar labels ao contato:', error.response?.data || error.message);
+  }
+}
+
 // Classe para gerenciar conversas com PostgreSQL
 class ConversationManager {
   constructor() {
@@ -368,6 +388,8 @@ class ConversationManager {
         // Aplicar tag se especificada
         if (button.tag) {
           await this.applyTag(contactId, button.tag);
+          // Adicionar label: tag - texto do botão
+          await addLabelsToContact(contactId, [`${button.tag} - ${button.text}`]);
         }
 
         // Mover para próximo bloco
@@ -395,6 +417,8 @@ class ConversationManager {
         // Aplicar tag se houver
         if (currentBlock.tag) {
           await this.applyTag(contactId, currentBlock.tag);
+          // Adicionar label: tag - resposta do usuário
+          await addLabelsToContact(contactId, [`${currentBlock.tag} - ${userResponse}`]);
         }
         // Avançar para o next_block se existir
         if (currentBlock.next_block) {
@@ -948,6 +972,39 @@ app.post('/api/auth/login', [
   } catch (error) {
     console.error('Erro no login:', error);
     res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+// ===== ROTA DE ALTERAÇÃO DE SENHA =====
+app.post('/api/auth/change-password', authenticateToken, [
+  body('currentPassword').notEmpty().withMessage('Senha atual é obrigatória'),
+  body('newPassword').isLength({ min: 6 }).withMessage('Nova senha deve ter pelo menos 6 caracteres')
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+    const userId = req.user.id;
+    const { currentPassword, newPassword } = req.body;
+    // Buscar usuário
+    const result = await pool.query('SELECT * FROM system_users WHERE id = $1', [userId]);
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Usuário não encontrado' });
+    }
+    const user = result.rows[0];
+    // Verificar senha atual
+    const isValid = await bcrypt.compare(currentPassword, user.password_hash);
+    if (!isValid) {
+      return res.status(401).json({ error: 'Senha atual incorreta' });
+    }
+    // Atualizar senha
+    const newHash = await bcrypt.hash(newPassword, 10);
+    await pool.query('UPDATE system_users SET password_hash = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2', [newHash, userId]);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Erro ao alterar senha:', error);
+    res.status(500).json({ error: 'Erro interno ao alterar senha' });
   }
 });
 
