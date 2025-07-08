@@ -4,6 +4,8 @@
       "bloco_1": {
         "id": "bloco_1",
         "name": "Início - Entrada no fluxo comercial",
+        "assign_labels": ["novo_lead"],
+        "contact_labels": ["prospect"],
         "buttons": [
           {
             "text": "Sim",
@@ -16,6 +18,8 @@
           {
             "tag": "lead_frio",
             "text": "Não",
+            "assign_labels": ["lead_frio"],
+            "contact_labels": ["desinteressado"],
             "next_block": "finalizar"
           }
         ],
@@ -27,19 +31,23 @@
         "buttons": [
           {
             "text": "✈️ Viagem",
-            "next_block": "bloco_3a"
+            "next_block": "bloco_3a",
+            "assign_labels": ["interesse_confirmado"]
           },
           {
             "text": "💼 Carreira",
-            "next_block": "bloco_3b"
+            "next_block": "bloco_3b",
+            "assign_labels": ["interesse_confirmado"]
           },
           {
             "text": "📚 Faculdade/intercâmbio",
-            "next_block": "bloco_3c"
+            "next_block": "bloco_3c",
+            "assign_labels": ["interesse_confirmado"]
           },
           {
             "text": "Outro",
-            "next_block": "bloco_3d"
+            "next_block": "bloco_3d",
+            "assign_labels": ["interesse_confirmado"]
           }
         ],
         "message": "Legal! Qual o seu principal objetivo com o inglês?"
@@ -55,6 +63,8 @@
           {
             "tag": "duvida_metodologia",
             "text": "Tenho dúvidas!",
+            "assign_agent": 3,
+            "assign_labels": ["duvida_metodologia", "precisa_atendimento"],
             "next_block": "atendimento_humano"
           }
         ],
@@ -63,30 +73,38 @@
       "bloco_5": {
         "id": "bloco_5",
         "name": "Apresentação de Planos",
+        "assign_labels": ["visualizou_planos"],
         "buttons": [
           {
             "tag": "interesse_signature",
             "text": "Signature",
+            "assign_labels": ["plano_signature"],
+            "contact_labels": ["alto_valor"],
             "next_block": "bloco_6a"
           },
           {
             "tag": "interesse_essential",
             "text": "Essential",
+            "assign_labels": ["plano_essential"],
             "next_block": "bloco_6a"
           },
           {
             "tag": "interesse_digital_plus",
             "text": "Digital Plus",
+            "assign_labels": ["plano_digital_plus"],
             "next_block": "bloco_6a"
           },
           {
             "tag": "interesse_light",
             "text": "Light",
+            "assign_labels": ["plano_light"],
             "next_block": "bloco_6a"
           },
           {
             "tag": "precisa_ajuda",
             "text": "Preciso de ajuda",
+            "assign_team": 1,
+            "assign_labels": ["precisa_consultoria"],
             "next_block": "bloco_6b"
           }
         ],
@@ -96,21 +114,28 @@
         "id": "bloco_7",
         "tag": "aula_demo_enviada",
         "name": "Aula Demonstrativa",
+        "assign_labels": ["aula_demo"],
         "message": "Quer ver como funciona na prática? Separamos uma aula demonstrativa gratuita pra você!\n🎥 https://youtu.be/iOwwtn3fWm4?si=zr16kkn4kAHiaMND",
         "next_block": "bloco_8"
       },
       "bloco_8": {
         "id": "bloco_8",
         "name": "Follow-up 24h com Promoção",
+        "assign_labels": ["follow_up_promocao"],
         "buttons": [
           {
             "tag": "interesse_promocao",
             "text": "Quero aproveitar",
+            "assign_agent": 3,
+            "assign_labels": ["hot_lead", "promocao_interesse"],
+            "contact_labels": ["hot_prospect"],
             "next_block": "atendimento_humano"
           },
           {
             "tag": "lead_morno",
             "text": "Não posso agora",
+            "assign_labels": ["lead_morno", "follow_up_futuro"],
+            "contact_labels": ["futuro_aluno"],
             "next_block": "finalizar"
           }
         ],
@@ -143,6 +168,8 @@
         "id": "bloco_3a",
         "tag": "objetivo_viagem",
         "name": "Objetivo - Viagem",
+        "assign_labels": ["objetivo_viagem"],
+        "contact_labels": ["viajante"],
         "message": "Show! Já sabe o país que quer visitar?",
         "next_block": "bloco_4"
       },
@@ -150,6 +177,8 @@
         "id": "bloco_3b",
         "tag": "objetivo_carreira",
         "name": "Objetivo - Carreira",
+        "assign_labels": ["objetivo_carreira"],
+        "contact_labels": ["profissional"],
         "message": "Bacana! Em qual área você atua? Podemos focar nisso.",
         "next_block": "bloco_4"
       },
@@ -157,6 +186,8 @@
         "id": "bloco_3c",
         "tag": "objetivo_faculdade",
         "name": "Objetivo - Faculdade/Intercâmbio",
+        "assign_labels": ["objetivo_intercambio"],
+        "contact_labels": ["estudante"],
         "message": "Legal! Já tem destino de intercâmbio ou curso em mente?",
         "next_block": "bloco_4"
       },
@@ -164,6 +195,7 @@
         "id": "bloco_3d",
         "tag": "objetivo_outro",
         "name": "Objetivo - Outro",
+        "assign_labels": ["objetivo_personalizado"],
         "message": "Conta pra mim o que você espera do inglês, quero te ajudar!",
         "next_block": "bloco_4"
       },
@@ -171,6 +203,9 @@
         "id": "bloco_6a",
         "tag": "lead_quente",
         "name": "Ajuda para Escolher - Plano Escolhido",
+        "assign_agent": 3,
+        "assign_labels": ["lead_quente", "plano_escolhido"],
+        "contact_labels": ["cliente_potencial"],
         "message": "Perfeito! Vamos agora encaminhar para nosso especialista que vai organizar com você todos os outros detalhes do seu curso! Muito Obrigado e seja bem vindo à Wizard BH Buritis!",
         "next_block": "finalizar"
       },
@@ -178,6 +213,8 @@
         "id": "bloco_6b",
         "tag": "precisa_ajuda",
         "name": "Ajuda para Escolher - Precisa de Ajuda",
+        "assign_team": 1,
+        "assign_labels": ["consultoria_necessaria"],
         "message": "Então não se preocupe que nosso especialista continuará seu Atendimento e vai tirar todas as suas dúvidas! Desde já agradeço e qualquer coisa é só chamar!",
         "next_block": "atendimento_humano"
       },
@@ -185,12 +222,16 @@
         "id": "finalizar",
         "name": "Encerramento",
         "type": "end",
+        "assign_labels": ["conversa_finalizada"],
         "message": "Obrigado por conversar comigo! Se precisar de mais alguma coisa, é só chamar. Tenha um ótimo dia! 😊"
       },
       "atendimento_humano": {
         "id": "atendimento_humano",
         "tag": "encaminhado_atendimento",
         "name": "Encaminhar para Atendimento Humano",
+        "assign_team": 1,
+        "assign_labels": ["atendimento_humano", "transferido"],
+        "contact_labels": ["atendimento_especializado"],
         "message": "Perfeito! Vou te conectar agora mesmo com nossa equipe especializada que vai te ajudar com todas as suas dúvidas e organizar seu curso! 😊\n\nEm instantes você receberá o contato de um de nossos especialistas.",
         "next_block": "finalizar"
       }
@@ -215,4 +256,4 @@
         "condition": "inactive"
       }
     }
-  }
+}

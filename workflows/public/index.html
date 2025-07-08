@@ -53,6 +53,8 @@
                             <span id="currentUser"></span>
                         </a>
                         <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="userDropdown">
+                            <li><a class="dropdown-item text-dark" href="#" id="menuListarCampanhas"><i class="fas fa-bullhorn me-2"></i>Listar Campanhas</a></li>
+                            <li><hr class="dropdown-divider"></li>
                             <li><a class="dropdown-item text-dark" href="#" onclick="app.showChangePasswordModal()"><i class="fas fa-key me-2"></i>Mudar senha</a></li>
                             <li><hr class="dropdown-divider"></li>
                             <li><a class="dropdown-item text-danger" href="#" onclick="logout()"><i class="fas fa-sign-out-alt me-2"></i>Sair</a></li>
@@ -88,6 +90,10 @@
                             </div>
                             <button class="btn btn-success w-100" onclick="showWorkflowEditor()">
                                 <i class="fas fa-edit me-2"></i>Configurar Fluxo
+                            </button>
+                            <!-- Botão Criar Campanha -->
+                            <button id="btnCriarCampanha" class="btn btn-primary w-100 mt-2">
+                                <i class="fas fa-bullhorn me-2"></i>Criar Campanha
                             </button>
                         </div>
                     </div>
@@ -200,6 +206,59 @@
                 </div>
             </div>
         </div>
+    </div>
+
+
+
+    <!-- Modal de Criação de Campanha -->
+    <div id="modalCampanha" class="modal" style="display:none;">
+      <div class="modal-content">
+        <span class="close" id="closeModalCampanha">&times;</span>
+        <h2>Criar Campanha WhatsApp</h2>
+        <form id="formCampanha">
+          <label for="campanhaNome">Nome da Campanha</label>
+          <input type="text" id="campanhaNome" name="campanhaNome" required>
+
+          <label>Método de Envio</label>
+          <div class="envio-metodo">
+            <input type="radio" id="metodoTag" name="metodoEnvio" value="tag" checked>
+            <label for="metodoTag">Tag</label>
+            <input type="radio" id="metodoLista" name="metodoEnvio" value="csv">
+            <label for="metodoLista">Lista (CSV)</label>
+          </div>
+
+          <div id="detalhesTag">
+            <label for="tagNome">Nome da Tag</label>
+            <input type="text" id="tagNome" name="tagNome" placeholder="Digite o nome da tag">
+          </div>
+          <div id="detalhesCSV" style="display:none;">
+            <label for="csvContatos">Arquivo CSV com Contatos</label>
+            <input type="file" id="csvContatos" name="csvContatos" accept=".csv">
+          </div>
+
+          <label for="modeloMensagem">Modelo de Mensagem</label>
+          <div class="d-flex gap-2">
+            <select id="modeloMensagem" name="modeloMensagem" required class="form-select">
+              <option value="">Selecione um modelo</option>
+            </select>
+            <button type="button" id="syncTemplatesBtn" class="btn btn-outline-secondary" onclick="syncTemplates()" title="Sincronizar templates do WhatsApp">
+              <i class="fas fa-sync-alt"></i>
+            </button>
+          </div>
+
+          <div class="agendamento">
+            <label><input type="checkbox" id="agendarEnvio"> Agendar envio</label>
+            <div id="agendamentoCampos" style="display:none;">
+              <label for="dataEnvio">Data de envio</label>
+              <input type="date" id="dataEnvio" name="dataEnvio">
+              <label for="horaEnvio">Hora de envio</label>
+              <input type="time" id="horaEnvio" name="horaEnvio">
+            </div>
+          </div>
+
+          <button type="submit" class="btn btn-success" id="btnEnviarCampanha">Agendar Campanha</button>
+        </form>
+      </div>
     </div>
 </body>
 </html> 

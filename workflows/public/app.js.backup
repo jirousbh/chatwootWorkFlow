@@ -1,0 +1,837 @@
+// Chatwoot Workflows Frontend Application
+class ChatwootWorkflowsApp {
+    constructor() {
+        this.token = localStorage.getItem('authToken');
+        this.user = JSON.parse(localStorage.getItem('user') || '{}');
+        this.currentAccount = null;
+        this.currentInbox = null;
+        this.accounts = [];
+        this.inboxes = [];
+        this.workflowTemplates = [];
+        this.activeWorkflows = [];
+        
+        this.init();
+    }
+
+    async init() {
+        if (this.token) {
+            await this.checkAuth();
+        } else {
+            this.showLogin();
+        }
+    }
+
+    async checkAuth() {
+        try {
+            // Verificar se o token ainda é válido fazendo uma requisição
+            const response = await this.apiRequest('/api/accounts');
+            if (response) {
+                this.showApp();
+                await this.loadInitialData();
+            } else {
+                this.showLogin();
+            }
+        } catch (error) {
+            console.error('Erro ao verificar autenticação:', error);
+            this.showLogin();
+        }
+    }
+
+    showLogin() {
+        document.getElementById('app').classList.add('d-none');
+        const loginModal = new bootstrap.Modal(document.getElementById('loginModal'));
+        loginModal.show();
+        
+        // Configurar formulário de login (evitar listeners duplicados)
+        const loginForm = document.getElementById('loginForm');
+        if (loginForm && !loginForm.hasAttribute('data-listener-added')) {
+            loginForm.addEventListener('submit', (e) => {
+                e.preventDefault();
+                this.login();
+            });
+            loginForm.setAttribute('data-listener-added', 'true');
+        }
+    }
+
+    showApp() {
+        try {
+            // Fechar o modal de login corretamente
+            const loginModalEl = document.getElementById('loginModal');
+            if (loginModalEl) {
+                const loginModal = bootstrap.Modal.getInstance(loginModalEl);
+                if (loginModal) {
+                    loginModal.hide();
+                }
+            }
+            
+            // Mostrar app
+            document.getElementById('app').classList.remove('d-none');
+            document.getElementById('currentUser').textContent = this.user.username;
+            
+            // Adiciona listener para o modal de senha (evitar duplicados)
+            const form = document.getElementById('changePasswordForm');
+            if (form && !form.hasAttribute('data-listener-added')) {
+                form.onsubmit = (e) => {
+                    e.preventDefault();
+                    this.changePassword();
+                };
+                form.setAttribute('data-listener-added', 'true');
+            }
+            
+            // Inicializar event listeners de campanhas após login
+            initCampanhasAfterLogin();
+        } catch (error) {
+            console.error('Erro em showApp:', error);
+        }
+    }
+
+    async login() {
+        const username = document.getElementById('username').value;
+        const password = document.getElementById('password').value;
+        const errorDiv = document.getElementById('loginError');
+
+        try {
+            const response = await fetch('/api/auth/login', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ username, password })
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                this.token = data.token;
+                this.user = data.user;
+                localStorage.setItem('authToken', this.token);
+                localStorage.setItem('user', JSON.stringify(this.user));
+                
+                errorDiv.classList.add('d-none');
+                this.showApp();
+                await this.loadInitialData();
+            } else {
+                errorDiv.textContent = data.error || 'Erro no login';
+                errorDiv.classList.remove('d-none');
+            }
+        } catch (error) {
+            console.error('Erro no login:', error);
+            errorDiv.textContent = 'Erro de conexão';
+            errorDiv.classList.remove('d-none');
+        }
+    }
+
+    logout() {
+        this.token = null;
+        this.user = {};
+        localStorage.removeItem('authToken');
+        localStorage.removeItem('user');
+        this.showLogin();
+    }
+
+    async apiRequest(endpoint, options = {}) {
+        try {
+            const response = await fetch(endpoint, {
+                ...options,
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${this.token}`,
+                    ...options.headers
+                }
+            });
+
+            if (response.status === 401) {
+                this.logout();
+                return null;
+            }
+
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+
+            return await response.json();
+        } catch (error) {
+            console.error('API Request Error:', error);
+            throw error;
+        }
+    }
+
+    async loadInitialData() {
+        // 1. Carregar contas
+        await this.loadAccounts();
+        // 2. Carregar inboxes de todas as contas
+        this.inboxes = [];
+        for (const account of this.accounts) {
+            try {
+                const inboxes = await this.apiRequest(`/api/accounts/${account.id}/inboxes`);
+                if (Array.isArray(inboxes)) {
+                    this.inboxes = this.inboxes.concat(inboxes);
+                }
+            } catch (e) {
+                console.warn('Erro ao carregar inboxes da conta', account.id, e);
+            }
+        }
+        // 3. Carregar templates (opcional, não afeta nomes)
+        await this.loadWorkflowTemplates();
+        // 4. Carregar fluxos ativos
+        await this.loadActiveWorkflows();
+    }
+
+    async loadAccounts() {
+        try {
+            this.accounts = await this.apiRequest('/api/accounts');
+            this.populateAccountSelect();
+        } catch (error) {
+            console.error('Erro ao carregar contas:', error);
+            this.showAlert('Erro ao carregar contas', 'danger');
+        }
+    }
+
+    async loadInboxes() {
+        const accountId = document.getElementById('accountSelect').value;
+        if (!accountId) {
+            document.getElementById('inboxSelect').innerHTML = '<option value="">Selecione uma caixa de entrada...</option>';
+            return;
+        }
+
+        try {
+            this.inboxes = await this.apiRequest(`/api/accounts/${accountId}/inboxes`);
+            this.populateInboxSelect();
+        } catch (error) {
+            console.error('Erro ao carregar caixas de entrada:', error);
+            this.showAlert('Erro ao carregar caixas de entrada', 'danger');
+        }
+    }
+
+    async loadWorkflowTemplates() {
+        try {
+            this.workflowTemplates = await this.apiRequest('/api/workflow-templates');
+            this.populateTemplateSelect();
+        } catch (error) {
+            console.error('Erro ao carregar templates:', error);
+        }
+    }
+
+    async loadActiveWorkflows() {
+        try {
+            this.activeWorkflows = await this.apiRequest('/api/inbox-workflows');
+            this.populateActiveWorkflows();
+        } catch (error) {
+            console.error('Erro ao carregar fluxos ativos:', error);
+        }
+    }
+
+    async loadWorkflow() {
+        const accountId = document.getElementById('accountSelect').value;
+        const inboxId = document.getElementById('inboxSelect').value;
+        
+        if (!accountId || !inboxId) {
+            return;
+        }
+
+        try {
+            const workflow = await this.apiRequest(`/api/inbox-workflows/${accountId}/${inboxId}`);
+            if (workflow) {
+                document.getElementById('workflowName').value = workflow.workflow_name;
+                document.getElementById('workflowConfig').value = JSON.stringify(workflow.workflow_config, null, 2);
+                this.updateWorkflowPreview();
+            }
+        } catch (error) {
+            console.error('Erro ao carregar fluxo:', error);
+        }
+    }
+
+    populateAccountSelect() {
+        const select = document.getElementById('accountSelect');
+        select.innerHTML = '<option value="">Selecione uma conta...</option>';
+        
+        this.accounts.forEach(account => {
+            const option = document.createElement('option');
+            option.value = account.id;
+            option.textContent = account.name;
+            select.appendChild(option);
+        });
+    }
+
+    populateInboxSelect() {
+        const select = document.getElementById('inboxSelect');
+        select.innerHTML = '<option value="">Selecione uma caixa de entrada...</option>';
+        
+        this.inboxes.forEach(inbox => {
+            const option = document.createElement('option');
+            option.value = inbox.id;
+            option.textContent = inbox.name;
+            select.appendChild(option);
+        });
+    }
+
+    populateTemplateSelect() {
+        const select = document.getElementById('workflowTemplate');
+        select.innerHTML = '<option value="">Selecione um template...</option>';
+        
+        this.workflowTemplates.forEach(template => {
+            const option = document.createElement('option');
+            option.value = template.name;
+            option.textContent = template.displayName;
+            select.appendChild(option);
+        });
+    }
+
+    populateActiveWorkflows() {
+        const container = document.getElementById('activeWorkflows');
+        container.innerHTML = '';
+        if (this.activeWorkflows.length === 0) {
+            container.innerHTML = '<p class="text-muted text-center">Nenhum fluxo ativo</p>';
+            return;
+        }
+        this.activeWorkflows.forEach(workflow => {
+            // Buscar nome da conta e da caixa, garantindo comparação por string
+            let accountName = workflow.account_id;
+            let inboxName = workflow.inbox_id;
+            if (this.accounts && this.accounts.length > 0) {
+                const account = this.accounts.find(acc => String(acc.id) === String(workflow.account_id));
+                if (account) accountName = account.name;
+            }
+            if (this.inboxes && this.inboxes.length > 0) {
+                const inbox = this.inboxes.find(inb => String(inb.id) === String(workflow.inbox_id));
+                if (inbox) inboxName = inbox.name;
+            }
+            const item = document.createElement('div');
+            item.className = 'workflow-item';
+            item.innerHTML = `
+                <div class="workflow-info">
+                    <h6 class="workflow-name">${workflow.workflow_name}</h6>
+                    <p class="workflow-details">
+                        Conta: ${accountName} | Caixa: ${inboxName}
+                    </p>
+                </div>
+                <div class="workflow-actions">
+                    <button class="btn btn-sm btn-outline-danger" onclick="app.deleteWorkflow(${workflow.account_id}, ${workflow.inbox_id})">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                </div>
+            `;
+            container.appendChild(item);
+        });
+    }
+
+    showWorkflowEditor() {
+        const accountId = document.getElementById('accountSelect').value;
+        const inboxId = document.getElementById('inboxSelect').value;
+        
+        if (!accountId || !inboxId) {
+            this.showAlert('Selecione uma conta e caixa de entrada primeiro', 'warning');
+            return;
+        }
+
+        document.getElementById('workflowEditor').classList.remove('d-none');
+        document.getElementById('workflowInfo').classList.add('d-none');
+    }
+
+    hideWorkflowEditor() {
+        document.getElementById('workflowEditor').classList.add('d-none');
+        document.getElementById('workflowInfo').classList.remove('d-none');
+        document.getElementById('workflowName').value = '';
+        document.getElementById('workflowConfig').value = '';
+        document.getElementById('workflowPreview').innerHTML = '<p class="text-muted">Selecione um template ou cole uma configuração para visualizar o fluxo.</p>';
+    }
+
+    loadTemplate() {
+        const templateName = document.getElementById('workflowTemplate').value;
+        if (!templateName) return;
+
+        const template = this.workflowTemplates.find(t => t.name === templateName);
+        if (template) {
+            document.getElementById('workflowName').value = template.displayName;
+            document.getElementById('workflowConfig').value = JSON.stringify(template.config, null, 2);
+            this.updateWorkflowPreview();
+        }
+    }
+
+    updateWorkflowPreview() {
+        const configText = document.getElementById('workflowConfig').value;
+        const preview = document.getElementById('workflowPreview');
+        
+        try {
+            const config = JSON.parse(configText);
+            preview.innerHTML = this.renderWorkflowPreview(config);
+        } catch (error) {
+            preview.innerHTML = '<p class="text-danger">Erro ao parsear JSON</p>';
+        }
+    }
+
+    renderWorkflowPreview(config) {
+        if (!config.blocks) {
+            return '<p class="text-muted">Configuração inválida</p>';
+        }
+
+        let html = '<div class="workflow-preview">';
+        
+        Object.entries(config.blocks).forEach(([blockId, block]) => {
+            const isStart = blockId === 'bloco_1';
+            const isEnd = block.type === 'end';
+            
+            html += `
+                <div class="workflow-block ${isStart ? 'start' : ''} ${isEnd ? 'end' : ''}">
+                    <div class="block-header">
+                        <h6 class="block-title">${block.name || blockId}</h6>
+                        <span class="block-type ${isStart ? 'start' : ''} ${isEnd ? 'end' : ''} default">
+                            ${isStart ? 'Início' : isEnd ? 'Fim' : blockId}
+                        </span>
+                    </div>
+                    <div class="block-message">${block.message || ''}</div>
+                    ${block.buttons ? `
+                        <div class="block-buttons">
+                            ${block.buttons.map(btn => `
+                                <span class="block-button">${btn.text}</span>
+                            `).join('')}
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+        });
+        
+        html += '</div>';
+        return html;
+    }
+
+    async saveWorkflow() {
+        const accountId = document.getElementById('accountSelect').value;
+        const inboxId = document.getElementById('inboxSelect').value;
+        const workflowName = document.getElementById('workflowName').value;
+        const configText = document.getElementById('workflowConfig').value;
+
+        if (!accountId || !inboxId || !workflowName || !configText) {
+            this.showAlert('Preencha todos os campos', 'warning');
+            return;
+        }
+
+        try {
+            const workflowConfig = JSON.parse(configText);
+            
+            const response = await this.apiRequest('/api/inbox-workflows', {
+                method: 'POST',
+                body: JSON.stringify({
+                    accountId: parseInt(accountId),
+                    inboxId: parseInt(inboxId),
+                    workflowName,
+                    workflowConfig
+                })
+            });
+
+            if (response.success) {
+                this.showAlert('Fluxo salvo com sucesso!', 'success');
+                await this.loadActiveWorkflows();
+                this.hideWorkflowEditor();
+            } else {
+                this.showAlert(response.error || 'Erro ao salvar fluxo', 'danger');
+            }
+        } catch (error) {
+            console.error('Erro ao salvar fluxo:', error);
+            this.showAlert('Erro ao salvar fluxo', 'danger');
+        }
+    }
+
+    async deleteWorkflow(accountId, inboxId) {
+        if (!confirm('Tem certeza que deseja desativar este fluxo?')) {
+            return;
+        }
+
+        try {
+            const response = await this.apiRequest(`/api/inbox-workflows/${accountId}/${inboxId}`, {
+                method: 'DELETE'
+            });
+
+            if (response.success) {
+                this.showAlert('Fluxo desativado com sucesso!', 'success');
+                await this.loadActiveWorkflows();
+            } else {
+                this.showAlert(response.error || 'Erro ao desativar fluxo', 'danger');
+            }
+        } catch (error) {
+            console.error('Erro ao desativar fluxo:', error);
+            this.showAlert('Erro ao desativar fluxo', 'danger');
+        }
+    }
+
+    testWorkflow() {
+        this.showAlert('Funcionalidade de teste em desenvolvimento', 'info');
+    }
+
+    showAlert(message, type = 'info') {
+        // Criar alerta temporário
+        const alertDiv = document.createElement('div');
+        alertDiv.className = `alert alert-${type} alert-dismissible fade show position-fixed`;
+        alertDiv.style.cssText = 'top: 20px; right: 20px; z-index: 9999; min-width: 300px;';
+        alertDiv.innerHTML = `
+            ${message}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        `;
+        
+        document.body.appendChild(alertDiv);
+        
+        // Remover automaticamente após 5 segundos
+        setTimeout(() => {
+            if (alertDiv.parentNode) {
+                alertDiv.remove();
+            }
+        }, 5000);
+    }
+
+    showChangePasswordModal() {
+        const modal = new bootstrap.Modal(document.getElementById('changePasswordModal'));
+        document.getElementById('changePasswordForm').reset();
+        document.getElementById('changePasswordError').classList.add('d-none');
+        modal.show();
+    }
+
+    async changePassword() {
+        const currentPassword = document.getElementById('currentPassword').value;
+        const newPassword = document.getElementById('newPassword').value;
+        const errorDiv = document.getElementById('changePasswordError');
+        try {
+            const response = await this.apiRequest('/api/auth/change-password', {
+                method: 'POST',
+                body: JSON.stringify({ currentPassword, newPassword })
+            });
+            if (response.success) {
+                errorDiv.classList.add('d-none');
+                bootstrap.Modal.getInstance(document.getElementById('changePasswordModal')).hide();
+                this.showAlert('Senha alterada com sucesso!', 'success');
+            } else {
+                errorDiv.textContent = response.error || 'Erro ao alterar senha';
+                errorDiv.classList.remove('d-none');
+            }
+        } catch (error) {
+            errorDiv.textContent = 'Erro de conexão';
+            errorDiv.classList.remove('d-none');
+        }
+    }
+}
+
+// Event listeners
+document.addEventListener('DOMContentLoaded', () => {
+    window.app = new ChatwootWorkflowsApp();
+    
+    // Atualizar preview quando o usuário digitar no textarea
+    document.getElementById('workflowConfig').addEventListener('input', () => {
+        window.app.updateWorkflowPreview();
+    });
+});
+
+// Funções globais para compatibilidade com onclick
+function logout() {
+    window.app.logout();
+}
+
+function loadInboxes() {
+    const accountSelect = document.getElementById('accountSelect');
+    updateSelectedAccount(accountSelect.value);
+    window.app.loadInboxes();
+}
+
+function loadWorkflow() {
+    const inboxSelect = document.getElementById('inboxSelect');
+    updateSelectedInbox(inboxSelect.value);
+    window.app.loadWorkflow();
+}
+
+function showWorkflowEditor() {
+    window.app.showWorkflowEditor();
+}
+
+function hideWorkflowEditor() {
+    window.app.hideWorkflowEditor();
+}
+
+function loadTemplate() {
+    window.app.loadTemplate();
+}
+
+function saveWorkflow() {
+    window.app.saveWorkflow();
+}
+
+function testWorkflow() {
+    window.app.testWorkflow();
+} 
+
+// ===== CAMPANHAS DE WHATSAPP =====
+
+// Variáveis globais para campanhas
+let selectedAccountId = null;
+let selectedInboxId = null;
+
+// Habilitar/desabilitar botão Criar Campanha conforme seleção
+function updateCampanhaButton() {
+    const btnCriarCampanha = document.getElementById('btnCriarCampanha');
+    if (selectedAccountId && selectedInboxId) {
+        btnCriarCampanha.disabled = false;
+    } else {
+        btnCriarCampanha.disabled = true;
+    }
+}
+
+// Atualizar as seleções existentes para acompanhar mudanças
+function updateSelectedAccount(accountId) {
+    selectedAccountId = accountId;
+    updateCampanhaButton();
+}
+
+function updateSelectedInbox(inboxId) {
+    selectedInboxId = inboxId;
+    updateCampanhaButton();
+}
+
+// Função para inicializar event listeners das campanhas
+function initCampanhasEventListeners() {
+    try {
+        console.log('Inicializando event listeners de campanhas...');
+        
+        // Verificar se os elementos existem antes de adicionar listeners
+        const btnCriarCampanha = document.getElementById('btnCriarCampanha');
+        const closeModalCampanha = document.getElementById('closeModalCampanha');
+        const formCampanha = document.getElementById('formCampanha');
+        const agendarEnvio = document.getElementById('agendarEnvio');
+        const menuListarCampanhas = document.getElementById('menuListarCampanhas');
+        const metodoEnvioRadios = document.getElementsByName('metodoEnvio');
+
+        console.log('Elementos encontrados:', {
+            btnCriarCampanha: !!btnCriarCampanha,
+            closeModalCampanha: !!closeModalCampanha,
+            formCampanha: !!formCampanha,
+            agendarEnvio: !!agendarEnvio,
+            menuListarCampanhas: !!menuListarCampanhas,
+            metodoEnvioRadios: metodoEnvioRadios.length
+        });
+
+        if (btnCriarCampanha) {
+            btnCriarCampanha.addEventListener('click', function() {
+                document.getElementById('modalCampanha').style.display = 'block';
+                loadModelos();
+                loadTags();
+            });
+        }
+
+        if (closeModalCampanha) {
+            closeModalCampanha.addEventListener('click', function() {
+                document.getElementById('modalCampanha').style.display = 'none';
+            });
+        }
+
+        // Fechar modal ao clicar fora
+        window.addEventListener('click', function(event) {
+            const modal = document.getElementById('modalCampanha');
+            if (modal && event.target === modal) {
+                modal.style.display = 'none';
+            }
+        });
+
+        // Trocar entre campos de tag/CSV
+        if (metodoEnvioRadios && metodoEnvioRadios.length > 0) {
+            metodoEnvioRadios.forEach(radio => {
+                radio.addEventListener('change', function() {
+                    const detalhesTag = document.getElementById('detalhesTag');
+                    const detalhesCSV = document.getElementById('detalhesCSV');
+                    if (detalhesTag && detalhesCSV) {
+                        if (this.value === 'tag') {
+                            detalhesTag.style.display = 'block';
+                            detalhesCSV.style.display = 'none';
+                        } else {
+                            detalhesTag.style.display = 'none';
+                            detalhesCSV.style.display = 'block';
+                        }
+                    }
+                });
+            });
+        }
+
+        // Mostrar/esconder campos de agendamento
+        if (agendarEnvio) {
+            agendarEnvio.addEventListener('change', function() {
+                const agendamentoCampos = document.getElementById('agendamentoCampos');
+                const btnEnviar = document.getElementById('btnEnviarCampanha');
+                if (agendamentoCampos && btnEnviar) {
+                    if (this.checked) {
+                        agendamentoCampos.style.display = 'block';
+                        btnEnviar.textContent = 'Agendar Campanha';
+                    } else {
+                        agendamentoCampos.style.display = 'none';
+                        btnEnviar.textContent = 'Enviar Agora';
+                    }
+                }
+            });
+        }
+
+        // Submeter formulário para criar campanha
+        if (formCampanha) {
+            formCampanha.addEventListener('submit', async function(e) {
+                e.preventDefault();
+                
+                const formData = new FormData(this);
+                const metodoEnvio = formData.get('metodoEnvio');
+                const agendarEnvioChecked = document.getElementById('agendarEnvio').checked;
+                
+                // Preparar dados da campanha
+                const campanhaData = {
+                    name: formData.get('campanhaNome'),
+                    type: metodoEnvio,
+                    template_name: formData.get('modeloMensagem'),
+                    chatwoot_account_id: selectedAccountId,
+                    chatwoot_inbox_id: selectedInboxId
+                };
+                
+                if (metodoEnvio === 'tag') {
+                    campanhaData.tag_name = formData.get('tagNome');
+                }
+                
+                if (agendarEnvioChecked) {
+                    const dataEnvio = formData.get('dataEnvio');
+                    const horaEnvio = formData.get('horaEnvio');
+                    if (dataEnvio && horaEnvio) {
+                        campanhaData.scheduled_at = `${dataEnvio}T${horaEnvio}:00`;
+                    }
+                }
+                
+                try {
+                    // Criar campanha
+                    const response = await fetch('/api/campaigns', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${getAuthToken()}`
+                        },
+                        body: JSON.stringify(campanhaData)
+                    });
+                    
+                    const result = await response.json();
+                    
+                    if (result.success) {
+                        const campaignId = result.campaign.id;
+                        
+                        // Se for CSV, fazer upload do arquivo
+                        if (metodoEnvio === 'csv') {
+                            const csvFile = formData.get('csvContatos');
+                            if (csvFile && csvFile.size > 0) {
+                                const uploadFormData = new FormData();
+                                uploadFormData.append('file', csvFile);
+                                
+                                await fetch(`/api/campaigns/${campaignId}/upload-csv`, {
+                                    method: 'POST',
+                                    headers: { 'Authorization': `Bearer ${getAuthToken()}` },
+                                    body: uploadFormData
+                                });
+                            }
+                        }
+                        
+                        // Se não for agendado, iniciar envio imediatamente
+                        if (!agendarEnvioChecked) {
+                            await fetch(`/api/campaigns/${campaignId}/start`, {
+                                method: 'POST',
+                                headers: { 'Authorization': `Bearer ${getAuthToken()}` }
+                            });
+                        }
+                        
+                        window.app.showAlert('Campanha criada com sucesso!', 'success');
+                        document.getElementById('modalCampanha').style.display = 'none';
+                        this.reset();
+                    } else {
+                        window.app.showAlert('Erro ao criar campanha: ' + result.error, 'error');
+                    }
+                } catch (error) {
+                    console.error('Erro ao criar campanha:', error);
+                    window.app.showAlert('Erro ao criar campanha', 'error');
+                }
+            });
+        }
+
+        // Listar campanhas (menu dropdown)
+        if (menuListarCampanhas) {
+            menuListarCampanhas.addEventListener('click', function() {
+                loadCampanhasList();
+            });
+        }
+        
+        console.log('Event listeners de campanhas inicializados com sucesso!');
+    } catch (error) {
+        console.error('Erro na função initCampanhasEventListeners:', error);
+    }
+}
+
+// Inicializar event listeners quando o DOM estiver carregado
+document.addEventListener('DOMContentLoaded', function() {
+    // Não executar nada relacionado a campanhas no DOMContentLoaded
+    // Deixar apenas para após o login
+});
+
+// Função para ser chamada quando o usuário faz login com sucesso
+function initCampanhasAfterLogin() {
+    try {
+        // Aguardar um pouco mais para garantir que todos os elementos foram criados
+        setTimeout(() => {
+            try {
+                initCampanhasEventListeners();
+            } catch (error) {
+                console.error('Erro ao inicializar event listeners de campanhas:', error);
+            }
+        }, 1000);
+    } catch (error) {
+        console.error('Erro na inicialização de campanhas:', error);
+    }
+}
+
+// Remover os event listeners que estavam soltos para evitar erros
+// (Os event listeners agora estão dentro de initCampanhasEventListeners)
+
+// Carregar modelos/templates via API
+async function loadModelos() {
+    try {
+        const response = await fetch('/api/chatwoot/templates', {
+            headers: { 'Authorization': `Bearer ${getAuthToken()}` }
+        });
+        const templates = await response.json();
+        const select = document.getElementById('modeloMensagem');
+        select.innerHTML = '<option value="">Selecione um modelo</option>';
+        // Assumindo que a API retorna uma lista de templates
+        templates.forEach(template => {
+            const option = document.createElement('option');
+            option.value = template.name || template.id;
+            option.textContent = template.name || `Template ${template.id}`;
+            select.appendChild(option);
+        });
+    } catch (error) {
+        console.error('Erro ao carregar modelos:', error);
+        showAlert('Erro ao carregar modelos de mensagem', 'error');
+    }
+}
+
+// Carregar tags disponíveis via API para autocomplete
+async function loadTags() {
+    try {
+        const response = await fetch('/api/chatwoot/tags', {
+            headers: { 'Authorization': `Bearer ${getAuthToken()}` }
+        });
+        const tags = await response.json();
+        // Implementar autocomplete simples ou datalist
+        const input = document.getElementById('tagNome');
+        const datalist = document.createElement('datalist');
+        datalist.id = 'tagsList';
+        input.setAttribute('list', 'tagsList');
+        tags.forEach(tag => {
+            const option = document.createElement('option');
+            option.value = tag.title || tag.name;
+            datalist.appendChild(option);
+        });
+        input.parentNode.appendChild(datalist);
+    } catch (error) {
+        console.error('Erro ao carregar tags:', error);
+    }
+}
+
+
+
+// Carregar lista de campanhas
+async function loadCampanhasList() {
+    try {
+        const response = await fetch('/api/campaigns', {
+            headers: { 'Authorization': `Bearer ${getAuthToken()}`
