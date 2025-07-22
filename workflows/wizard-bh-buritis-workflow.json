@@ -66,7 +66,13 @@
       "bloco_4": {
         "id": "bloco_4",
         "name": "Metodologia Wizard",
-        "message": "Antes de te mostrar os planos, deixa eu te explicar como funciona nosso método.\n\n📘 CONNECTIONS: aula em turma, mesmo nível, professor conduz\n📱 INTERACTIVE: autonomia, diferentes níveis, professor mentor\n\nAgora vamos entender como a metodologia da Wizard realmente funciona? Dá o play nesse vídeo 😉\n🎥 https://youtu.be/MN8vncZ8Iok?si=Q9orpQMaKXs3gvXS\n\nE com qual dessas experiências você se identifica mais? Connections ou Interactive?\n\nTudo certo até aqui? Qualquer dúvida me chama!\n\n📌 OBS: Método Wizard trabalha fala, escuta, leitura e escrita desde a primeira aula – aprendizado 3x mais rápido e fluência em até 2 anos!",
+        "message": "Antes de te mostrar os planos, deixa eu te explicar como funciona nosso método.\n\n📘 CONNECTIONS: aula em turma, mesmo nível, professor conduz\n📱 INTERACTIVE: autonomia, diferentes níveis, professor mentor\n\nAgora vamos entender como a metodologia da Wizard realmente funciona? Dá o play nesse vídeo 😉",
+        "media": {
+          "type": "video",
+          "url": "https://youtu.be/MN8vncZ8Iok?si=Q9orpQMaKXs3gvXS",
+          "title": "Metodologia Wizard - Como Funciona",
+          "description": "E com qual dessas experiências você se identifica mais? Connections ou Interactive?\n\n📌 OBS: Método Wizard trabalha fala, escuta, leitura e escrita desde a primeira aula – aprendizado 3x mais rápido e fluência em até 2 anos!"
+        },
         "buttons": [
           { "text": "Tudo certo!", "next_block": "bloco_5" },
           { "text": "Tenho dúvidas!", "next_block": "atendimento_humano", "tag": "duvida_metodologia" }
@@ -101,7 +107,13 @@
       "bloco_7": {
         "id": "bloco_7",
         "name": "Aula Demonstrativa",
-        "message": "Quer ver como funciona na prática? Separamos uma aula demonstrativa gratuita pra você!\n🎥 https://youtu.be/iOwwtn3fWm4?si=zr16kkn4kAHiaMND",
+        "message": "Quer ver como funciona na prática? Separamos uma aula demonstrativa gratuita pra você!",
+        "media": {
+          "type": "video",
+          "url": "https://youtu.be/iOwwtn3fWm4?si=zr16kkn4kAHiaMND",
+          "title": "Aula Demonstrativa Gratuita",
+          "description": "Veja como funciona uma aula real da Wizard na prática!"
+        },
         "next_block": "bloco_8",
         "tag": "aula_demo_enviada"
       },

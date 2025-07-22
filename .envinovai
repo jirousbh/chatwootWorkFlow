@@ -7,7 +7,7 @@
 SECRET_KEY_BASE=YrH5OPO3NfZrza1eMUPgJCVitnPHml3XE65emuWWagQrsuQzMKHkGWHLQSBBXuy
 
 # Replace with the URL you are planning to use for your app
-FRONTEND_URL=http://0.0.0.0:4500
+FRONTEND_URL=https://crm.inovaianalytics.com.br
 # To use a dedicated URL for help center pages
 # HELPCENTER_URL=http://0.0.0.0:3000
 

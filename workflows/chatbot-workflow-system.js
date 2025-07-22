@@ -13,6 +13,127 @@ const { body, validationResult } = require('express-validator');
 const multer = require('multer');
 const upload = multer({ dest: 'uploads/' });
 const csv = require('csv-parser');
+const FormData = require('form-data');
+
+// ===== SISTEMA DE LOGS DUPLO =====
+// Logs aparecem tanto no console (docker logs) quanto em arquivos
+const logDir = path.join(__dirname, 'logs');
+
+// Criar diretório de logs se não existir
+if (!fs.existsSync(logDir)) {
+  fs.mkdirSync(logDir, { recursive: true });
+}
+
+// Função para formatar timestamp
+function getTimestamp() {
+  return new Date().toISOString().replace('T', ' ').substr(0, 19);
+}
+
+// Salvamos o console original antes de redefinir
+const originalConsole = { ...console };
+
+// Função de log personalizada
+function logger(level, message, ...args) {
+  const timestamp = getTimestamp();
+  const logMessage = `[${timestamp}] [${level.toUpperCase()}] ${message}`;
+  
+  // 1. Sempre enviar para console original (aparece em docker logs)
+  if (level === 'error') {
+    originalConsole.error(logMessage, ...args);
+  } else if (level === 'warn') {
+    originalConsole.warn(logMessage, ...args);
+  } else {
+    originalConsole.log(logMessage, ...args);
+  }
+  
+  // 2. Salvar em arquivo para persistência
+  try {
+    const date = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+    const logFile = path.join(logDir, `chatwoot-${date}.log`);
+    
+    let fileMessage = logMessage;
+    if (args.length > 0) {
+      fileMessage += ' ' + args.map(arg => 
+        typeof arg === 'object' ? JSON.stringify(arg) : String(arg)
+      ).join(' ');
+    }
+    
+    fs.appendFileSync(logFile, fileMessage + '\n');
+  } catch (err) {
+    originalConsole.error('❌ Erro ao escrever log em arquivo:', err.message);
+  }
+}
+
+// Substituir console.log/error padrão por nossa função
+console.log = (...args) => logger('info', args.join(' '));
+console.error = (...args) => logger('error', args.join(' '));
+console.warn = (...args) => logger('warn', args.join(' '));
+
+// Função para logs específicos (quando quiser usar diretamente)
+const log = {
+  info: (message, ...args) => logger('info', message, ...args),
+  error: (message, ...args) => logger('error', message, ...args),
+  warn: (message, ...args) => logger('warn', message, ...args),
+  debug: (message, ...args) => logger('debug', message, ...args)
+};
+
+// Função para limpar logs antigos (mais de 30 dias)
+function cleanOldLogs() {
+  try {
+    const files = fs.readdirSync(logDir);
+    const now = Date.now();
+    const thirtyDaysAgo = now - (30 * 24 * 60 * 60 * 1000);
+    
+    files.forEach(file => {
+      if (file.endsWith('.log')) {
+        const filePath = path.join(logDir, file);
+        const stats = fs.statSync(filePath);
+        
+        if (stats.mtime.getTime() < thirtyDaysAgo) {
+          fs.unlinkSync(filePath);
+          log.info('🗑️ Log antigo removido:', file);
+        }
+      }
+    });
+  } catch (err) {
+    log.error('❌ Erro ao limpar logs antigos:', err.message);
+  }
+}
+
+// Limpar logs antigos na inicialização
+cleanOldLogs();
+
+// Limpar logs antigos diariamente (a cada 24 horas)
+setInterval(cleanOldLogs, 24 * 60 * 60 * 1000);
+
+// Log de inicialização
+log.info('🚀 Sistema de logs duplo inicializado');
+log.info('📁 Logs salvos em:', logDir);
+log.info('🐳 Logs visíveis via: docker logs chatwoot-chatbot-workflows-1');
+log.info('🧹 Limpeza automática de logs antigos (>30 dias) ativada');
+
+// ===== FIM DO SISTEMA DE LOGS =====
+
+// Configuração do multer para upload de mídia
+const mediaUpload = multer({ 
+  dest: 'uploads/media/',
+  limits: {
+    fileSize: 16 * 1024 * 1024, // 16MB limit
+  },
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = [
+      'video/mp4', 'video/avi', 'video/mov', 'video/wmv', 'video/quicktime',
+      'image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp',
+      'audio/mp3', 'audio/wav', 'audio/ogg', 'audio/mpeg'
+    ];
+    
+    if (allowedTypes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error(`Tipo de arquivo não suportado: ${file.mimetype}`), false);
+    }
+  }
+});
 
 const app = express();
 
@@ -58,6 +179,7 @@ const CHATWOOT_BASE_URL = process.env.CHATWOOT_BASE_URL || 'https://crm.inovaian
 const CHATWOOT_API_TOKEN = process.env.CHATWOOT_API_TOKEN;
 const WHATSAPP_API_TOKEN = process.env.WHATSAPP_API_TOKEN;
 const WHATSAPP_PHONE_ID = process.env.WHATSAPP_PHONE_ID;
+const WHATSAPP_BUSINESS_ACCOUNT_ID = process.env.WHATSAPP_BUSINESS_ACCOUNT_ID;
 const CHATWOOT_ACCOUNT_ID = process.env.CHATWOOT_ACCOUNT_ID || '1';
 
 // Configuração do PostgreSQL (usando o mesmo servidor postgres do Chatwoot)
@@ -166,6 +288,22 @@ async function initializeDatabase() {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(account_id, inbox_id)
+      )
+    `);
+
+    // Criar tabela de arquivos de mídia
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS media_files (
+        id VARCHAR(255) PRIMARY KEY,
+        original_name VARCHAR(500) NOT NULL,
+        filename VARCHAR(255) NOT NULL,
+        file_path VARCHAR(1000) NOT NULL,
+        mimetype VARCHAR(100) NOT NULL,
+        size BIGINT NOT NULL,
+        upload_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        created_by VARCHAR(255),
+        description TEXT,
+        is_active BOOLEAN DEFAULT true
       )
     `);
 
@@ -883,6 +1021,9 @@ class ConversationManager {
       const conversation = await this.getConversation(contactId);
       if (!conversation) return null;
 
+      // Declarar conversationId no início do método para evitar erro de inicialização
+      const conversationId = conversation.data?.conversation_id || conversation.conversation_id;
+
       let workflow = this.workflows.get(conversation.workflow_name);
       
       // Se não encontrar o workflow, tentar buscar no banco de dados
@@ -925,7 +1066,6 @@ class ConversationManager {
         }
 
         // Aplicar atribuições do botão
-        const conversationId = conversation.data?.conversation_id || conversation.conversation_id;
         console.log(`🔍 Debug - conversation.conversation_id: ${conversation.conversation_id}, conversation.data.conversation_id: ${conversation.data?.conversation_id}, usando: ${conversationId}`);
         await this.processButtonActions(button, conversationId, contactId);
 
@@ -944,7 +1084,6 @@ class ConversationManager {
             }
             
             // Aplicar ações do próximo bloco
-            const conversationId = conversation.data?.conversation_id || conversation.conversation_id;
             await this.processBlockActions(nextBlock, conversationId, contactId);
             
             // Atualizar o campo data com o nome
@@ -970,7 +1109,6 @@ class ConversationManager {
         }
         
         // Aplicar ações do bloco atual
-        const conversationId = conversation.data?.conversation_id || conversation.conversation_id;
         await this.processBlockActions(currentBlock, conversationId, contactId);
         
         // Avançar para o next_block se existir
@@ -1121,6 +1259,12 @@ class ConversationManager {
         console.log(`🔧 Botão solicita etiquetas no contato: [${button.contact_labels.join(', ')}]`);
         await addLabelsToContact(contactId, button.contact_labels);
       }
+
+      // Pausar bot se solicitado no botão
+      if (button.pause_bot === true) {
+        console.log(`⏸️ Botão "${button.text}" solicita pausa do bot - pausando automaticamente`);
+        await pauseBotForConversation(conversationId, contactId, 'button_action', 'system');
+      }
     } catch (error) {
       console.error(`❌ Erro ao processar ações do botão "${button.text}":`, error);
     }
@@ -1153,6 +1297,12 @@ class ConversationManager {
       if (block.contact_labels && Array.isArray(block.contact_labels)) {
         console.log(`🔧 Bloco solicita etiquetas no contato: [${block.contact_labels.join(', ')}]`);
         await addLabelsToContact(contactId, block.contact_labels);
+      }
+
+      // Pausar bot se solicitado no bloco
+      if (block.pause_bot === true) {
+        console.log(`⏸️ Bloco "${block.name || block.id}" solicita pausa do bot - pausando automaticamente`);
+        await pauseBotForConversation(conversationId, contactId, 'sector_transfer', 'system');
       }
     } catch (error) {
       console.error(`❌ Erro ao processar ações do bloco "${block.name || block.id}":`, error);
@@ -1280,6 +1430,9 @@ async function initializeSystem() {
     // Iniciar polling do Chatwoot
     console.log('🔄 Preparando para iniciar monitoramento do Chatwoot...');
     startChatwootPolling();
+    
+    // Iniciar verificador de reativação automática
+    startBotReactivationScheduler();
   } catch (error) {
     console.error('❌ Erro ao inicializar sistema:', error);
     process.exit(1);
@@ -1298,6 +1451,27 @@ function startChatwootPolling() {
   
   // Iniciar primeiro polling imediatamente
   pollChatwootMessages();
+}
+
+// Função para iniciar verificação de reativação automática (24h)
+function startBotReactivationScheduler() {
+  console.log('🕐 Iniciando verificador de reativação automática de bots (24h)...');
+  
+  // Executar primeira verificação após 1 minuto
+  setTimeout(() => {
+    checkAndReactivateBotsAfter24Hours();
+  }, 60000);
+  
+  // Verificar a cada 30 minutos
+  setInterval(async () => {
+    try {
+      await checkAndReactivateBotsAfter24Hours();
+    } catch (error) {
+      console.error('❌ Erro na verificação de reativação automática:', error);
+    }
+  }, 1800000); // 30 minutos = 1800000ms
+  
+  console.log('✅ Verificador de reativação automática configurado (verificação a cada 30 minutos)');
 }
 
 // Função de polling para verificar novas mensagens no Chatwoot
@@ -1433,13 +1607,7 @@ async function processUserMessage(contactId, conversationId, userMessage, inboxI
   try {
     console.log(`📨 Processando mensagem de ${contactId} (Inbox: ${inboxId}): ${userMessage}`);
     
-    // NOVA VERIFICAÇÃO: Verificar se o bot deve estar ativo para esta conversa
-    const botShouldBeActive = await isBotActiveForConversation(conversationId, contactId);
-    
-    if (!botShouldBeActive) {
-      console.log(`🚫 Bot desativado para conversa ${conversationId}, ignorando mensagem: ${userMessage}`);
-      return;
-    }
+    // ===== COMANDOS QUE SEMPRE FUNCIONAM (mesmo com bot pausado) =====
     
     // Se o usuário digitar !reset, zera o fluxo
     if (userMessage.trim().toLowerCase() === '!reset') {
@@ -1452,6 +1620,34 @@ async function processUserMessage(contactId, conversationId, userMessage, inboxI
       // Reativar o bot após reset
       await reactivateBotForConversation(conversationId, contactId, 'user_reset');
       await sendChatwootMessage(conversationId, 'Fluxo reiniciado com sucesso e todos os labels removidos (contato e conversa). Agora você pode iniciar a conversa novamente. Tente dar um "oi".');
+      return;
+    }
+    
+    // Reativar bot - DEVE FUNCIONAR MESMO COM BOT PAUSADO
+    if (userMessage.trim().toLowerCase() === '!activebot') {
+      console.log(`▶️ Comando de reativação do bot solicitado por ${contactId}`);
+      const success = await reactivateBotForConversation(conversationId, contactId, contactId);
+      if (success) {
+        await sendChatwootMessage(conversationId, '▶️ Bot reativado com sucesso! O bot voltará a responder normalmente nesta conversa.');
+      } else {
+        await sendChatwootMessage(conversationId, '❌ Erro ao reativar bot. Tente novamente.');
+      }
+      return;
+    }
+    
+    // Status do bot - DEVE FUNCIONAR MESMO COM BOT PAUSADO
+    if (userMessage.trim().toLowerCase() === '!botstatus') {
+      console.log(`🔍 Status do bot solicitado por ${contactId}`);
+      try {
+        const botStatus = await getBotConversationStatus(conversationId, contactId);
+        const status = botStatus.bot_active ? '✅ Ativo' : `❌ Pausado (${botStatus.paused_reason})`;
+        const agent = botStatus.has_human_agent ? `👤 Agente: ${botStatus.agent_id}` : '🤖 Sem agente humano';
+        const message = `🤖 **Status do Bot**\n${status}\n${agent}\n\nComandos disponíveis:\n• !pausebot - Pausar bot\n• !activebot - Reativar bot\n• !reset - Reiniciar fluxo`;
+        await sendChatwootMessage(conversationId, message);
+      } catch (error) {
+        console.error('❌ Erro ao obter status do bot:', error);
+        await sendChatwootMessage(conversationId, '❌ Erro ao obter status do bot.');
+      }
       return;
     }
     
@@ -1483,8 +1679,6 @@ async function processUserMessage(contactId, conversationId, userMessage, inboxI
       return;
     }
     
-    // NOVOS COMANDOS DE CONTROLE DO BOT
-    
     // Pausar bot
     if (userMessage.trim().toLowerCase() === '!pausebot') {
       console.log(`⏸️ Comando de pausa do bot solicitado por ${contactId}`);
@@ -1497,31 +1691,12 @@ async function processUserMessage(contactId, conversationId, userMessage, inboxI
       return;
     }
     
-    // Reativar bot
-    if (userMessage.trim().toLowerCase() === '!activebot') {
-      console.log(`▶️ Comando de reativação do bot solicitado por ${contactId}`);
-      const success = await reactivateBotForConversation(conversationId, contactId, contactId);
-      if (success) {
-        await sendChatwootMessage(conversationId, '▶️ Bot reativado com sucesso! O bot voltará a responder normalmente nesta conversa.');
-      } else {
-        await sendChatwootMessage(conversationId, '❌ Erro ao reativar bot. Tente novamente.');
-      }
-      return;
-    }
+    // ===== VERIFICAÇÃO DE STATUS DO BOT (apenas para mensagens normais) =====
+    // NOVA VERIFICAÇÃO: Verificar se o bot deve estar ativo para esta conversa
+    const botShouldBeActive = await isBotActiveForConversation(conversationId, contactId);
     
-    // Status do bot
-    if (userMessage.trim().toLowerCase() === '!botstatus') {
-      console.log(`🔍 Status do bot solicitado por ${contactId}`);
-      try {
-        const botStatus = await getBotConversationStatus(conversationId, contactId);
-        const status = botStatus.bot_active ? '✅ Ativo' : `❌ Pausado (${botStatus.paused_reason})`;
-        const agent = botStatus.has_human_agent ? `👤 Agente: ${botStatus.agent_id}` : '🤖 Sem agente humano';
-        const message = `🤖 **Status do Bot**\n${status}\n${agent}\n\nComandos disponíveis:\n• !pausebot - Pausar bot\n• !activebot - Reativar bot\n• !reset - Reiniciar fluxo`;
-        await sendChatwootMessage(conversationId, message);
-      } catch (error) {
-        console.error('❌ Erro ao obter status do bot:', error);
-        await sendChatwootMessage(conversationId, '❌ Erro ao obter status do bot.');
-      }
+    if (!botShouldBeActive) {
+      console.log(`🚫 Bot desativado para conversa ${conversationId}, ignorando mensagem: ${userMessage}`);
       return;
     }
     
@@ -1530,7 +1705,7 @@ async function processUserMessage(contactId, conversationId, userMessage, inboxI
     
     if (!conversation) {
       // Iniciar nova conversa se for uma mensagem de trigger
-      if (isTriggerMessage(userMessage)) {
+      if (await isTriggerMessage(userMessage, inboxId)) {
         // Buscar o fluxo configurado para esta caixa de entrada específica
         const inboxWorkflow = await inboxWorkflowManager.getInboxWorkflow(CHATWOOT_ACCOUNT_ID, inboxId);
         
@@ -1578,7 +1753,8 @@ async function processUserMessage(contactId, conversationId, userMessage, inboxI
           await sendChatwootMessage(
             conversationId,
             conversationManager.processMessage(firstBlock.message, conversation.data),
-            firstBlock.buttons
+            firstBlock.buttons,
+            firstBlock.media
           );
         } else {
           console.log(`⚠️ Nenhum fluxo configurado para a caixa de entrada ${inboxId}, usando fluxo padrão`);
@@ -1621,7 +1797,8 @@ async function processUserMessage(contactId, conversationId, userMessage, inboxI
           await sendChatwootMessage(
             conversationId,
             conversationManager.processMessage(firstBlock.message, conversation.data),
-            firstBlock.buttons
+            firstBlock.buttons,
+            firstBlock.media
           );
         }
       }
@@ -1631,7 +1808,7 @@ async function processUserMessage(contactId, conversationId, userMessage, inboxI
       
       if (result && result.type) {
       if (result.type === 'next_block') {
-        await sendChatwootMessage(conversationId, result.message, result.block.buttons);
+        await sendChatwootMessage(conversationId, result.message, result.block.buttons, result.block.media);
       } else if (result.type === 'finalized') {
         await sendChatwootMessage(conversationId, result.message);
         await conversationManager.finalizeConversation(contactId);
@@ -1646,7 +1823,7 @@ async function processUserMessage(contactId, conversationId, userMessage, inboxI
         
         if (workflow) {
           const currentBlock = workflow.blocks[conversation.current_block];
-          await sendChatwootMessage(conversationId, result.message, currentBlock.buttons);
+          await sendChatwootMessage(conversationId, result.message, currentBlock.buttons, currentBlock.media);
         } else {
           console.error(`❌ Não foi possível encontrar workflow '${conversation.workflow_name}' para resposta inválida`);
         }
@@ -1696,15 +1873,67 @@ async function processUserMessage(contactId, conversationId, userMessage, inboxI
 }
 
 // Enviar mensagem para o Chatwoot
-async function sendChatwootMessage(conversationId, message, buttons = []) {
+async function sendChatwootMessage(conversationId, message, buttons = [], mediaContent = null) {
   try {
+    // Se houver anexo direto via file_id, baixar arquivo e enviar via multipart/form-data
+    if (mediaContent && mediaContent.attachment && mediaContent.attachment.file_id) {
+      const fileResult = await pool.query('SELECT * FROM media_files WHERE id = $1 AND is_active = true', [mediaContent.attachment.file_id]);
+      
+      if (fileResult.rows.length > 0) {
+        const file = fileResult.rows[0];
+        
+        console.log(`📁 Arquivo encontrado: ${file.original_name} (ID: ${file.id})`);
+        console.log(`🎯 Enviando via multipart/form-data (método que funciona)`);
+        
+        // Extrair delay customizável do mediaContent (padrão: 3 segundos para vídeos)
+        const customDelay = mediaContent.delay || (file.mimetype.startsWith('video/') ? 3000 : 1000);
+        console.log(`⏰ Delay configurado: ${customDelay}ms`);
+        
+        // ✅ ABORDAGEM CORRETA: Baixar arquivo da URL pública e enviar via multipart/form-data
+        return await sendChatwootMessageWithFileDownload(conversationId, message, buttons, file, customDelay);
+      } else {
+        console.error(`❌ Arquivo não encontrado: ${mediaContent.attachment.file_id}`);
+        // Continuar com envio normal da mensagem
+      }
+    }
+    
+    // Se houver anexo direto (arquivo local), enviar como anexo
+    if (mediaContent && mediaContent.attachment && mediaContent.attachment.path) {
+      return await sendChatwootMessageWithAttachment(conversationId, message, buttons, mediaContent.attachment);
+    }
+    
+    // ESPECIAL: Vídeo do YouTube - enviar thumbnail + link para melhor visualização no WhatsApp
+    if (mediaContent && mediaContent.type === 'video' && mediaContent.url) {
+      const videoId = extractYouTubeVideoId(mediaContent.url);
+      if (videoId) {
+        console.log(`🎬 Detectado vídeo do YouTube: ${videoId}, enviando com thumbnail otimizado para WhatsApp`);
+        return await sendYouTubeVideoWithThumbnail(conversationId, message, buttons, mediaContent, videoId);
+      }
+    }
+    
     const payload = {
       content: message,
-      message_type: 1  // 1 = outgoing, 0 = incoming
+      message_type: 'outgoing'  // outgoing message
     };
     
-    // Se houver botões, criar mensagem com botões
-    if (buttons && buttons.length > 0) {
+    // Se houver conteúdo de mídia (vídeo, imagem), criar card com mídia
+    if (mediaContent && mediaContent.type && mediaContent.url) {
+      payload.content_type = 'cards';
+      payload.content_attributes = {
+        items: [{
+          media_url: mediaContent.url,
+          title: mediaContent.title || 'Mídia',
+          description: mediaContent.description || message,
+          actions: buttons && buttons.length > 0 ? buttons.map(button => ({
+            type: 'postback',
+            text: button.text,
+            payload: button.text
+          })) : []
+        }]
+    };
+    } 
+    // Se houver botões mas sem mídia, criar mensagem com botões
+    else if (buttons && buttons.length > 0) {
       payload.content_type = 'input_select';
       payload.content_attributes = {
         items: buttons.map((button, index) => ({
@@ -1721,18 +1950,571 @@ async function sendChatwootMessage(conversationId, message, buttons = []) {
       }
     });
     
-    console.log(`✅ Mensagem enviada para conversa ${conversationId}: ${message}`);
+    const mediaInfo = mediaContent ? ` (${mediaContent.type}: ${mediaContent.url})` : '';
+    console.log(`✅ Mensagem enviada para conversa ${conversationId}: ${message}${mediaInfo}`);
   } catch (error) {
     console.error('❌ Erro ao enviar mensagem para Chatwoot:', error);
+    if (error.response) {
+      console.error('   Response data:', error.response.data);
+      console.error('   Status:', error.response.status);
+    }
   }
 }
 
-// Verificar se é mensagem de trigger
-function isTriggerMessage(message) {
-  const triggers = ['oi', 'olá', 'hello', 'start', 'iniciar'];
-  return triggers.some(trigger => 
-    message.toLowerCase().includes(trigger)
-  );
+// Extrair ID do vídeo do YouTube de diferentes formatos de URL
+function extractYouTubeVideoId(url) {
+  const regexes = [
+    // youtube.com/watch?v=ID (pode ter outros parâmetros)
+    /(?:https?:\/\/)?(?:www\.)?youtube\.com\/watch\?.*[&?]v=([^&\n?#]+)/,
+    /(?:https?:\/\/)?(?:www\.)?youtube\.com\/watch\?v=([^&\n?#]+)/,
+    // youtu.be/ID (formato curto)
+    /(?:https?:\/\/)?(?:www\.)?youtu\.be\/([^&\n?#\?]+)/,
+    // youtube.com/embed/ID
+    /(?:https?:\/\/)?(?:www\.)?youtube\.com\/embed\/([^&\n?#]+)/,
+    // youtube.com/v/ID
+    /(?:https?:\/\/)?(?:www\.)?youtube\.com\/v\/([^&\n?#]+)/
+  ];
+  
+  for (const regex of regexes) {
+    const match = url.match(regex);
+    if (match && match[1]) {
+      return match[1].split('&')[0]; // Remove parâmetros adicionais
+    }
+  }
+  
+  return null;
+}
+
+// Enviar vídeo do YouTube com thumbnail para WhatsApp
+async function sendYouTubeVideoWithThumbnail(conversationId, message, buttons, mediaContent, videoId) {
+  try {
+    // 1. Enviar mensagem de texto primeiro
+    if (message) {
+      const textPayload = {
+        content: message,
+        message_type: 'outgoing'
+      };
+      
+      await axios.post(`${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/conversations/${conversationId}/messages`, textPayload, {
+        headers: {
+          'api_access_token': CHATWOOT_API_TOKEN,
+          'Content-Type': 'application/json'
+        }
+      });
+    }
+    
+    // 2. Baixar thumbnail do YouTube
+    const thumbnailUrl = `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`;
+    console.log(`📸 Baixando thumbnail: ${thumbnailUrl}`);
+    
+    const thumbnailResponse = await axios.get(thumbnailUrl, { 
+      responseType: 'stream',
+      timeout: 10000 
+    });
+    
+    // 3. Salvar thumbnail temporariamente
+    const tempThumbnailPath = path.join(__dirname, 'uploads', `thumb_${videoId}_${Date.now()}.jpg`);
+    const writer = fs.createWriteStream(tempThumbnailPath);
+    thumbnailResponse.data.pipe(writer);
+    
+    await new Promise((resolve, reject) => {
+      writer.on('finish', resolve);
+      writer.on('error', reject);
+    });
+    
+    console.log(`✅ Thumbnail salvo: ${tempThumbnailPath}`);
+    
+    // 4. Enviar thumbnail como imagem
+    const formData = new FormData();
+    formData.append('attachments[]', fs.createReadStream(tempThumbnailPath), {
+      filename: `youtube_thumbnail_${videoId}.jpg`,
+      contentType: 'image/jpeg'
+    });
+    
+    const thumbnailText = `🎬 ${mediaContent.title || 'Vídeo do YouTube'}`;
+    formData.append('content', thumbnailText);
+    formData.append('message_type', 'outgoing');
+    
+    await axios.post(
+      `${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/conversations/${conversationId}/messages`,
+      formData,
+      {
+        headers: {
+          'api_access_token': CHATWOOT_API_TOKEN,
+          ...formData.getHeaders()
+        }
+      }
+    );
+    
+    console.log(`✅ Thumbnail enviado para conversa ${conversationId}`);
+    
+    // 5. Enviar link do vídeo
+    let linkMessage = `🔗 Assista ao vídeo: ${mediaContent.url}`;
+    if (mediaContent.description) {
+      linkMessage += `\n\n${mediaContent.description}`;
+    }
+    
+    const linkPayload = {
+      content: linkMessage,
+      message_type: 'outgoing'
+    };
+    
+    await axios.post(`${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/conversations/${conversationId}/messages`, linkPayload, {
+      headers: {
+        'api_access_token': CHATWOOT_API_TOKEN,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    console.log(`✅ Link do vídeo enviado para conversa ${conversationId}`);
+    
+    // 6. Enviar botões se houver
+    if (buttons && buttons.length > 0) {
+      const buttonPayload = {
+        content: 'Escolha uma opção:',
+        content_type: 'input_select',
+        content_attributes: {
+          items: buttons.map((button, index) => ({
+            title: button.text,
+            value: button.text
+          }))
+        },
+        message_type: 'outgoing'
+      };
+      
+      await axios.post(`${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/conversations/${conversationId}/messages`, buttonPayload, {
+        headers: {
+          'api_access_token': CHATWOOT_API_TOKEN,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      console.log(`✅ Botões enviados para conversa ${conversationId}`);
+    }
+    
+    // 7. Limpar arquivo temporário
+    setTimeout(() => {
+      fs.unlink(tempThumbnailPath, (err) => {
+        if (err) console.error('Erro ao limpar thumbnail temporário:', err);
+        else console.log(`🗑️ Thumbnail temporário removido: ${tempThumbnailPath}`);
+      });
+    }, 5000); // Aguardar 5 segundos antes de limpar
+    
+  } catch (error) {
+    console.error('❌ Erro ao enviar vídeo do YouTube com thumbnail:', error);
+    
+    // Fallback: enviar apenas como link normal
+    console.log('🔄 Tentando fallback com envio normal...');
+    const fallbackPayload = {
+      content: `${message}\n\n🎬 ${mediaContent.title || 'Vídeo'}: ${mediaContent.url}`,
+      message_type: 'outgoing'
+    };
+    
+    if (buttons && buttons.length > 0) {
+      fallbackPayload.content_type = 'input_select';
+      fallbackPayload.content_attributes = {
+        items: buttons.map((button, index) => ({
+          title: button.text,
+          value: button.text
+        }))
+      };
+    }
+    
+    await axios.post(`${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/conversations/${conversationId}/messages`, fallbackPayload, {
+      headers: {
+        'api_access_token': CHATWOOT_API_TOKEN,
+        'Content-Type': 'application/json'
+      }
+    });
+  }
+}
+
+// Validar arquivo para API oficial do WhatsApp
+function validateWhatsAppMedia(attachment) {
+  const stats = fs.statSync(attachment.path);
+  const fileSizeInMB = stats.size / (1024 * 1024);
+  
+  console.log(`🔍 Validando arquivo: ${attachment.originalname}`);
+  console.log(`📏 Tamanho: ${fileSizeInMB.toFixed(2)}MB, Tipo: ${attachment.mimetype}`);
+  
+  // Limites da API oficial do WhatsApp
+  const limits = {
+    'image': { maxSizeMB: 5, allowedTypes: ['image/jpeg', 'image/png'] },
+    'video': { maxSizeMB: 16, allowedTypes: ['video/mp4', 'video/3gpp'] },
+    'audio': { maxSizeMB: 16, allowedTypes: ['audio/aac', 'audio/mp4', 'audio/mpeg', 'audio/amr', 'audio/ogg'] },
+    'document': { maxSizeMB: 100, allowedTypes: [] } // documentos aceitam qualquer MIME type
+  };
+  
+  let mediaType = 'document'; // padrão
+  if (attachment.mimetype) {
+    if (attachment.mimetype.startsWith('image/')) mediaType = 'image';
+    else if (attachment.mimetype.startsWith('video/')) mediaType = 'video';
+    else if (attachment.mimetype.startsWith('audio/')) mediaType = 'audio';
+  }
+  
+  const limit = limits[mediaType];
+  
+  // Verificar tamanho
+  if (fileSizeInMB > limit.maxSizeMB) {
+    throw new Error(`❌ Arquivo muito grande: ${fileSizeInMB.toFixed(2)}MB (máximo: ${limit.maxSizeMB}MB para ${mediaType})`);
+  }
+  
+  // Verificar tipo MIME (exceto documentos que aceitam qualquer tipo)
+  if (limit.allowedTypes.length > 0 && !limit.allowedTypes.includes(attachment.mimetype)) {
+    throw new Error(`❌ Tipo de arquivo não suportado: ${attachment.mimetype} (tipos permitidos para ${mediaType}: ${limit.allowedTypes.join(', ')})`);
+  }
+  
+  console.log(`✅ Arquivo válido para WhatsApp API: ${mediaType}, ${fileSizeInMB.toFixed(2)}MB`);
+  return { mediaType, fileSizeInMB };
+}
+
+// Enviar mensagem baixando arquivo via URL pública e usando multipart/form-data
+async function sendChatwootMessageWithFileDownload(conversationId, message, buttons = [], file, buttonDelay = 1000) {
+  // Declarar tempFilePath fora do try para ter acesso no catch
+  const baseUrl = process.env.BASE_URL || process.env.CHATWOOT_BASE_URL?.replace('crm.', 'workflows.') || 'https://workflows.inovaianalytics.com.br';
+  const publicUrl = `${baseUrl}/public-preview/${file.id}`;
+  const tempFilePath = path.join(__dirname, 'uploads', `temp_${file.id}_${Date.now()}.${path.extname(file.original_name)}`);
+  
+  try {
+    console.log(`🔗 URL do arquivo: ${publicUrl}`);
+    console.log(`📁 Arquivo temporário: ${tempFilePath}`);
+    
+    // 1. Verificar se URL está acessível
+    console.log('🔍 Verificando se URL está acessível...');
+    try {
+      const headResponse = await axios.head(publicUrl);
+      console.log(`✅ URL acessível! Status: ${headResponse.status}`);
+      console.log(`📹 Tipo: ${headResponse.headers['content-type']}`);
+      console.log(`📏 Tamanho: ${(headResponse.headers['content-length'] / 1024 / 1024).toFixed(2)}MB`);
+    } catch (urlError) {
+      console.error(`❌ URL não acessível: ${urlError.message}`);
+      throw new Error(`URL pública não acessível: ${publicUrl}`);
+    }
+    
+    // 2. Baixar o arquivo para arquivo temporário
+    console.log('⬇️ Baixando arquivo...');
+    const downloadResponse = await axios.get(publicUrl, {
+      responseType: 'stream',
+      timeout: 30000 // 30 segundos timeout
+    });
+    
+    // Criar diretório se não existir
+    const uploadsDir = path.dirname(tempFilePath);
+    if (!fs.existsSync(uploadsDir)) {
+      fs.mkdirSync(uploadsDir, { recursive: true });
+    }
+    
+    const writer = fs.createWriteStream(tempFilePath);
+    downloadResponse.data.pipe(writer);
+    
+    await new Promise((resolve, reject) => {
+      writer.on('finish', resolve);
+      writer.on('error', reject);
+    });
+    
+    const fileStats = fs.statSync(tempFilePath);
+    console.log(`✅ Arquivo baixado: ${(fileStats.size / 1024 / 1024).toFixed(2)}MB`);
+    
+    // 3. Criar objeto de attachment para a função existente
+    const attachment = {
+      path: tempFilePath,
+      originalname: file.original_name,
+      mimetype: file.mimetype,
+      temporary: true // Marcar para limpeza automática
+    };
+    
+    // 4. Enviar via multipart/form-data usando função existente
+    console.log('🚀 Enviando via multipart/form-data...');
+    const result = await sendChatwootMessageWithAttachment(conversationId, message, buttons, attachment, buttonDelay);
+    
+    // 5. Limpar arquivo temporário
+    console.log('🧹 Limpando arquivo temporário...');
+    fs.unlink(tempFilePath, (err) => {
+      if (err) console.error('Erro ao limpar arquivo temporário:', err);
+      else console.log('✅ Arquivo temporário removido');
+    });
+    
+    return result;
+    
+  } catch (error) {
+    console.error('❌ Erro ao enviar arquivo via download:', error.message);
+    
+    // Limpar arquivo temporário em caso de erro
+    if (tempFilePath && fs.existsSync(tempFilePath)) {
+      fs.unlink(tempFilePath, (err) => {
+        if (err) console.error('Erro ao limpar arquivo temporário após erro:', err);
+        else console.log('🧹 Arquivo temporário removido após erro');
+      });
+    }
+    
+    throw error;
+  }
+}
+
+// Enviar mensagem com anexo para o Chatwoot
+async function sendChatwootMessageWithAttachment(conversationId, message, buttons = [], attachment, buttonDelay = 1000) {
+  try {
+    console.log(`📎 Enviando mensagem com anexo: ${attachment.originalname}`);
+    
+    // Verificar se o arquivo existe antes de tentar enviar
+    if (!fs.existsSync(attachment.path)) {
+      throw new Error(`Arquivo não encontrado: ${attachment.path}`);
+    }
+    
+    // Validar arquivo para API do WhatsApp
+    const validation = validateWhatsAppMedia(attachment);
+    console.log(`🎯 Tipo detectado: ${validation.mediaType}`);
+    
+    // Avisar se o arquivo pode ter problemas específicos
+    if (validation.mediaType === 'video' && validation.fileSizeInMB > 10) {
+      console.log(`⚠️  AVISO: Vídeo com ${validation.fileSizeInMB.toFixed(2)}MB pode ser rejeitado pelo WhatsApp (recomendado: <10MB)`);
+    }
+    
+    // Preparar FormData para o anexo (seguindo padrão oficial do curl)
+    const formData = new FormData();
+    
+    // 1. Adicionar o arquivo
+    console.log(`📎 Tentando enviar anexo: ${attachment.path}`);
+    console.log(`📄 Nome original: ${attachment.originalname}, Tipo: ${attachment.mimetype}`);
+    
+    formData.append('attachments[]', fs.createReadStream(attachment.path), {
+      filename: attachment.originalname,
+      contentType: attachment.mimetype
+    });
+    
+    // 2. Adicionar conteúdo da mensagem (conforme padrão oficial do curl)
+    formData.append('content', message || '📎 Arquivo anexado');
+    
+    // 3. Adicionar tipo da mensagem (outgoing para bot)
+    formData.append('message_type', 'outgoing');
+    
+    // 4. Adicionar tipo do arquivo (usar validação já feita)
+    const fileType = validation.mediaType === 'document' ? 'file' : validation.mediaType;
+    formData.append('file_type', fileType);
+    
+    // Enviar anexo (seguindo padrão oficial do Chatwoot)
+    console.log(`🚀 Enviando para: ${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/conversations/${conversationId}/messages`);
+    console.log(`📝 Dados: content="${message || '📎 Arquivo anexado'}", message_type="outgoing", file_type="${fileType}"`);
+    
+    // Debug dos headers para verificar Content-Type com boundary
+    const headers = {
+      'api_access_token': CHATWOOT_API_TOKEN,
+      ...formData.getHeaders()
+    };
+    console.log(`📋 Headers sendo enviados:`, {
+      'Content-Type': headers['content-type'],
+      'api_access_token': headers['api_access_token'] ? '[TOKEN_PRESENTE]' : '[TOKEN_AUSENTE]'
+    });
+    
+    const response = await axios.post(
+      `${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/conversations/${conversationId}/messages`,
+      formData,
+      {
+        headers
+      }
+    );
+    
+    console.log(`✅ Anexo enviado com sucesso! Status: ${response.status}`);
+    
+    // Enviar botões como mensagem separada se houver
+    if (buttons && buttons.length > 0) {
+      // Aguardar delay customizável antes de enviar os botões
+      console.log(`⏰ Aguardando ${buttonDelay}ms antes de enviar botões...`);
+      await new Promise(resolve => setTimeout(resolve, buttonDelay));
+      
+      const buttonPayload = {
+        content: 'Escolha uma opção:',
+        content_type: 'input_select',
+        content_attributes: {
+          items: buttons.map((button, index) => ({
+            title: button.text,
+            value: button.text
+          }))
+        },
+        message_type: 'outgoing'
+      };
+      
+      await axios.post(`${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/conversations/${conversationId}/messages`, buttonPayload, {
+        headers: {
+          'api_access_token': CHATWOOT_API_TOKEN,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      console.log(`✅ Botões enviados para conversa ${conversationId}`);
+    }
+    
+    console.log(`✅ Anexo enviado para conversa ${conversationId}: ${attachment.originalname}`);
+    
+    // Limpar arquivo temporário apenas se não for de mídia persistente
+    if (attachment.temporary !== false) {
+      fs.unlink(attachment.path, () => {});
+    }
+    
+  } catch (error) {
+    console.error('❌ Erro ao enviar mensagem com anexo:', error.message);
+    
+    // Tratamento específico para erro da API do WhatsApp
+    if (error.response) {
+      const status = error.response.status;
+      const data = error.response.data;
+      
+      console.error(`🔍 Status HTTP: ${status}`);
+      console.error(`📋 Resposta:`, JSON.stringify(data, null, 2));
+      
+      // Erro 131053 é específico da API do WhatsApp
+      if (data && JSON.stringify(data).includes('131053')) {
+        console.error(`❌ ERRO 131053: Arquivo rejeitado pela API oficial do WhatsApp. 
+Possíveis causas:
+• Arquivo muito grande (máximo 16MB para vídeos)
+• Codec não suportado (use H.264+AAC para vídeos)
+• Formato não suportado (use MP4 para vídeos)
+• Arquivo corrompido ou inválido
+Arquivo: ${attachment.originalname}`);
+      }
+    } else {
+      console.error('❌ Erro sem resposta HTTP:', error);
+    }
+    
+    // Limpar arquivo temporário em caso de erro (apenas se for temporário)
+    if (attachment.path && attachment.temporary !== false) {
+      fs.unlink(attachment.path, () => {});
+    }
+    
+    throw error;
+  }
+}
+
+// Enviar mensagem com anexo via URL pública para o Chatwoot
+async function sendChatwootMessageWithAttachmentUrl(conversationId, message, buttons = [], attachmentInfo) {
+  try {
+    console.log(`📎 Enviando mensagem com anexo via URL pública: ${attachmentInfo.originalname}`);
+    console.log(`🌐 URL: ${attachmentInfo.url}`);
+    
+    // Criar card com mídia para o Chatwoot
+    const payload = {
+      content: message || '📎 Arquivo anexado',
+      message_type: 'outgoing',
+      content_type: 'cards',
+      content_attributes: {
+        items: [{
+          media_url: attachmentInfo.url,
+          title: attachmentInfo.originalname || 'Arquivo',
+          description: `📁 ${attachmentInfo.mimetype} | ID: ${attachmentInfo.file_id}`,
+          actions: buttons && buttons.length > 0 ? buttons.map(button => ({
+            type: 'postback',
+            text: button.text,
+            payload: button.text
+          })) : []
+        }]
+      }
+    };
+    
+    console.log(`🚀 Enviando card com mídia para: ${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/conversations/${conversationId}/messages`);
+    
+    const response = await axios.post(
+      `${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/conversations/${conversationId}/messages`,
+      payload,
+      {
+        headers: {
+          'api_access_token': CHATWOOT_API_TOKEN,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    
+    console.log(`✅ Card com mídia enviado com sucesso! Status: ${response.status}`);
+    console.log(`✅ Arquivo enviado via URL para conversa ${conversationId}: ${attachmentInfo.originalname}`);
+    
+    return response;
+    
+  } catch (error) {
+    console.error('❌ Erro ao enviar mensagem com anexo via URL:', error.message);
+    
+    // Tratamento específico para erro da API
+    if (error.response) {
+      const status = error.response.status;
+      const data = error.response.data;
+      
+      console.error(`🔍 Status HTTP: ${status}`);
+      console.error(`📋 Resposta:`, JSON.stringify(data, null, 2));
+      
+      // Se der erro com URL, tentar fallback para método original
+      if (status >= 400) {
+        console.log(`⚠️ Tentando fallback para método de arquivo local...`);
+        
+        // Buscar arquivo novamente para método original
+        const fileResult = await pool.query('SELECT * FROM media_files WHERE id = $1 AND is_active = true', [attachmentInfo.file_id]);
+        
+        if (fileResult.rows.length > 0) {
+          const file = fileResult.rows[0];
+          const attachment = {
+            path: path.join(__dirname, file.file_path),
+            originalname: file.original_name,
+            mimetype: file.mimetype,
+            temporary: false
+          };
+          
+          console.log(`🔄 Tentando envio via arquivo local como fallback...`);
+          return await sendChatwootMessageWithAttachment(conversationId, message, buttons, attachment);
+        }
+      }
+    }
+    
+    throw error;
+  }
+}
+
+// Verificar se é mensagem de trigger baseada no workflow da caixa de entrada
+async function isTriggerMessage(message, inboxId = null) {
+  try {
+    // Se não temos inbox específico, usar triggers padrão
+    if (!inboxId) {
+      const defaultTriggers = ['oi', 'ola', 'olá', 'hello', 'start', 'iniciar'];
+      return defaultTriggers.some(trigger => 
+        message.toLowerCase().includes(trigger)
+      );
+    }
+    
+    // Buscar workflow específico da caixa de entrada
+    const inboxWorkflow = await inboxWorkflowManager.getInboxWorkflow(CHATWOOT_ACCOUNT_ID, inboxId);
+    
+    if (inboxWorkflow && inboxWorkflow.workflow_config && inboxWorkflow.workflow_config.triggers) {
+      const triggers = inboxWorkflow.workflow_config.triggers;
+      
+      // Se o trigger é "*", aceitar qualquer mensagem
+      if (triggers.includes('*')) {
+        console.log(`🌟 Trigger universal (*) detectado para inbox ${inboxId} - qualquer mensagem aceita`);
+        return true;
+      }
+      
+      // Verificar se a mensagem contém algum dos triggers definidos
+      const messageMatch = triggers.some(trigger => 
+        message.toLowerCase().includes(trigger.toLowerCase())
+      );
+      
+      if (messageMatch) {
+        console.log(`✅ Trigger encontrado para inbox ${inboxId}: mensagem "${message}" contém um dos triggers: [${triggers.join(', ')}]`);
+      }
+      
+      return messageMatch;
+    }
+    
+    // Fallback para triggers padrão se não encontrar workflow
+    console.log(`⚠️ Workflow não encontrado para inbox ${inboxId}, usando triggers padrão`);
+    const defaultTriggers = ['oi', 'ola', 'olá', 'hello', 'start', 'iniciar'];
+    return defaultTriggers.some(trigger => 
+      message.toLowerCase().includes(trigger)
+    );
+    
+  } catch (error) {
+    console.error(`❌ Erro ao verificar trigger para inbox ${inboxId}:`, error);
+    // Em caso de erro, usar triggers padrão
+    const defaultTriggers = ['oi', 'ola', 'olá', 'hello', 'start', 'iniciar'];
+    return defaultTriggers.some(trigger => 
+      message.toLowerCase().includes(trigger)
+    );
+  }
 }
 
 // Buscar contato pelo telefone para obter o ID interno
@@ -2049,6 +2831,58 @@ async function updateBotAgentStatus(conversationId, hasHumanAgent, agentId) {
   }
 }
 
+// Verificar e reativar bots após 24 horas de inatividade no atendimento humano
+async function checkAndReactivateBotsAfter24Hours() {
+  try {
+    console.log(`🕐 Verificando bots pausados há mais de 24 horas para reativação automática...`);
+    
+    // Buscar conversas pausadas há mais de 24 horas
+    const result = await pool.query(`
+      SELECT conversation_id, contact_id, paused_reason, paused_at
+      FROM bot_conversation_status 
+      WHERE bot_active = false 
+        AND paused_at < NOW() - INTERVAL '24 hours'
+        AND paused_reason IN ('human_handoff', 'sector_transfer', 'human_agent_active')
+    `);
+    
+    if (result.rows.length > 0) {
+      console.log(`🔄 Encontradas ${result.rows.length} conversas para reativação automática após 24h`);
+      
+      for (const row of result.rows) {
+        const { conversation_id, contact_id, paused_reason, paused_at } = row;
+        
+        // Verificar se ainda há agente humano ativo
+        const hasActiveAgent = await checkHumanAgentActive(conversation_id);
+        
+        if (!hasActiveAgent) {
+          console.log(`🔄 Reativando bot para conversa ${conversation_id} após 24h de inatividade (pausado em: ${paused_at})`);
+          
+          // Reativar o bot
+          await reactivateBotForConversation(conversation_id, contact_id, 'auto_24h_reactivation');
+          
+          // Enviar mensagem informativa opcional (pode comentar se não quiser)
+          try {
+            await sendChatwootMessage(conversation_id, 
+              '🤖 *Bot reativado automaticamente*\n\n' +
+              'Como não detectei atividade de atendimento humano nas últimas 24 horas, ' +
+              'reativei o assistente virtual para te ajudar.\n\n' +
+              'Se precisar falar com nossa equipe, é só dizer "atendimento humano" ou usar !pausebot para pausar o bot.'
+            );
+          } catch (msgError) {
+            console.log(`⚠️ Não foi possível enviar mensagem de reativação para conversa ${conversation_id}:`, msgError.message);
+          }
+        } else {
+          console.log(`👤 Conversa ${conversation_id} ainda tem agente ativo, mantendo bot pausado`);
+        }
+      }
+    } else {
+      console.log(`✅ Nenhuma conversa encontrada para reativação automática`);
+    }
+  } catch (error) {
+    console.error(`❌ Erro ao verificar reativação automática de bots:`, error);
+  }
+}
+
 // Middleware
 app.use(cors());
 app.use(express.json());
@@ -2137,32 +2971,60 @@ app.post('/api/auth/change-password', authenticateToken, [
 // Obter contas do Chatwoot
 app.get('/api/accounts', authenticateToken, async (req, res) => {
   try {
-    // Buscar o nome real da conta via API do Chatwoot
-    const accountId = CHATWOOT_ACCOUNT_ID;
-    let accountName = `Conta ${accountId}`;
-    try {
-      const response = await axios.get(`${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}`, {
-        headers: {
-          'api_access_token': CHATWOOT_API_TOKEN
-        }
-      });
-      if (response.data && response.data.name) {
-        accountName = response.data.name;
+    console.log('🔍 Buscando todas as contas disponíveis para o token...');
+    
+    // Buscar perfil do usuário para obter todas as contas que ele tem acesso
+    const response = await axios.get(`${CHATWOOT_BASE_URL}/api/v1/profile`, {
+      headers: {
+        'api_access_token': CHATWOOT_API_TOKEN
       }
-    } catch (err) {
-      console.warn('Não foi possível buscar o nome real da conta, usando nome padrão.');
-    }
-    const accounts = [
-      {
+    });
+    
+    if (response.data && response.data.accounts && Array.isArray(response.data.accounts)) {
+      const accounts = response.data.accounts.map(account => ({
+        id: account.id,
+        name: account.name,
+        domain: CHATWOOT_BASE_URL.replace(/^https?:\/\//, ''),
+        status: account.status || 'active',
+        role: account.role,
+        permissions: account.permissions
+      }));
+      
+      console.log(`✅ Encontradas ${accounts.length} conta(s):`, accounts.map(a => `${a.name} (ID: ${a.id})`).join(', '));
+      res.json(accounts);
+    } else {
+      console.warn('⚠️ Nenhuma conta encontrada no perfil, usando conta padrão...');
+      
+      // Fallback para conta padrão se não encontrar no perfil
+      const accountId = CHATWOOT_ACCOUNT_ID;
+      let accountName = `Conta ${accountId}`;
+      
+      try {
+        const fallbackResponse = await axios.get(`${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}`, {
+          headers: {
+            'api_access_token': CHATWOOT_API_TOKEN
+          }
+        });
+        if (fallbackResponse.data && fallbackResponse.data.name) {
+          accountName = fallbackResponse.data.name;
+        }
+      } catch (err) {
+        console.warn('Não foi possível buscar o nome real da conta, usando nome padrão.');
+      }
+      
+      const accounts = [{
         id: parseInt(accountId),
         name: accountName,
         domain: CHATWOOT_BASE_URL.replace(/^https?:\/\//, ''),
         status: 'active'
-      }
-    ];
-    res.json(accounts);
+      }];
+      
+      res.json(accounts);
+    }
   } catch (error) {
     console.error('❌ Erro ao obter contas:', error.message);
+    console.error('❌ Detalhes do erro:', error.response?.data || error);
+    
     res.status(500).json({ 
       error: 'Erro ao obter contas',
       details: error.message
@@ -2453,7 +3315,7 @@ app.post('/api/campaigns', authenticateToken, async (req, res) => {
               
               // Buscar templates via API oficial do WhatsApp
               const whatsappResponse = await axios.get(
-                `https://graph.facebook.com/v19.0/${config.business_account_id}/message_templates`,
+                `https://graph.facebook.com/v23.0/${config.business_account_id}/message_templates`,
                 {
                   headers: { 'Authorization': `Bearer ${config.api_key}` },
                   params: { 
@@ -2462,6 +3324,7 @@ app.post('/api/campaigns', authenticateToken, async (req, res) => {
                   }
                 }
               );
+              console.log('🔍 Resposta da API do WhatsApp:', whatsappResponse.data);
               
               if (whatsappResponse.data?.data) {
                 const templates = whatsappResponse.data.data.filter(t => t.status === 'APPROVED');
@@ -2680,12 +3543,153 @@ app.post('/api/chatwoot/labels', authenticateToken, [
   }
 });
 
-// Buscar modelos/templates disponíveis via API do Chatwoot
+// Buscar modelos/templates disponíveis via API oficial do WhatsApp
 app.get('/api/chatwoot/templates', authenticateToken, async (req, res) => {
   try {
-    console.log('🔍 Buscando templates do Chatwoot...');
+    console.log('🔍 Buscando templates via API oficial do WhatsApp...');
     
-    // Primeiro, buscar caixas de entrada do WhatsApp
+    // Obter parâmetros da requisição (conta e caixa selecionadas)
+    const { accountId, inboxId } = req.query;
+    
+    console.log(`📋 Parâmetros recebidos: Account ID: ${accountId}, Inbox ID: ${inboxId}`);
+    
+    let templatesFound = false;
+    
+    // Primeira prioridade: Usar credenciais da caixa de entrada selecionada
+    if (accountId && inboxId) {
+      try {
+        console.log(`🔍 Buscando configurações da caixa de entrada selecionada (Account: ${accountId}, Inbox: ${inboxId})`);
+        
+        const inboxDetailsResponse = await axios.get(`${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/inboxes/${inboxId}`, {
+          headers: { 'api_access_token': CHATWOOT_API_TOKEN }
+        });
+        
+        const inboxDetails = inboxDetailsResponse.data.payload;
+        const config = inboxDetails?.provider_config;
+        
+        console.log(`📱 Caixa de entrada: ${inboxDetails.name}`);
+        console.log(`🔑 Configurações disponíveis:`, {
+          hasBusinessAccountId: !!config?.business_account_id,
+          hasApiKey: !!config?.api_key,
+          hasPhoneNumberId: !!config?.phone_number_id
+        });
+        
+        // Se a caixa tem credenciais próprias do WhatsApp, usar API oficial
+        if (config?.business_account_id && config?.api_key) {
+          try {
+            console.log(`🚀 Usando credenciais da caixa '${inboxDetails.name}' para API oficial...`);
+            console.log(`📋 Business Account ID: ${config.business_account_id}`);
+            
+            const whatsappResponse = await axios.get(
+              `https://graph.facebook.com/v23.0/${config.business_account_id}/message_templates`,
+              {
+                headers: { 'Authorization': `Bearer ${config.api_key}` },
+                params: { 
+                  fields: 'name,status,category,language,components',
+                  limit: 100 
+                }
+              }
+            );
+            
+            if (whatsappResponse.data?.data) {
+              const apiTemplates = whatsappResponse.data.data;
+              const approvedTemplates = apiTemplates.filter(t => t.status === 'APPROVED');
+              
+              console.log(`🎉 ${approvedTemplates.length} templates APROVADOS encontrados via API oficial!`);
+              console.log(`📊 Total de templates: ${apiTemplates.length}, Aprovados: ${approvedTemplates.length}`);
+              
+              // Formatar templates para o frontend
+              const formattedTemplates = approvedTemplates.map(template => ({
+                name: template.name,
+                displayName: template.name.replace(/_/g, ' ').toUpperCase(),
+                status: template.status,
+                category: template.category || 'UTILITY',
+                language: template.language || 'pt_BR',
+                components: template.components || [],
+                source: `whatsapp_api_inbox_${inboxId}`,
+                inboxId: inboxId,
+                inboxName: inboxDetails.name
+              }));
+              
+              // Ordenar por categoria e nome
+              formattedTemplates.sort((a, b) => {
+                const categoryOrder = { 'MARKETING': 0, 'UTILITY': 1, 'AUTHENTICATION': 2 };
+                const aCategoryOrder = categoryOrder[a.category] ?? 3;
+                const bCategoryOrder = categoryOrder[b.category] ?? 3;
+                
+                if (aCategoryOrder !== bCategoryOrder) {
+                  return aCategoryOrder - bCategoryOrder;
+                }
+                return a.displayName.localeCompare(b.displayName);
+              });
+              
+              console.log(`📋 Retornando ${formattedTemplates.length} templates da caixa '${inboxDetails.name}'`);
+              return res.json(formattedTemplates);
+            }
+          } catch (whatsappError) {
+            console.error(`❌ Erro ao buscar templates via API oficial para caixa '${inboxDetails.name}':`, whatsappError.response?.data?.error || whatsappError.message);
+            
+            // Se for erro de autenticação, mostrar detalhes
+            if (whatsappError.response?.status === 401) {
+              console.log('🔑 Erro de autenticação - token da caixa pode estar expirado');
+            }
+          }
+        } else {
+          console.log(`⚠️ Caixa '${inboxDetails.name}' não possui credenciais completas da API do WhatsApp`);
+        }
+      } catch (inboxError) {
+        console.error(`❌ Erro ao buscar detalhes da caixa de entrada:`, inboxError.response?.data || inboxError.message);
+      }
+    } else {
+      console.log('⚠️ Account ID ou Inbox ID não fornecidos na requisição');
+    }
+    
+    // Segunda prioridade: Usar configurações globais como fallback
+    if (!templatesFound && WHATSAPP_BUSINESS_ACCOUNT_ID && WHATSAPP_API_TOKEN) {
+      try {
+        console.log(`🔄 Tentando com configurações globais (Business Account: ${WHATSAPP_BUSINESS_ACCOUNT_ID})`);
+        
+        const whatsappResponse = await axios.get(
+          `https://graph.facebook.com/v23.0/${WHATSAPP_BUSINESS_ACCOUNT_ID}/message_templates`,
+          {
+            headers: { 'Authorization': `Bearer ${WHATSAPP_API_TOKEN}` },
+            params: { 
+              fields: 'name,status,category,language,components',
+              limit: 100 
+            }
+          }
+        );
+        
+        if (whatsappResponse.data?.data) {
+          const apiTemplates = whatsappResponse.data.data;
+          const approvedTemplates = apiTemplates.filter(t => t.status === 'APPROVED');
+          
+          console.log(`🎉 ${approvedTemplates.length} templates encontrados via configurações globais`);
+          
+          const formattedTemplates = approvedTemplates.map(template => ({
+            name: template.name,
+            displayName: template.name.replace(/_/g, ' ').toUpperCase(),
+            status: template.status,
+            category: template.category || 'UTILITY',
+            language: template.language || 'pt_BR',
+            components: template.components || [],
+            source: 'whatsapp_api_global'
+          }));
+          
+          formattedTemplates.sort((a, b) => a.displayName.localeCompare(b.displayName));
+          
+          console.log(`📋 Retornando ${formattedTemplates.length} templates globais`);
+          return res.json(formattedTemplates);
+        }
+      } catch (whatsappError) {
+        console.error('❌ Erro ao buscar templates via configurações globais:', whatsappError.response?.data || whatsappError.message);
+      }
+    }
+    
+    // Segunda prioridade: Buscar via Chatwoot como fallback
+    console.log('🔄 Tentando buscar templates via Chatwoot...');
+    
+    // Buscar caixas de entrada do WhatsApp
     const inboxesResponse = await axios.get(`${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/inboxes`, {
       headers: { 'api_access_token': CHATWOOT_API_TOKEN }
     });
@@ -2702,29 +3706,64 @@ app.get('/api/chatwoot/templates', authenticateToken, async (req, res) => {
     }
     
     // Tentar buscar templates de cada caixa de entrada WhatsApp
-    let allTemplates = [];
     
     for (const inbox of whatsappInboxes) {
       try {
         console.log(`📋 Buscando templates da caixa: ${inbox.name} (ID: ${inbox.id})`);
         
-        // Tentar endpoints mais abrangentes e versões mais recentes da API
+        // Primeiro, tentar via configuração da caixa (pode ter credenciais específicas)
+        try {
+          const inboxDetailsResponse = await axios.get(`${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/inboxes/${inbox.id}`, {
+            headers: { 'api_access_token': CHATWOOT_API_TOKEN }
+          });
+          
+          const inboxDetails = inboxDetailsResponse.data.payload;
+          const config = inboxDetails?.provider_config;
+          
+          // Se a caixa tem credenciais próprias do WhatsApp, usar API oficial
+          if (config?.business_account_id && config?.api_key) {
+            try {
+              console.log(`🚀 Usando credenciais da caixa ${inbox.name} para API oficial...`);
+              const whatsappResponse = await axios.get(
+                `https://graph.facebook.com/v23.0/${config.business_account_id}/message_templates`,
+                {
+                  headers: { 'Authorization': `Bearer ${config.api_key}` },
+                  params: { 
+                    fields: 'name,status,category,language,components',
+                    limit: 100 
+                  }
+                }
+              );
+              
+              if (whatsappResponse.data?.data) {
+                const templates = whatsappResponse.data.data.filter(t => t.status === 'APPROVED');
+                console.log(`🎉 ${templates.length} templates encontrados para caixa ${inbox.name}`);
+                
+                const formattedTemplates = templates.map(template => ({
+                  name: template.name,
+                  displayName: template.name.replace(/_/g, ' ').toUpperCase(),
+                  status: template.status,
+                  category: template.category || 'UTILITY',
+                  language: template.language || 'pt_BR',
+                  components: template.components || [],
+                  source: `whatsapp_api_inbox_${inbox.id}`
+                }));
+                
+                allTemplates = allTemplates.concat(formattedTemplates);
+                continue; // Pular tentativas via Chatwoot para esta caixa
+              }
+            } catch (whatsappError) {
+              console.log(`❌ Erro ao buscar via API oficial para caixa ${inbox.name}:`, whatsappError.response?.data?.error || whatsappError.message);
+            }
+          }
+        } catch (inboxError) {
+          console.log(`⚠️ Erro ao obter detalhes da caixa ${inbox.name}:`, inboxError.message);
+        }
+        
+        // Fallback: Tentar endpoints do Chatwoot
         const possibleEndpoints = [
-          // Endpoints mais modernos (v2)
-          `/api/v2/accounts/${CHATWOOT_ACCOUNT_ID}/inboxes/${inbox.id}/whatsapp_templates`,
-          `/api/v2/accounts/${CHATWOOT_ACCOUNT_ID}/whatsapp/templates`,
-          // Endpoints administrativos
-          `/platform/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/inboxes/${inbox.id}/whatsapp_templates`,
-          `/admin/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/inboxes/${inbox.id}/whatsapp_templates`,
-          // Endpoints específicos do WhatsApp
-          `/webhooks/whatsapp/${inbox.id}/templates`,
-          `/api/v1/integrations/whatsapp/${inbox.id}/templates`,
-          // Endpoints originais
-          `/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/inboxes/${inbox.id}/message_templates`,
           `/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/inboxes/${inbox.id}/whatsapp_templates`,
           `/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/whatsapp_templates?inbox_id=${inbox.id}`,
-          `/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/message_templates?inbox_id=${inbox.id}`,
-          // Endpoint direto da conta
           `/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/whatsapp_templates`
         ];
         
@@ -2732,89 +3771,28 @@ app.get('/api/chatwoot/templates', authenticateToken, async (req, res) => {
         
         for (const endpoint of possibleEndpoints) {
           try {
-            console.log(`🔄 Tentando endpoint: ${endpoint}`);
             const templatesResponse = await axios.get(`${CHATWOOT_BASE_URL}${endpoint}`, {
               headers: { 'api_access_token': CHATWOOT_API_TOKEN }
             });
             
-            // Verificar diferentes estruturas de resposta
             let responseData = templatesResponse.data;
             if (responseData.payload) responseData = responseData.payload;
             if (responseData.data) responseData = responseData.data;
             
             if (Array.isArray(responseData) && responseData.length > 0) {
               templates = responseData;
-              console.log(`✅ ${templates.length} templates encontrados via: ${endpoint}`);
+              console.log(`✅ ${templates.length} templates encontrados via Chatwoot: ${endpoint}`);
               break;
             }
           } catch (endpointError) {
-            const status = endpointError.response?.status;
-            if (status !== 404) {
-              console.log(`❌ Endpoint ${endpoint} falhou: ${status} - ${endpointError.response?.data?.message || endpointError.message}`);
+            // Ignorar erros 404, logar outros
+            if (endpointError.response?.status !== 404) {
+              console.log(`❌ Endpoint ${endpoint} falhou: ${endpointError.response?.status}`);
             }
-            continue;
           }
         }
         
-        // Se ainda não encontrou templates, tentar via configuração da caixa e webhook
-        if (templates.length === 0) {
-          console.log(`🔧 Tentando métodos alternativos para caixa ${inbox.id}...`);
-          
-          try {
-            // Método 1: Detalhes da caixa de entrada
-            const inboxDetailsResponse = await axios.get(`${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/inboxes/${inbox.id}`, {
-              headers: { 'api_access_token': CHATWOOT_API_TOKEN }
-            });
-            
-            const inboxDetails = inboxDetailsResponse.data.payload;
-            console.log(`🔍 Inbox details obtidos para: ${inbox.name}`);
-            
-            // Verificar se há templates na configuração da caixa
-            if (inboxDetails?.provider_config?.templates) {
-              templates = inboxDetails.provider_config.templates;
-              console.log(`📋 ${templates.length} templates encontrados na configuração da caixa`);
-            }
-            
-            // Método 2: Verificar se há tokens/configurações do WhatsApp
-            if (templates.length === 0 && inboxDetails?.provider_config) {
-              const config = inboxDetails.provider_config;
-              console.log(`🔑 Configuração WhatsApp disponível:`, {
-                hasBusinessAccountId: !!config.business_account_id,
-                hasPhoneNumberId: !!config.phone_number_id,
-                hasApiKey: !!config.api_key
-              });
-              
-              // Se temos as credenciais, podemos tentar buscar via API oficial
-              if (config.business_account_id && config.phone_number_id && config.api_key) {
-                try {
-                  console.log(`🚀 Tentando buscar templates via API oficial do WhatsApp...`);
-                  const whatsappResponse = await axios.get(
-                    `https://graph.facebook.com/v19.0/${config.business_account_id}/message_templates`,
-                    {
-                      headers: { 'Authorization': `Bearer ${config.api_key}` },
-                      params: { 
-                        fields: 'name,status,category,language,components',
-                        limit: 100 
-                      }
-                    }
-                  );
-                  
-                  if (whatsappResponse.data?.data) {
-                    templates = whatsappResponse.data.data.filter(t => t.status === 'APPROVED');
-                    console.log(`🎉 ${templates.length} templates APROVADOS encontrados via API oficial!`);
-                  }
-                } catch (whatsappError) {
-                  console.log(`❌ Falha na API oficial WhatsApp: ${whatsappError.response?.data?.error?.message || whatsappError.message}`);
-                }
-              }
-            }
-            
-          } catch (detailsError) {
-            console.log(`❌ Erro ao buscar detalhes da caixa: ${detailsError.response?.status || detailsError.message}`);
-          }
-        }
-        
-        // Formatar templates encontrados
+        // Formatar templates encontrados de Chatwoot se houver
         if (templates.length > 0) {
           const formattedTemplates = templates.map(template => ({
             name: template.name,
@@ -2925,6 +3903,155 @@ app.post('/api/chatwoot/templates/sync', authenticateToken, async (req, res) => 
   try {
     console.log('🔄 Iniciando sincronização forçada de templates WhatsApp...');
     
+    // Obter parâmetros da requisição (conta e caixa selecionadas)
+    const { accountId, inboxId } = req.query;
+    console.log(`📋 Sincronização para Account ID: ${accountId}, Inbox ID: ${inboxId}`);
+    
+    let syncResults = [];
+    
+    // Primeira prioridade: Usar credenciais da caixa de entrada selecionada
+    if (accountId && inboxId) {
+      try {
+        console.log(`🔍 Buscando configurações da caixa de entrada para sincronização (Account: ${accountId}, Inbox: ${inboxId})`);
+        
+        const inboxDetailsResponse = await axios.get(`${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/inboxes/${inboxId}`, {
+          headers: { 'api_access_token': CHATWOOT_API_TOKEN }
+        });
+        
+        const inboxDetails = inboxDetailsResponse.data.payload;
+        const config = inboxDetails?.provider_config;
+        
+        console.log(`📱 Sincronizando caixa: ${inboxDetails.name}`);
+        
+        if (config?.business_account_id && config?.api_key) {
+          try {
+            console.log('🚀 Sincronizando via API oficial usando credenciais da caixa...');
+            
+            const whatsappResponse = await axios.get(
+              `https://graph.facebook.com/v23.0/${config.business_account_id}/message_templates`,
+              {
+                headers: { 'Authorization': `Bearer ${config.api_key}` },
+                params: { 
+                  fields: 'name,status,category,language,components',
+                  limit: 1000
+                }
+              }
+            );
+            
+            if (whatsappResponse.data?.data) {
+              const allTemplates = whatsappResponse.data.data;
+              const approvedTemplates = allTemplates.filter(t => t.status === 'APPROVED');
+              
+              console.log(`📊 Caixa '${inboxDetails.name}': ${allTemplates.length} templates total, ${approvedTemplates.length} aprovados`);
+              
+              syncResults.push({
+                method: `whatsapp_official_api_inbox_${inboxId}`,
+                inboxId: inboxId,
+                inboxName: inboxDetails.name,
+                status: 'success',
+                templatesCount: allTemplates.length,
+                approvedCount: approvedTemplates.length,
+                message: `Templates verificados via API oficial para caixa '${inboxDetails.name}'`
+              });
+              
+              // Se funcionou, retornar sucesso
+              return res.json({
+                success: true,
+                message: `✅ Sincronização via API oficial: ${approvedTemplates.length} templates aprovados na caixa '${inboxDetails.name}'`,
+                results: syncResults,
+                source: 'whatsapp_official_api_inbox',
+                nextStep: 'Templates atualizados! Recarregue a lista de templates'
+              });
+            }
+          } catch (whatsappError) {
+            console.error(`❌ Erro na API oficial para caixa '${inboxDetails.name}':`, whatsappError.response?.data || whatsappError.message);
+            syncResults.push({
+              method: `whatsapp_official_api_inbox_${inboxId}`,
+              inboxId: inboxId,
+              inboxName: inboxDetails.name,
+              status: 'failed',
+              error: whatsappError.response?.data?.error?.message || whatsappError.message
+            });
+          }
+        } else {
+          console.log(`⚠️ Caixa '${inboxDetails.name}' não possui credenciais completas da API do WhatsApp`);
+          syncResults.push({
+            method: `whatsapp_official_api_inbox_${inboxId}`,
+            inboxId: inboxId,
+            inboxName: inboxDetails.name,
+            status: 'skipped',
+            message: 'Credenciais da API oficial não configuradas para esta caixa'
+          });
+        }
+      } catch (inboxError) {
+        console.error(`❌ Erro ao buscar detalhes da caixa de entrada:`, inboxError.response?.data || inboxError.message);
+        syncResults.push({
+          method: 'inbox_details',
+          status: 'failed',
+          error: inboxError.message
+        });
+      }
+    }
+    
+    // Segunda prioridade: Verificar se a API oficial global está configurada
+    if (syncResults.length === 0 && WHATSAPP_BUSINESS_ACCOUNT_ID && WHATSAPP_API_TOKEN) {
+      try {
+        console.log('🚀 Verificando templates via API oficial do WhatsApp...');
+        
+        const whatsappResponse = await axios.get(
+          `https://graph.facebook.com/v23.0/${WHATSAPP_BUSINESS_ACCOUNT_ID}/message_templates`,
+          {
+            headers: { 'Authorization': `Bearer ${WHATSAPP_API_TOKEN}` },
+            params: { 
+              fields: 'name,status,category,language,components',
+              limit: 1000 // Aumentar limite para sincronização
+            }
+          }
+        );
+        
+        if (whatsappResponse.data?.data) {
+          const allTemplates = whatsappResponse.data.data;
+          const approvedTemplates = allTemplates.filter(t => t.status === 'APPROVED');
+          
+          console.log(`📊 API oficial: ${allTemplates.length} templates total, ${approvedTemplates.length} aprovados`);
+          
+          syncResults.push({
+            method: 'whatsapp_official_api',
+            status: 'success',
+            templatesCount: allTemplates.length,
+            approvedCount: approvedTemplates.length,
+            message: `Templates verificados via API oficial do WhatsApp`
+          });
+          
+          // Se a API oficial funcionou, retornar sucesso
+          return res.json({
+            success: true,
+            message: `✅ Sincronização via API oficial: ${approvedTemplates.length} templates aprovados encontrados`,
+            results: syncResults,
+            source: 'whatsapp_official_api',
+            nextStep: 'Templates atualizados! Recarregue a lista de templates'
+          });
+        }
+      } catch (whatsappError) {
+        console.error('❌ Erro na API oficial do WhatsApp:', whatsappError.response?.data || whatsappError.message);
+        syncResults.push({
+          method: 'whatsapp_official_api',
+          status: 'failed',
+          error: whatsappError.response?.data?.error?.message || whatsappError.message
+        });
+      }
+    } else {
+      console.log('⚠️ Credenciais da API oficial não configuradas, tentando via Chatwoot...');
+      syncResults.push({
+        method: 'whatsapp_official_api',
+        status: 'skipped',
+        message: 'Credenciais da API oficial não configuradas'
+      });
+    }
+    
+    // Segunda prioridade: Tentar sincronização via Chatwoot
+    console.log('🔄 Tentando sincronização via Chatwoot...');
+    
     // Buscar caixas de entrada WhatsApp
     const inboxesResponse = await axios.get(`${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/inboxes`, {
       headers: { 'api_access_token': CHATWOOT_API_TOKEN }
@@ -2935,10 +4062,13 @@ app.post('/api/chatwoot/templates/sync', authenticateToken, async (req, res) => 
     );
     
     if (whatsappInboxes.length === 0) {
-      return res.status(404).json({ error: 'Nenhuma caixa de entrada WhatsApp encontrada' });
+      console.log('⚠️ Nenhuma caixa de entrada WhatsApp encontrada');
+      return res.json({
+        success: false,
+        message: 'Nenhuma caixa de entrada WhatsApp encontrada',
+        results: syncResults
+      });
     }
-    
-    let syncResults = [];
     
     for (const inbox of whatsappInboxes) {
       try {
@@ -3002,7 +4132,7 @@ app.post('/api/chatwoot/templates/sync', authenticateToken, async (req, res) => 
     
     res.json({
       success: successCount > 0,
-      message: `Sincronização concluída. ${successCount}/${syncResults.length} caixas sincronizadas com sucesso.`,
+      message: `Sincronização concluída. ${successCount}/${syncResults.length} métodos bem-sucedidos.`,
       results: syncResults,
       nextStep: 'Aguarde alguns momentos e recarregue a lista de templates'
     });
@@ -3318,6 +4448,221 @@ async function processCampaign(campaignId) {
   }
 }
 
+// ===== ROTAS DE ANEXOS E MÍDIA =====
+
+// Upload de mídia para workflows
+app.post('/api/upload-media', authenticateToken, mediaUpload.single('media'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'Nenhum arquivo enviado' });
+    }
+    
+    const fileInfo = {
+      id: Date.now().toString(),
+      originalname: req.file.originalname,
+      filename: req.file.filename,
+      path: req.file.path,
+      mimetype: req.file.mimetype,
+      size: req.file.size,
+      upload_date: new Date().toISOString()
+    };
+    
+    // Salvar informações do arquivo no banco (opcional)
+    await pool.query(
+      'INSERT INTO media_files (id, original_name, filename, file_path, mimetype, size, upload_date) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+      [fileInfo.id, fileInfo.originalname, fileInfo.filename, fileInfo.path, fileInfo.mimetype, fileInfo.size, fileInfo.upload_date]
+    );
+    
+    console.log(`📁 Arquivo carregado: ${fileInfo.originalname} (${fileInfo.size} bytes)`);
+    
+    res.json({
+      success: true,
+      file: fileInfo,
+      message: 'Arquivo carregado com sucesso!'
+    });
+    
+  } catch (error) {
+    console.error('❌ Erro no upload:', error);
+    res.status(500).json({ error: 'Erro interno no upload' });
+  }
+});
+
+// Listar arquivos de mídia carregados
+app.get('/api/media-files', authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT * FROM media_files ORDER BY upload_date DESC LIMIT 50'
+    );
+    
+    res.json({
+      success: true,
+      files: result.rows
+    });
+    
+  } catch (error) {
+    console.error('❌ Erro ao listar arquivos:', error);
+    res.status(500).json({ error: 'Erro interno' });
+  }
+});
+
+// Deletar arquivo de mídia
+app.delete('/api/media-files/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Buscar arquivo no banco
+    const result = await pool.query('SELECT * FROM media_files WHERE id = $1', [id]);
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Arquivo não encontrado' });
+    }
+    
+    const file = result.rows[0];
+    
+    // Deletar arquivo físico
+    fs.unlink(file.file_path, (err) => {
+      if (err) console.error('Erro ao deletar arquivo físico:', err);
+    });
+    
+    // Deletar do banco
+    await pool.query('DELETE FROM media_files WHERE id = $1', [id]);
+    
+    console.log(`🗑️ Arquivo deletado: ${file.original_name}`);
+    
+        res.json({
+      success: true,
+      message: 'Arquivo deletado com sucesso!'
+    });
+    
+  } catch (error) {
+    console.error('❌ Erro ao deletar arquivo:', error);
+    res.status(500).json({ error: 'Erro interno' });
+  }
+});
+
+// Rota para servir preview/miniatura de imagens
+app.get('/api/media-preview/:id', authenticateToken, async (req, res) => {
+  try {
+    const fileId = req.params.id;
+    
+    // Buscar arquivo no banco
+    const result = await pool.query(
+      'SELECT file_path, mimetype, original_name FROM media_files WHERE id = $1',
+      [fileId]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Arquivo não encontrado' });
+    }
+    
+    const file = result.rows[0];
+    
+    // Verificar se é uma imagem
+    if (!file.mimetype.startsWith('image/')) {
+      return res.status(400).json({ error: 'Apenas imagens suportam preview' });
+    }
+    
+    // Verificar se arquivo existe no sistema
+    const fullPath = path.resolve(file.file_path);
+    if (!fs.existsSync(fullPath)) {
+      return res.status(404).json({ error: 'Arquivo físico não encontrado' });
+    }
+    
+    // Definir headers apropriados
+    res.setHeader('Content-Type', file.mimetype);
+    res.setHeader('Cache-Control', 'public, max-age=86400'); // Cache por 24h
+    res.setHeader('Content-Disposition', 'inline'); // Mostrar inline, não download
+    
+    // Enviar arquivo diretamente
+    res.sendFile(fullPath);
+    
+  } catch (error) {
+    console.error('❌ Erro ao servir preview:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+// 🖼️ ROTA PÚBLICA PARA SERVIR PREVIEWS DE IMAGENS (SEM AUTENTICAÇÃO)
+app.get('/public-preview/:id', async (req, res) => {
+  try {
+    const fileId = req.params.id;
+    
+    // Buscar arquivo no banco
+    const result = await pool.query(
+      'SELECT file_path, mimetype, original_name FROM media_files WHERE id = $1 AND is_active = true',
+      [fileId]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(404).send('Arquivo não encontrado');
+    }
+    
+    const file = result.rows[0];
+    
+    // Verificar se é uma imagem ou vídeo
+    if (!file.mimetype.startsWith('image/') && !file.mimetype.startsWith('video/')) {
+      return res.status(400).send('Apenas imagens e vídeos são suportados nesta rota');
+    }
+    
+    // Verificar se arquivo existe no sistema
+    const fullPath = path.resolve(file.file_path);
+    if (!fs.existsSync(fullPath)) {
+      return res.status(404).send('Arquivo físico não encontrado');
+    }
+    
+    // Definir headers apropriados
+    res.setHeader('Content-Type', file.mimetype);
+    res.setHeader('Cache-Control', 'public, max-age=3600'); // Cache 1h
+    res.setHeader('Content-Disposition', 'inline');
+    
+    // Servir arquivo
+    res.sendFile(fullPath);
+    
+  } catch (error) {
+    console.error('❌ Erro ao servir preview público:', error);
+    res.status(500).send('Erro interno');
+  }
+});
+
+// Testar envio de anexo via API
+app.post('/api/test-attachment', authenticateToken, async (req, res) => {
+  try {
+    const { conversationId, message, fileId } = req.body;
+    
+    if (!conversationId || !fileId) {
+      return res.status(400).json({ error: 'conversationId e fileId são obrigatórios' });
+    }
+    
+    // Buscar arquivo no banco
+    const result = await pool.query('SELECT * FROM media_files WHERE id = $1', [fileId]);
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Arquivo não encontrado' });
+    }
+    
+    const file = result.rows[0];
+    
+    // Criar objeto de anexo
+    const attachment = {
+      path: file.file_path,
+      originalname: file.original_name,
+      mimetype: file.mimetype
+    };
+    
+    // Enviar mensagem com anexo
+    await sendChatwootMessageWithAttachment(conversationId, message || 'Aqui está o arquivo:', [], attachment);
+    
+    res.json({
+      success: true,
+      message: 'Anexo enviado com sucesso!'
+    });
+    
+  } catch (error) {
+    console.error('❌ Erro ao testar anexo:', error);
+    res.status(500).json({ error: 'Erro interno' });
+  }
+});
+
 // ===== ROTAS EXISTENTES =====
 
 // API para iniciar workflow manualmente
@@ -3331,7 +4676,7 @@ app.post('/apiworkflow/workflow/start', async (req, res) => {
     
     // Enviar mensagem inicial via Chatwoot se conversation_id estiver disponível
     if (initialData.conversation_id) {
-      await sendChatwootMessage(initialData.conversation_id, firstBlock.message, firstBlock.buttons);
+      await sendChatwootMessage(initialData.conversation_id, firstBlock.message, firstBlock.buttons, firstBlock.media);
     }
     
     res.json({ success: true, conversation });

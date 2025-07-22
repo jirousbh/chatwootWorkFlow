@@ -14,13 +14,6 @@ class ChatwootWorkflowsApp {
     }
 
     async init() {
-        // Limpar qualquer backdrop que possa estar presente
-        const existingBackdrops = document.querySelectorAll('.modal-backdrop');
-        existingBackdrops.forEach(backdrop => backdrop.remove());
-        document.body.classList.remove('modal-open');
-        document.body.style.overflow = '';
-        document.body.style.paddingRight = '';
-        
         if (this.token) {
             await this.checkAuth();
         } else {
@@ -45,24 +38,14 @@ class ChatwootWorkflowsApp {
     }
 
     showLogin() {
-        // Remover qualquer backdrop existente
-        const existingBackdrops = document.querySelectorAll('.modal-backdrop');
-        existingBackdrops.forEach(backdrop => backdrop.remove());
+        const appElement = document.getElementById('app');
+        const loginDiv = document.getElementById('loginDiv');
         
-        document.getElementById('app').classList.add('d-none');
-        const loginModalEl = document.getElementById('loginModal');
-        
-        // Garantir que não há instância prévia
-        const existingModal = bootstrap.Modal.getInstance(loginModalEl);
-        if (existingModal) {
-            existingModal.dispose();
+        if (appElement) {
+            appElement.classList.add('d-none');
         }
         
-        const loginModal = new bootstrap.Modal(loginModalEl, {
-            backdrop: 'static',
-            keyboard: false
-        });
-        loginModal.show();
+        this.showDiv('loginDiv');
         
         // Configurar formulário de login (evitar listeners duplicados)
         const loginForm = document.getElementById('loginForm');
@@ -76,37 +59,11 @@ class ChatwootWorkflowsApp {
     }
 
     showApp() {
-        try {
-            // Fechar e esconder completamente o modal de login
-            const loginModalEl = document.getElementById('loginModal');
-            if (loginModalEl) {
-                // Verificar se há instância do modal
-                const loginModal = bootstrap.Modal.getInstance(loginModalEl);
-                if (loginModal) {
-                    loginModal.hide();
-                    loginModal.dispose(); // Remover instância completamente
-                }
-                
-                // Forçar que o modal seja escondido
-                loginModalEl.classList.remove('show');
-                loginModalEl.style.display = 'none';
-                loginModalEl.setAttribute('aria-hidden', 'true');
-                loginModalEl.removeAttribute('aria-modal');
-                loginModalEl.removeAttribute('role');
-            }
-            
-            // Limpar todos os backdrops e estilos do body
-            const backdrops = document.querySelectorAll('.modal-backdrop');
-            backdrops.forEach(backdrop => backdrop.remove());
-            document.body.classList.remove('modal-open');
-            document.body.style.overflow = '';
-            document.body.style.paddingRight = '';
-            
-            // Mostrar app
+        this.hideDiv('loginDiv');
             document.getElementById('app').classList.remove('d-none');
             document.getElementById('currentUser').textContent = this.user.username;
             
-            // Adiciona listener para o modal de senha (evitar duplicados)
+        // Adiciona listener para o formulário de senha (evitar duplicados)
             const form = document.getElementById('changePasswordForm');
             if (form && !form.hasAttribute('data-listener-added')) {
                 form.onsubmit = (e) => {
@@ -118,9 +75,6 @@ class ChatwootWorkflowsApp {
             
             // Inicializar event listeners de campanhas após login
             initCampanhasAfterLogin();
-        } catch (error) {
-            console.error('Erro em showApp:', error);
-        }
     }
 
     async login() {
@@ -164,25 +118,6 @@ class ChatwootWorkflowsApp {
         this.user = {};
         localStorage.removeItem('authToken');
         localStorage.removeItem('user');
-        
-        // Limpar qualquer modal/backdrop antes de mostrar login
-        const allModals = document.querySelectorAll('.modal');
-        allModals.forEach(modal => {
-            const instance = bootstrap.Modal.getInstance(modal);
-            if (instance) {
-                instance.hide();
-                instance.dispose();
-            }
-            modal.classList.remove('show');
-            modal.style.display = 'none';
-        });
-        
-        const backdrops = document.querySelectorAll('.modal-backdrop');
-        backdrops.forEach(backdrop => backdrop.remove());
-        document.body.classList.remove('modal-open');
-        document.body.style.overflow = '';
-        document.body.style.paddingRight = '';
-        
         this.showLogin();
     }
 
@@ -269,12 +204,22 @@ class ChatwootWorkflowsApp {
         }
     }
 
-    async loadActiveWorkflows() {
+    async loadActiveWorkflows(forceRefresh = false) {
         try {
-            this.activeWorkflows = await this.apiRequest('/api/inbox-workflows');
+            console.log(`🔄 Carregando workflows ativos (força: ${forceRefresh})`);
+            
+            const headers = {};
+            if (forceRefresh) {
+                headers['Cache-Control'] = 'no-cache';
+                headers['Pragma'] = 'no-cache';
+            }
+            
+            this.activeWorkflows = await this.apiRequest('/api/inbox-workflows', { headers });
             this.populateActiveWorkflows();
+            
+            console.log(`✅ ${this.activeWorkflows.length} workflows carregados`);
         } catch (error) {
-            console.error('Erro ao carregar fluxos ativos:', error);
+            console.error('❌ Erro ao carregar fluxos ativos:', error);
         }
     }
 
@@ -548,7 +493,7 @@ class ChatwootWorkflowsApp {
             const config = JSON.parse(configText);
             preview.innerHTML = this.renderWorkflowPreview(config);
             
-            // Inicializar tooltips do Bootstrap após renderizar
+            // Inicializar tooltips após renderizar
             setTimeout(() => {
                 this.initializeTooltips();
             }, 100);
@@ -558,23 +503,11 @@ class ChatwootWorkflowsApp {
     }
 
     initializeTooltips() {
-        // Destruir tooltips existentes primeiro
-        const existingTooltips = document.querySelectorAll('[data-bs-toggle="tooltip"]');
-        existingTooltips.forEach(element => {
-            const tooltip = bootstrap.Tooltip.getInstance(element);
-            if (tooltip) {
-                tooltip.dispose();
-            }
+        // Implementação simples de tooltip usando title
+        const tooltipElements = document.querySelectorAll('[data-tooltip]');
+        tooltipElements.forEach(element => {
+            element.title = element.getAttribute('data-tooltip');
         });
-        
-        // Inicializar novos tooltips
-        const tooltipTriggerList = document.querySelectorAll('[data-bs-toggle="tooltip"]');
-        const tooltipList = [...tooltipTriggerList].map(tooltipTriggerEl => 
-            new bootstrap.Tooltip(tooltipTriggerEl, {
-                html: true,
-                trigger: 'hover focus'
-            })
-        );
     }
 
     renderWorkflowPreview(config) {
@@ -597,6 +530,7 @@ class ChatwootWorkflowsApp {
                         </span>
                     </div>
                     <div class="block-message">${block.message || ''}</div>
+                    ${this.renderBlockMedia(block)}
                     ${this.renderBlockActions(block)}
                     ${block.buttons ? `
                         <div class="block-buttons">
@@ -609,6 +543,104 @@ class ChatwootWorkflowsApp {
         
         html += '</div>';
         return html;
+    }
+
+    renderBlockMedia(block) {
+        if (!block.media) {
+            return '';
+        }
+
+        const media = block.media;
+        
+        // Renderizar vídeo do YouTube
+        if (media.type === 'video' && media.url) {
+            const videoId = this.extractYouTubeVideoId(media.url);
+            if (videoId) {
+                // Usar múltiplas opções de thumbnail com fallbacks
+                const thumbnailId = `thumb_${videoId}`;
+                return `
+                    <div class="block-media">
+                        <div class="media-card">
+                            <div class="media-thumbnail">
+                                <img 
+                                    id="${thumbnailId}"
+                                    src="https://img.youtube.com/vi/${videoId}/hqdefault.jpg" 
+                                    alt="Thumbnail do vídeo" 
+                                    class="youtube-thumbnail"
+                                    onerror="handleThumbnailError('${thumbnailId}', '${videoId}')" 
+                                />
+                                <div class="play-overlay">
+                                    <i class="fab fa-youtube"></i>
+                                </div>
+                            </div>
+                            <div class="media-info">
+                                <h6 class="media-title">
+                                    <i class="fas fa-play-circle me-2"></i>${media.title || 'Vídeo do YouTube'}
+                                </h6>
+                                ${media.description ? `<p class="media-description">${media.description}</p>` : ''}
+                                <small class="media-url">
+                                    <i class="fas fa-link me-1"></i>
+                                    <a href="${media.url}" target="_blank" class="text-decoration-none">${media.url}</a>
+                                </small>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+        }
+        
+        // Renderizar attachment (arquivo enviado)
+        if (media.attachment && media.attachment.file_id) {
+            return `
+                <div class="block-media">
+                    <div class="media-card">
+                        <div class="media-info">
+                            <h6 class="media-title">
+                                <i class="fas fa-paperclip me-2"></i>Anexo
+                            </h6>
+                            <small class="media-file-id">
+                                <i class="fas fa-file me-1"></i>
+                                File ID: <code>${media.attachment.file_id}</code>
+                            </small>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+        
+        return '';
+    }
+
+    extractYouTubeVideoId(url) {
+        console.log('Extraindo ID do YouTube da URL:', url);
+        
+        // Extrair ID do vídeo de diferentes formatos de URL do YouTube
+        const regexes = [
+            // youtube.com/watch?v=ID (pode ter outros parâmetros)
+            /(?:https?:\/\/)?(?:www\.)?youtube\.com\/watch\?.*[&?]v=([^&\n?#]+)/,
+            /(?:https?:\/\/)?(?:www\.)?youtube\.com\/watch\?v=([^&\n?#]+)/,
+            // youtu.be/ID (formato curto)
+            /(?:https?:\/\/)?(?:www\.)?youtu\.be\/([^&\n?#\?]+)/,
+            // youtube.com/embed/ID
+            /(?:https?:\/\/)?(?:www\.)?youtube\.com\/embed\/([^&\n?#]+)/,
+            // youtube.com/v/ID
+            /(?:https?:\/\/)?(?:www\.)?youtube\.com\/v\/([^&\n?#]+)/,
+            // youtube.com/watch?feature=player_embedded&v=ID
+            /(?:https?:\/\/)?(?:www\.)?youtube\.com\/watch\?.*v=([^&\n?#]+)/
+        ];
+        
+        for (let i = 0; i < regexes.length; i++) {
+            const regex = regexes[i];
+            const match = url.match(regex);
+            if (match && match[1]) {
+                const videoId = match[1].split('&')[0]; // Remove parâmetros adicionais
+                console.log(`ID extraído (regex ${i+1}):`, videoId);
+                return videoId;
+            }
+        }
+        
+        console.warn('Não foi possível extrair ID do YouTube da URL');
+        return null;
     }
 
     renderBlockActions(block) {
@@ -644,10 +676,8 @@ class ChatwootWorkflowsApp {
         
         return `
             <span class="block-button" 
-                  title="${tooltipInfo}" 
-                  data-bs-toggle="tooltip" 
-                  data-bs-placement="top"
-                  data-bs-html="true">
+                  data-tooltip="${tooltipInfo.replace(/"/g, '&quot;')}" 
+                  title="${tooltipInfo.replace(/"/g, '&quot;')}">
                 ${button.text}
             </span>
         `;
@@ -662,39 +692,39 @@ class ChatwootWorkflowsApp {
             const nextBlockName = nextBlock ? (nextBlock.name || button.next_block) : button.next_block;
             
             if (button.next_block === 'finalizar') {
-                tooltipParts.push(`🏁 <strong>Ação:</strong> Finalizar conversa`);
+                tooltipParts.push(`🏁 Ação: Finalizar conversa`);
             } else {
-                tooltipParts.push(`➡️ <strong>Próximo bloco:</strong> ${nextBlockName}`);
+                tooltipParts.push(`➡️ Próximo bloco: ${nextBlockName}`);
             }
         } else {
             // Se não há next_block definido, o fluxo para neste ponto
-            tooltipParts.push(`⏹️ <strong>Ação:</strong> Parar fluxo (sem próximo bloco)`);
+            tooltipParts.push(`⏹️ Ação: Parar fluxo (sem próximo bloco)`);
         }
         
         // Labels que serão atribuídos pelo botão
         const labels = [];
         
         if (button.assign_labels && button.assign_labels.length > 0) {
-            labels.push(`🏷️ <strong>Labels da conversa:</strong> ${button.assign_labels.join(', ')}`);
+            labels.push(`🏷️ Labels da conversa: ${button.assign_labels.join(', ')}`);
         }
         
         if (button.contact_labels && button.contact_labels.length > 0) {
-            labels.push(`👤 <strong>Labels do contato:</strong> ${button.contact_labels.join(', ')}`);
+            labels.push(`👤 Labels do contato: ${button.contact_labels.join(', ')}`);
         }
         
         if (button.tag) {
-            labels.push(`🏷️ <strong>Tag:</strong> ${button.tag}`);
+            labels.push(`🏷️ Tag: ${button.tag}`);
         }
         
         tooltipParts.push(...labels);
         
         // Atribuições do botão
         if (button.assign_agent) {
-            tooltipParts.push(`👨‍💼 <strong>Atribuir ao agente:</strong> ${button.assign_agent}`);
+            tooltipParts.push(`👨‍💼 Atribuir ao agente: ${button.assign_agent}`);
         }
         
         if (button.assign_team) {
-            tooltipParts.push(`👥 <strong>Atribuir ao time:</strong> ${button.assign_team}`);
+            tooltipParts.push(`👥 Atribuir ao time: ${button.assign_team}`);
         }
         
         // Se não há nenhuma informação além do fluxo, mostrar mensagem
@@ -702,7 +732,7 @@ class ChatwootWorkflowsApp {
             return '⚠️ Botão sem ação definida - fluxo irá parar';
         }
         
-        return tooltipParts.join('<br>');
+        return tooltipParts.join('\n');
     }
 
     async saveWorkflow() {
@@ -716,8 +746,16 @@ class ChatwootWorkflowsApp {
             return;
         }
 
+        // Adicionar indicador de salvando
+        const saveButton = document.querySelector('button[onclick="saveWorkflow()"]');
+        const originalText = saveButton.innerHTML;
+        saveButton.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Salvando...';
+        saveButton.disabled = true;
+
         try {
             const workflowConfig = JSON.parse(configText);
+            
+            console.log('🔄 Iniciando salvamento:', { accountId, inboxId, workflowName });
             
             const response = await this.apiRequest('/api/inbox-workflows', {
                 method: 'POST',
@@ -726,20 +764,141 @@ class ChatwootWorkflowsApp {
                     inboxId: parseInt(inboxId),
                     workflowName,
                     workflowConfig
-                })
+                }),
+                headers: {
+                    'Cache-Control': 'no-cache',
+                    'Pragma': 'no-cache'
+                }
             });
 
             if (response.success) {
-                this.showAlert('Fluxo salvo com sucesso!', 'success');
-                await this.loadActiveWorkflows();
+                console.log('✅ Salvamento bem-sucedido!');
+                
+                // Mostrar sucesso
+                this.showAlert('✅ Fluxo salvo com sucesso!', 'success');
+                
+                // FORÇAR RELOAD dos dados para garantir sincronização
+                console.log('🔄 Forçando reload dos dados...');
+                
+                // 1. Aguardar um pouco para garantir que salvou no banco
+                await new Promise(resolve => setTimeout(resolve, 500));
+                
+                // 2. Recarregar workflows ativos com força
+                await this.loadActiveWorkflows(true); // true = força reload
+                
+                // 3. Recarregar o workflow específico para validar
+                await this.forceReloadCurrentWorkflow(accountId, inboxId);
+                
+                // 4. Fechar editor apenas se reload foi bem-sucedido
                 this.hideWorkflowEditor();
+                
+                // 5. Mostrar confirmação visual com detalhes
+                this.showWorkflowSavedConfirmation(workflowName, accountId, inboxId);
+                
             } else {
+                console.error('❌ Erro no salvamento:', response.error);
                 this.showAlert(response.error || 'Erro ao salvar fluxo', 'danger');
             }
         } catch (error) {
-            console.error('Erro ao salvar fluxo:', error);
-            this.showAlert('Erro ao salvar fluxo', 'danger');
+            console.error('❌ Erro ao salvar fluxo:', error);
+            this.showAlert('Erro ao salvar fluxo: ' + error.message, 'danger');
+        } finally {
+            // Restaurar botão
+            saveButton.innerHTML = originalText;
+            saveButton.disabled = false;
         }
+    }
+
+    // Função para forçar reload do workflow atual
+    async forceReloadCurrentWorkflow(accountId, inboxId) {
+        try {
+            console.log('🔄 Validando workflow salvo...');
+            
+            const workflow = await this.apiRequest(`/api/inbox-workflows/${accountId}/${inboxId}`, {
+                headers: {
+                    'Cache-Control': 'no-cache',
+                    'Pragma': 'no-cache',
+                    'If-None-Match': '*' // Força bypass de cache HTTP
+                }
+            });
+            
+            if (workflow) {
+                console.log(`✅ Workflow validado: "${workflow.workflow_name}"`);
+                return workflow;
+            } else {
+                console.warn('⚠️ Workflow não encontrado após salvamento');
+                return null;
+            }
+        } catch (error) {
+            console.error('❌ Erro ao validar workflow:', error);
+            return null;
+        }
+    }
+    
+    // Função para mostrar indicador de templates específicos da caixa
+showInboxTemplateIndicator(inboxName, templateCount) {
+    // Remover indicador anterior se existir
+    const existingIndicator = document.getElementById('inboxTemplateIndicator');
+    if (existingIndicator) {
+        existingIndicator.remove();
+    }
+    
+    // Criar novo indicador
+    const indicator = document.createElement('div');
+    indicator.id = 'inboxTemplateIndicator';
+    indicator.className = 'alert alert-info alert-dismissible fade show mt-2';
+    indicator.innerHTML = `
+        <div class="d-flex align-items-center">
+            <i class="fas fa-info-circle me-2"></i>
+            <div>
+                <strong>🚀 Templates da API Oficial</strong><br>
+                <small>Carregados ${templateCount} templates da caixa de entrada: <strong>${inboxName}</strong></small>
+            </div>
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+    `;
+    
+    // Adicionar após o select de templates
+    const selectContainer = document.getElementById('modeloMensagem').parentElement;
+    selectContainer.appendChild(indicator);
+    
+    // Auto-remover após 8 segundos
+    setTimeout(() => {
+        if (indicator && indicator.parentNode) {
+            indicator.remove();
+        }
+    }, 8000);
+}
+
+// Função para mostrar confirmação detalhada
+showWorkflowSavedConfirmation(workflowName, accountId, inboxId) {
+        const confirmationHtml = `
+            <div class="alert alert-success alert-dismissible fade show" role="alert">
+                <div class="d-flex align-items-center">
+                    <i class="fas fa-check-circle fa-2x text-success me-3"></i>
+                    <div>
+                        <h6 class="alert-heading mb-1">✅ Workflow Salvo com Sucesso!</h6>
+                        <p class="mb-1"><strong>Nome:</strong> ${workflowName}</p>
+                        <p class="mb-1"><strong>Conta:</strong> ${accountId} | <strong>Inbox:</strong> ${inboxId}</p>
+                        <small class="text-muted">Salvo em: ${new Date().toLocaleString()}</small>
+                    </div>
+                </div>
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+        `;
+        
+        // Adicionar no topo da página
+        const container = document.querySelector('.container-fluid');
+        const existingAlert = container.querySelector('.alert-success');
+        if (existingAlert) existingAlert.remove();
+        
+        container.insertAdjacentHTML('afterbegin', confirmationHtml);
+        
+        // Auto-remover após 10 segundos
+        setTimeout(() => {
+            const alert = container.querySelector('.alert-success');
+            if (alert) alert.remove();
+        }, 10000);
     }
 
     async deleteWorkflow(accountId, inboxId) {
@@ -775,7 +934,7 @@ class ChatwootWorkflowsApp {
         alertDiv.style.cssText = 'top: 20px; right: 20px; z-index: 9999; min-width: 300px;';
         alertDiv.innerHTML = `
             ${message}
-            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            <button type="button" class="btn-close" onclick="this.parentElement.remove()"></button>
         `;
         
         document.body.appendChild(alertDiv);
@@ -788,63 +947,32 @@ class ChatwootWorkflowsApp {
         }, 5000);
     }
 
-    showChangePasswordModal() {
-        // Só permitir se realmente logado
+    showChangePasswordDiv() {
         if (!this.token) {
-            console.log('Tentativa de abrir modal de senha sem estar logado');
+            console.log('Tentativa de abrir div de senha sem estar logado');
             return;
         }
         
-        // Limpar qualquer backdrop que possa estar interferindo
-        const existingBackdrops = document.querySelectorAll('.modal-backdrop');
-        existingBackdrops.forEach(backdrop => backdrop.remove());
-        
-        const modalEl = document.getElementById('changePasswordModal');
-        
-        // Verificar se já existe uma instância
-        const existingModal = bootstrap.Modal.getInstance(modalEl);
-        if (existingModal) {
-            existingModal.dispose();
-        }
-        
-        const modal = new bootstrap.Modal(modalEl, {
-            backdrop: true,
-            keyboard: true
-        });
-        
+        this.showDiv('changePasswordDiv');
         document.getElementById('changePasswordForm').reset();
         document.getElementById('changePasswordError').classList.add('d-none');
-        modal.show();
-        
-        console.log('Modal de alteração de senha aberto pelo usuário');
+        console.log('Div de alteração de senha aberta pelo usuário');
     }
 
     async changePassword() {
         const currentPassword = document.getElementById('currentPassword').value;
         const newPassword = document.getElementById('newPassword').value;
         const errorDiv = document.getElementById('changePasswordError');
+        
         try {
             const response = await this.apiRequest('/api/auth/change-password', {
                 method: 'POST',
                 body: JSON.stringify({ currentPassword, newPassword })
             });
+            
             if (response.success) {
                 errorDiv.classList.add('d-none');
-                const modalEl = document.getElementById('changePasswordModal');
-                const modal = bootstrap.Modal.getInstance(modalEl);
-                if (modal) {
-                    modal.hide();
-                }
-                
-                // Limpar backdrop após fechar
-                setTimeout(() => {
-                    const backdrops = document.querySelectorAll('.modal-backdrop');
-                    backdrops.forEach(backdrop => backdrop.remove());
-                    document.body.classList.remove('modal-open');
-                    document.body.style.overflow = '';
-                    document.body.style.paddingRight = '';
-                }, 300);
-                
+                this.hideDiv('changePasswordDiv');
                 this.showAlert('Senha alterada com sucesso!', 'success');
             } else {
                 errorDiv.textContent = response.error || 'Erro ao alterar senha';
@@ -854,154 +982,45 @@ class ChatwootWorkflowsApp {
             errorDiv.textContent = 'Erro de conexão';
             errorDiv.classList.remove('d-none');
         }
-    }
 }
 
-// Função para limpar backdrops e garantir interface limpa
-function clearModalBackdrops() {
-    // Remover todos os backdrops
-    const backdrops = document.querySelectorAll('.modal-backdrop');
-    backdrops.forEach(backdrop => backdrop.remove());
-    
-    // Resetar estilos do body
-    document.body.classList.remove('modal-open');
-    document.body.style.overflow = '';
-    document.body.style.paddingRight = '';
-    
-    // Se o usuário está logado, garantir que modais problemáticos estejam escondidos
-    if (window.app && window.app.token) {
-        const problematicModals = ['loginModal', 'changePasswordModal'];
-        problematicModals.forEach(modalId => {
-            const modal = document.getElementById(modalId);
-            if (modal) {
-                modal.classList.remove('show');
-                modal.style.display = 'none';
-                modal.setAttribute('aria-hidden', 'true');
-                modal.removeAttribute('aria-modal');
-                modal.removeAttribute('role');
+    // Funções simples para gerenciar divs
+    showDiv(divId) {
+        const div = document.getElementById(divId);
+        if (div) {
+            div.classList.remove('d-none');
+            div.style.display = 'block';
             }
-        });
     }
-}
 
-// Função de emergência para forçar limpeza total
-function forceCleanInterface() {
-    // Remover TODOS os backdrops
-    const backdrops = document.querySelectorAll('.modal-backdrop');
-    backdrops.forEach(backdrop => backdrop.remove());
-    
-    // Resetar body
-    document.body.classList.remove('modal-open');
-    document.body.style.overflow = '';
-    document.body.style.paddingRight = '';
-    document.body.style.paddingLeft = '';
-    
-    // Lista de modais que devem ser fechados quando logado
-    const modalsToClose = ['loginModal', 'changePasswordModal'];
-    
-    // Forçar que modais sejam escondidos se o usuário estiver logado
-    const token = localStorage.getItem('authToken');
-    if (token) {
-        modalsToClose.forEach(modalId => {
-            const modal = document.getElementById(modalId);
-            if (modal) {
-                // Remover todas as classes e atributos do modal
-                modal.classList.remove('show', 'fade');
-                modal.style.display = 'none';
-                modal.style.visibility = 'hidden';
-                modal.setAttribute('aria-hidden', 'true');
-                modal.removeAttribute('aria-modal');
-                modal.removeAttribute('role');
-                modal.removeAttribute('tabindex');
-                
-                // Remover instância do Bootstrap se existir
-                const instance = bootstrap.Modal.getInstance(modal);
-                if (instance) {
-                    try {
-                        instance.hide();
-                        instance.dispose();
-                    } catch (e) {
-                        // Ignorar erros de disposição
-                    }
-                }
-            }
-        });
-        
-        // Garantir que o app seja visível
-        const app = document.getElementById('app');
-        if (app) {
-            app.classList.remove('d-none');
-            app.style.display = 'block';
-            app.style.visibility = 'visible';
+    hideDiv(divId) {
+        const div = document.getElementById(divId);
+        if (div) {
+            div.classList.add('d-none');
+            div.style.display = 'none';
         }
+    }
+
+    hideAllDivs() {
+        const divs = ['loginDiv', 'changePasswordDiv', 'mediaManagerDiv', 'campanhasDiv'];
+        divs.forEach(divId => this.hideDiv(divId));
     }
 }
 
 // Event listeners
 document.addEventListener('DOMContentLoaded', () => {
-    // Limpar qualquer backdrop residual na inicialização
-    clearModalBackdrops();
-    
-    // Executar limpeza forçada após um pequeno delay
-    setTimeout(forceCleanInterface, 500);
-    
     // Adicionar estilos CSS para as informações dos blocos
     addWorkflowPreviewStyles();
     
     window.app = new ChatwootWorkflowsApp();
     
     // Atualizar preview quando o usuário digitar no textarea
-    document.getElementById('workflowConfig').addEventListener('input', () => {
+    const workflowConfig = document.getElementById('workflowConfig');
+    if (workflowConfig) {
+        workflowConfig.addEventListener('input', () => {
         window.app.updateWorkflowPreview();
     });
-    
-    // Adicionar listener para limpar backdrops quando clicarem fora de qualquer modal
-    document.addEventListener('click', (e) => {
-        // Se clicaram fora de qualquer modal e não em um botão que abre modal
-        if (!e.target.closest('.modal') && !e.target.closest('[data-bs-toggle="modal"]') && !e.target.closest('[onclick*="Modal"]')) {
-            setTimeout(clearModalBackdrops, 100);
-        }
-    });
-    
-    // Executar limpeza periódica a cada 2 segundos se logado
-    setInterval(() => {
-        if (window.app && window.app.token) {
-            forceCleanInterface();
-        }
-    }, 2000);
-    
-    // Observer para detectar quando modais são mostrados acidentalmente
-    const observer = new MutationObserver((mutations) => {
-        mutations.forEach((mutation) => {
-            if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
-                const target = mutation.target;
-                if ((target.id === 'changePasswordModal' || target.id === 'loginModal') && 
-                    target.classList.contains('show') && 
-                    window.app && window.app.token) {
-                    
-                    console.log('Modal detectado sendo aberto acidentalmente, fechando...');
-                    setTimeout(() => {
-                        const instance = bootstrap.Modal.getInstance(target);
-                        if (instance) {
-                            instance.hide();
-                        }
-                        target.classList.remove('show');
-                        target.style.display = 'none';
-                        forceCleanInterface();
-                    }, 100);
-                }
-            }
-        });
-    });
-    
-    // Observar mudanças nos modais
-    const modalsToObserve = ['loginModal', 'changePasswordModal'];
-    modalsToObserve.forEach(modalId => {
-        const modal = document.getElementById(modalId);
-        if (modal) {
-            observer.observe(modal, { attributes: true, attributeFilter: ['class'] });
-        }
-    });
+    }
 });
 
 // Funções globais para compatibilidade com onclick
@@ -1063,7 +1082,7 @@ function initCampanhasEventListeners() {
         
         // Verificar se os elementos existem antes de adicionar listeners
         const btnCriarCampanha = document.getElementById('btnCriarCampanha');
-        const closeModalCampanha = document.getElementById('closeModalCampanha');
+        const closeCampanha = document.getElementById('closeCampanha');
         const formCampanha = document.getElementById('formCampanha');
         const agendarEnvio = document.getElementById('agendarEnvio');
         const menuListarCampanhas = document.getElementById('menuListarCampanhas');
@@ -1071,7 +1090,7 @@ function initCampanhasEventListeners() {
 
         console.log('Elementos encontrados:', {
             btnCriarCampanha: !!btnCriarCampanha,
-            closeModalCampanha: !!closeModalCampanha,
+            closeCampanha: !!closeCampanha,
             formCampanha: !!formCampanha,
             agendarEnvio: !!agendarEnvio,
             menuListarCampanhas: !!menuListarCampanhas,
@@ -1080,25 +1099,40 @@ function initCampanhasEventListeners() {
 
         if (btnCriarCampanha) {
             btnCriarCampanha.addEventListener('click', function() {
-                document.getElementById('modalCampanha').style.display = 'block';
+                // Verificar se conta e caixa foram selecionadas (mesma regra dos workflows)
+                const accountId = document.getElementById('accountSelect').value;
+                const inboxId = document.getElementById('inboxSelect').value;
+                
+                if (!accountId || !inboxId) {
+                    window.app.showAlert('Selecione uma conta e caixa de entrada primeiro', 'warning');
+                    return;
+                }
+                
+                // Atualizar as variáveis globais com os valores selecionados
+                selectedAccountId = accountId;
+                selectedInboxId = inboxId;
+                
+                // Abrir modal de campanha
+                window.app.showDiv('campanhasDiv');
                 loadModelos();
                 loadTags();
+                
+                // Mostrar informações da conta/caixa selecionada no modal
+                showSelectedAccountInbox();
             });
         }
 
-        if (closeModalCampanha) {
-            closeModalCampanha.addEventListener('click', function() {
-                document.getElementById('modalCampanha').style.display = 'none';
+        if (closeCampanha) {
+            closeCampanha.addEventListener('click', function() {
+                // Remover indicador de conta/caixa selecionada
+                const indicator = document.getElementById('selectedAccountInboxIndicator');
+                if (indicator) {
+                    indicator.remove();
+                }
+                
+                window.app.hideDiv('campanhasDiv');
             });
         }
-
-        // Fechar modal ao clicar fora
-        window.addEventListener('click', function(event) {
-            const modal = document.getElementById('modalCampanha');
-            if (modal && event.target === modal) {
-                modal.style.display = 'none';
-            }
-        });
 
         // Trocar entre campos de tag/CSV
         if (metodoEnvioRadios && metodoEnvioRadios.length > 0) {
@@ -1206,7 +1240,7 @@ function initCampanhasEventListeners() {
                         }
                         
                         window.app.showAlert('Campanha criada com sucesso!', 'success');
-                        document.getElementById('modalCampanha').style.display = 'none';
+                        window.app.hideDiv('campanhasDiv');
                         this.reset();
                     } else {
                         window.app.showAlert('Erro ao criar campanha: ' + result.error, 'error');
@@ -1253,14 +1287,25 @@ function initCampanhasAfterLogin() {
     }
 }
 
-// Remover os event listeners que estavam soltos para evitar erros
-// (Os event listeners agora estão dentro de initCampanhasEventListeners)
-
 // Carregar modelos/templates via API
 async function loadModelos() {
     try {
         console.log('🔍 Carregando templates do WhatsApp...');
-        const response = await fetch('/api/chatwoot/templates', {
+        
+        // Obter conta e caixa selecionadas
+        const accountId = selectedAccountId || document.getElementById('accountSelect')?.value;
+        const inboxId = selectedInboxId || document.getElementById('inboxSelect')?.value;
+        
+        console.log(`📋 Usando Account ID: ${accountId}, Inbox ID: ${inboxId}`);
+        
+        // Construir URL com parâmetros se disponíveis
+        let url = '/api/chatwoot/templates';
+        const params = new URLSearchParams();
+        if (accountId) params.append('accountId', accountId);
+        if (inboxId) params.append('inboxId', inboxId);
+        if (params.toString()) url += `?${params.toString()}`;
+        
+        const response = await fetch(url, {
             headers: { 'Authorization': `Bearer ${getAuthToken()}` }
         });
         
@@ -1275,14 +1320,72 @@ async function loadModelos() {
         select.innerHTML = '<option value="">Selecione um modelo</option>';
         
         if (Array.isArray(templates) && templates.length > 0) {
-            templates.forEach(template => {
-                const option = document.createElement('option');
-                option.value = template.name;
-                option.textContent = template.displayName || template.name;
-                option.title = `Status: ${template.status} | Categoria: ${template.category} | Idioma: ${template.language}`;
-                select.appendChild(option);
-            });
+            // Agrupar por fonte
+            const officialApiTemplates = templates.filter(t => t.source?.includes('whatsapp_api'));
+            const chatwootTemplates = templates.filter(t => !t.source?.includes('whatsapp_api'));
+            
+            // Verificar se templates são específicos de uma caixa
+            const inboxSpecificTemplates = templates.filter(t => t.inboxId);
+            
+            // Mostrar templates da API oficial primeiro
+            if (officialApiTemplates.length > 0) {
+                let label = `🚀 API Oficial WhatsApp (${officialApiTemplates.length})`;
+                
+                // Se há templates específicos de caixa, mostrar nome da caixa
+                if (inboxSpecificTemplates.length > 0) {
+                    const inboxName = inboxSpecificTemplates[0].inboxName;
+                    label = `🚀 ${inboxName} - API Oficial (${officialApiTemplates.length})`;
+                }
+                
+                const optgroup = document.createElement('optgroup');
+                optgroup.label = label;
+                
+                officialApiTemplates.forEach(template => {
+                    const option = document.createElement('option');
+                    option.value = template.name;
+                    option.textContent = template.displayName || template.name;
+                    const sourceText = template.inboxName ? `Caixa: ${template.inboxName}` : 'API Oficial';
+                    option.title = `Fonte: ${sourceText} | Status: ${template.status} | Categoria: ${template.category} | Idioma: ${template.language}`;
+                    optgroup.appendChild(option);
+                });
+                
+                select.appendChild(optgroup);
+            }
+            
+            // Mostrar templates do Chatwoot depois
+            if (chatwootTemplates.length > 0) {
+                const optgroup = document.createElement('optgroup');
+                optgroup.label = `📱 Chatwoot (${chatwootTemplates.length})`;
+                
+                chatwootTemplates.forEach(template => {
+                    const option = document.createElement('option');
+                    option.value = template.name;
+                    option.textContent = template.displayName || template.name;
+                    option.title = `Fonte: Chatwoot | Status: ${template.status} | Categoria: ${template.category} | Idioma: ${template.language}`;
+                    optgroup.appendChild(option);
+                });
+                
+                select.appendChild(optgroup);
+            }
+            
+            // Se não há grupos, mostrar normalmente
+            if (officialApiTemplates.length === 0 && chatwootTemplates.length === 0) {
+                templates.forEach(template => {
+                    const option = document.createElement('option');
+                    option.value = template.name;
+                    option.textContent = template.displayName || template.name;
+                    option.title = `Status: ${template.status} | Categoria: ${template.category} | Idioma: ${template.language}`;
+                    select.appendChild(option);
+                });
+            }
+            
             console.log(`✅ ${templates.length} templates carregados com sucesso`);
+            console.log(`📊 API Oficial: ${officialApiTemplates.length}, Chatwoot: ${chatwootTemplates.length}`);
+            
+            // Mostrar indicador se templates são específicos de uma caixa
+            if (inboxSpecificTemplates.length > 0) {
+                showInboxTemplateIndicator(inboxSpecificTemplates[0].inboxName, officialApiTemplates.length);
+            }
         } else {
             console.warn('⚠️ Nenhum template encontrado');
             const option = document.createElement('option');
@@ -1299,9 +1402,7 @@ async function loadModelos() {
         select.innerHTML = '<option value="">Erro ao carregar templates - Clique em Sincronizar</option>';
         
         // Mostrar alerta se a função showAlert existir
-        if (typeof showAlert === 'function') {
-            showAlert('Erro ao carregar modelos de mensagem. Tente sincronizar os templates.', 'error');
-        } else if (typeof window.app?.showAlert === 'function') {
+        if (typeof window.app?.showAlert === 'function') {
             window.app.showAlert('Erro ao carregar modelos de mensagem. Tente sincronizar os templates.', 'danger');
         }
     }
@@ -1319,7 +1420,19 @@ async function syncTemplates() {
         
         console.log('🔄 Iniciando sincronização de templates...');
         
-        const response = await fetch('/api/chatwoot/templates/sync', {
+        // Obter conta e caixa selecionadas para sincronização específica
+        const accountId = selectedAccountId || document.getElementById('accountSelect')?.value;
+        const inboxId = selectedInboxId || document.getElementById('inboxSelect')?.value;
+        
+        let url = '/api/chatwoot/templates/sync';
+        const params = new URLSearchParams();
+        if (accountId) params.append('accountId', accountId);
+        if (inboxId) params.append('inboxId', inboxId);
+        if (params.toString()) url += `?${params.toString()}`;
+        
+        console.log(`🔄 Sincronizando para Account: ${accountId}, Inbox: ${inboxId}`);
+        
+        const response = await fetch(url, {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${getAuthToken()}` }
         });
@@ -1329,14 +1442,26 @@ async function syncTemplates() {
         if (result.success) {
             console.log('✅ Sincronização bem-sucedida:', result);
             
+            // Verificar se foi via API oficial
+            let alertMessage = result.message;
+            let alertType = 'success';
+            
+            if (result.source === 'whatsapp_official_api') {
+                alertMessage = `🚀 ${result.message} (API Oficial do WhatsApp)`;
+                alertType = 'success';
+            } else if (result.results?.some(r => r.method === 'whatsapp_official_api' && r.status === 'failed')) {
+                alertMessage = `⚠️ ${result.message} (Chatwoot - API oficial falhou)`;
+                alertType = 'warning';
+            }
+            
             if (typeof window.app?.showAlert === 'function') {
-                window.app.showAlert(result.message, 'success');
+                window.app.showAlert(alertMessage, alertType);
             }
             
             // Aguardar um pouco e recarregar templates
             setTimeout(() => {
                 loadModelos();
-            }, 2000);
+            }, 1500);
             
         } else {
             console.warn('⚠️ Sincronização parcial:', result);
@@ -1384,8 +1509,6 @@ async function loadTags() {
     }
 }
 
-
-
 // Carregar lista de campanhas
 async function loadCampanhasList() {
     try {
@@ -1394,7 +1517,7 @@ async function loadCampanhasList() {
         });
         const campanhas = await response.json();
         
-        // Criar modal ou seção para exibir campanhas
+        // Criar div para exibir campanhas
         showCampanhasList(campanhas);
     } catch (error) {
         console.error('Erro ao carregar campanhas:', error);
@@ -1404,12 +1527,13 @@ async function loadCampanhasList() {
 
 // Exibir lista de campanhas com estatísticas detalhadas
 function showCampanhasList(campanhas) {
-    // Criar ou encontrar container para listagem
-    let container = document.getElementById('campanhasContainer');
+    // Criar div para listagem de campanhas
+    let container = document.getElementById('campanhasListDiv');
     if (!container) {
         container = document.createElement('div');
-        container.id = 'campanhasContainer';
-        container.className = 'campanhas-list position-fixed top-0 start-0 w-100 h-100 bg-white z-3 p-4 overflow-auto';
+        container.id = 'campanhasListDiv';
+        container.className = 'position-fixed top-0 start-0 w-100 h-100 bg-white z-3 p-4 overflow-auto';
+        container.style.zIndex = '9999';
         document.body.appendChild(container);
     }
     
@@ -1614,17 +1738,16 @@ async function verErrosCampanha(campanhaId) {
             return;
         }
         
-        // Criar modal para mostrar erros
-        const modal = document.createElement('div');
-        modal.className = 'modal fade';
-        modal.innerHTML = `
-            <div class="modal-dialog modal-lg">
-                <div class="modal-content">
-                    <div class="modal-header">
-                        <h5 class="modal-title">🚨 Erros da Campanha</h5>
-                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        // Criar div simples para mostrar erros
+        const errorDiv = document.createElement('div');
+        errorDiv.className = 'position-fixed top-0 start-0 w-100 h-100 bg-white p-4 overflow-auto';
+        errorDiv.style.zIndex = '99999';
+        errorDiv.innerHTML = `
+            <div class="container">
+                <div class="d-flex justify-content-between align-items-center mb-4">
+                    <h5>🚨 Erros da Campanha</h5>
+                    <button class="btn btn-secondary" onclick="this.closest('.position-fixed').remove()">Fechar</button>
                     </div>
-                    <div class="modal-body">
                         <div class="alert alert-warning">
                             <i class="fas fa-exclamation-triangle"></i>
                             <strong>${erros.length}</strong> contato(s) com erro de envio:
@@ -1659,25 +1782,15 @@ async function verErrosCampanha(campanhaId) {
                                 </tbody>
                             </table>
                         </div>
-                    </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fechar</button>
-                        <button type="button" class="btn btn-warning" onclick="reenviarCampanha(${campanhaId}); bootstrap.Modal.getInstance(this.closest('.modal')).hide();">
+                <div class="mt-3">
+                    <button class="btn btn-warning" onclick="reenviarCampanha(${campanhaId}); this.closest('.position-fixed').remove();">
                             <i class="fas fa-redo"></i> Reenviar Todos
                         </button>
-                    </div>
                 </div>
             </div>
         `;
         
-        document.body.appendChild(modal);
-        const bsModal = new bootstrap.Modal(modal);
-        bsModal.show();
-        
-        // Remover modal quando fechar
-        modal.addEventListener('hidden.bs.modal', () => {
-            modal.remove();
-        });
+        document.body.appendChild(errorDiv);
         
     } catch (error) {
         console.error('Erro ao carregar erros da campanha:', error);
@@ -1687,10 +1800,761 @@ async function verErrosCampanha(campanhaId) {
 
 // Função para fechar lista de campanhas
 function fecharListaCampanhas() {
-    const container = document.getElementById('campanhasContainer');
+    const container = document.getElementById('campanhasListDiv');
     if (container) {
         container.remove();
     }
+}
+
+// Função para mostrar informações da conta/caixa selecionada no modal de campanha
+function showSelectedAccountInbox() {
+    try {
+        // Buscar nomes da conta e caixa baseado nos IDs selecionados
+        let accountName = selectedAccountId;
+        let inboxName = selectedInboxId;
+        
+        if (window.app && window.app.accounts && window.app.accounts.length > 0) {
+            const account = window.app.accounts.find(acc => String(acc.id) === String(selectedAccountId));
+            if (account) accountName = account.name;
+        }
+        
+        if (window.app && window.app.inboxes && window.app.inboxes.length > 0) {
+            const inbox = window.app.inboxes.find(inb => String(inb.id) === String(selectedInboxId));
+            if (inbox) inboxName = inbox.name;
+        }
+        
+        // Encontrar elemento para mostrar as informações (pode estar no cabeçalho do modal)
+        const campanhaHeader = document.querySelector('#campanhasDiv .modal-header h5, #campanhasDiv .card-header h5');
+        if (campanhaHeader) {
+            // Remover indicador anterior se existir
+            const existingIndicator = document.getElementById('selectedAccountInboxIndicator');
+            if (existingIndicator) {
+                existingIndicator.remove();
+            }
+            
+            // Criar novo indicador
+            const indicator = document.createElement('div');
+            indicator.id = 'selectedAccountInboxIndicator';
+            indicator.className = 'mt-2 mb-3';
+            indicator.innerHTML = `
+                <div class="alert alert-info mb-0 py-2">
+                    <i class="fas fa-info-circle me-2"></i>
+                    <strong>Conta:</strong> ${accountName} | 
+                    <strong>Caixa:</strong> ${inboxName}
+                </div>
+            `;
+            
+            // Inserir após o cabeçalho
+            campanhaHeader.parentNode.insertBefore(indicator, campanhaHeader.nextSibling);
+            
+            console.log(`📍 Campanha será criada para: Conta "${accountName}" | Caixa "${inboxName}"`);
+        }
+        
+    } catch (error) {
+        console.warn('Erro ao mostrar informações da conta/caixa:', error);
+    }
+}
+
+// ===== GERENCIAMENTO DE MÍDIA =====
+
+// Variáveis globais para gerenciamento de mídia
+let currentMediaFiles = [];
+let fileToDelete = null;
+
+// Função para mostrar o gerenciador de mídia
+function showMediaManager() {
+    window.app.showDiv('mediaManagerDiv');
+    
+    // Carregar arquivos ao abrir
+    loadMediaFiles();
+    
+    // Inicializar eventos se ainda não foi feito
+    initMediaEventListeners();
+}
+
+// Inicializar event listeners do gerenciamento de mídia
+function initMediaEventListeners() {
+    // Verificar se já foi inicializado
+    if (window.mediaEventListenersInitialized) {
+        return;
+    }
+    window.mediaEventListenersInitialized = true;
+    
+    // Upload form
+    const uploadForm = document.getElementById('uploadForm');
+    if (uploadForm) {
+        uploadForm.addEventListener('submit', handleFileUpload);
+    }
+    
+    // Close button
+    const closeMediaManager = document.getElementById('closeMediaManager');
+    if (closeMediaManager) {
+        closeMediaManager.addEventListener('click', function() {
+            window.app.hideDiv('mediaManagerDiv');
+        });
+    }
+}
+
+// Função para fazer upload de arquivo
+async function handleFileUpload(e) {
+    e.preventDefault();
+    
+    const fileInput = document.getElementById('mediaFile');
+    const uploadBtn = document.getElementById('uploadBtn');
+    const progressDiv = document.getElementById('uploadProgress');
+    const progressBar = progressDiv.querySelector('.progress-bar');
+    const successDiv = document.getElementById('uploadSuccess');
+    const errorDiv = document.getElementById('uploadError');
+    
+    // Limpar mensagens anteriores
+    successDiv.classList.add('d-none');
+    errorDiv.classList.add('d-none');
+    
+    if (!fileInput.files || fileInput.files.length === 0) {
+        showUploadError('Por favor, selecione um arquivo.');
+        return;
+    }
+    
+    const file = fileInput.files[0];
+    
+    // Validar tamanho (16MB)
+    const maxSize = 16 * 1024 * 1024;
+    if (file.size > maxSize) {
+        showUploadError('Arquivo muito grande. Máximo permitido: 16MB');
+        return;
+    }
+    
+    // Validar tipo
+    const allowedTypes = [
+        'video/mp4', 'video/avi', 'video/mov', 'video/wmv', 'video/quicktime',
+        'image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp',
+        'audio/mp3', 'audio/wav', 'audio/ogg', 'audio/mpeg'
+    ];
+    
+    if (!allowedTypes.includes(file.type)) {
+        showUploadError('Tipo de arquivo não suportado: ' + file.type);
+        return;
+    }
+    
+    // Preparar formulário
+    const formData = new FormData();
+    formData.append('media', file);
+    
+    try {
+        // Mostrar progresso
+        uploadBtn.disabled = true;
+        uploadBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Enviando...';
+        progressDiv.classList.remove('d-none');
+        
+        // Simular progresso (já que fetch não suporta progresso de upload nativo)
+        let progress = 0;
+        const progressInterval = setInterval(() => {
+            progress += Math.random() * 30;
+            if (progress > 90) progress = 90;
+            progressBar.style.width = progress + '%';
+        }, 200);
+        
+        const response = await fetch('/api/upload-media', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${getAuthToken()}`
+            },
+            body: formData
+        });
+        
+        clearInterval(progressInterval);
+        progressBar.style.width = '100%';
+        
+        const result = await response.json();
+        
+        if (response.ok && result.success) {
+            // Sucesso
+            showUploadSuccess('Arquivo carregado com sucesso: ' + result.file.originalname);
+            
+            // Limpar formulário
+            uploadForm.reset();
+            
+            // Recarregar lista de arquivos
+            setTimeout(() => {
+                loadMediaFiles();
+                progressDiv.classList.add('d-none');
+            }, 1000);
+            
+        } else {
+            throw new Error(result.error || 'Erro no upload');
+        }
+        
+    } catch (error) {
+        console.error('Erro no upload:', error);
+        showUploadError('Erro no upload: ' + error.message);
+        progressDiv.classList.add('d-none');
+    } finally {
+        uploadBtn.disabled = false;
+        uploadBtn.innerHTML = '<i class="fas fa-upload me-2"></i>Fazer Upload';
+    }
+}
+
+// Carregar lista de arquivos de mídia
+async function loadMediaFiles() {
+    const listContainer = document.getElementById('mediaFilesList');
+    
+    try {
+        // Mostrar loading
+        listContainer.innerHTML = `
+            <div class="text-center">
+                <div class="spinner-border" role="status">
+                    <span class="visually-hidden">Carregando...</span>
+                </div>
+            </div>
+        `;
+        
+        const response = await fetch('/api/media-files', {
+            headers: {
+                'Authorization': `Bearer ${getAuthToken()}`
+            }
+        });
+        
+        const result = await response.json();
+        
+        if (response.ok && result.success) {
+            currentMediaFiles = result.files;
+            renderMediaFilesList(result.files);
+        } else {
+            throw new Error(result.error || 'Erro ao carregar arquivos');
+        }
+        
+    } catch (error) {
+        console.error('Erro ao carregar arquivos:', error);
+        listContainer.innerHTML = `
+            <div class="alert alert-danger">
+                <i class="fas fa-exclamation-triangle me-2"></i>
+                Erro ao carregar arquivos: ${error.message}
+            </div>
+        `;
+    }
+}
+
+// Renderizar lista de arquivos
+function renderMediaFilesList(files) {
+    const listContainer = document.getElementById('mediaFilesList');
+    
+    if (!files || files.length === 0) {
+        listContainer.innerHTML = `
+            <div class="text-center text-muted py-4">
+                <i class="fas fa-folder-open fa-3x mb-3"></i>
+                <h6>Nenhum arquivo encontrado</h6>
+                <p>Faça upload de arquivos para começar a usar mídia nos workflows.</p>
+            </div>
+        `;
+        return;
+    }
+    
+    listContainer.innerHTML = `
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th style="width: 40%;">
+                            <i class="fas fa-eye me-2 text-primary"></i>Preview & Arquivo
+                        </th>
+                        <th style="width: 10%;">Tipo</th>
+                        <th style="width: 10%;">Tamanho</th>
+                        <th style="width: 12%;">Data</th>
+                        <th style="width: 15%;">ID</th>
+                        <th style="width: 13%;">Ações</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${files.map(file => renderFileRow(file)).join('')}
+                </tbody>
+            </table>
+        </div>
+        
+        <style>
+        .file-preview {
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        
+        .file-preview:hover {
+            transform: scale(1.02);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+        }
+        
+        .video-preview, .audio-preview {
+            cursor: pointer;
+        }
+        
+        .image-preview img {
+            transition: opacity 0.2s ease;
+        }
+        
+        .image-preview img:hover {
+            opacity: 0.8;
+        }
+        
+        .table tbody tr:hover .file-preview {
+            transform: scale(1.05);
+        }
+        
+        .file-preview i {
+            text-shadow: 0 1px 2px rgba(0,0,0,0.3);
+        }
+        </style>
+    `;
+}
+
+// Gerar preview visual do arquivo
+function generateFilePreview(file) {
+    const previewSize = '60px';
+    
+    if (file.mimetype.startsWith('image/')) {
+        // Para imagens: mostrar miniatura real
+        return `
+            <div class="file-preview image-preview position-relative" style="width: ${previewSize}; height: ${previewSize};" 
+                 onclick="showImageModal('${file.id}', '${escapeHtml(file.original_name)}')" 
+                 title="Clique para ampliar">
+                <img src="/public-preview/${file.id}" 
+                     alt="${escapeHtml(file.original_name)}"
+                     class="img-fluid rounded border"
+                     style="width: 100%; height: 100%; object-fit: cover; cursor: pointer;"
+                     onerror="this.src='data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHJlY3Qgd2lkdGg9IjYwIiBoZWlnaHQ9IjYwIiBmaWxsPSIjZjhmOWZhIiBzdHJva2U9IiNkZWUyZTYiLz4KPHN2ZyB4PSIyMCIgeT0iMjAiIHdpZHRoPSIyMCIgaGVpZ2h0PSIyMCIgZmlsbD0iIzZjNzU3ZCI+CjxwYXRoIGQ9Im0zIDlhMSAxIDAgMCAwIC0xIDFhMSAxIDAgMCAwIDEgMWwxIDFhMyAzIDAgMCAwIDQgMGwxLTFhMSAxIDAgMCAwIDEtMWExIDEgMCAwIDAtMS0xaC00LjVsLS4yOC0uNjhoMSAxIDAgMCAwIC0uOTItLjMyaC0yLjVhMSAxIDAgMCAwIC0uOTIuMzJsLS4yOC42OGgtMS41eiIvPgo8L3N2Zz4KPC9zdmc+'" />
+                <div class="position-absolute top-0 end-0" style="margin: 2px;">
+                    <small class="badge bg-dark bg-opacity-75 text-white" style="font-size: 10px;">
+                        <i class="fas fa-search-plus"></i>
+                    </small>
+                </div>
+            </div>
+        `;
+    } else if (file.mimetype.startsWith('video/')) {
+        // Para vídeos: tentar mostrar frame do vídeo ou usar ícone estilizado
+        return `
+            <div class="file-preview video-preview position-relative" style="width: ${previewSize}; height: ${previewSize};" 
+                 onclick="showVideoInfo('${file.id}', '${escapeHtml(file.original_name)}')" 
+                 title="Clique para ver informações do vídeo">
+                <video 
+                    src="/public-preview/${file.id}" 
+                    class="img-fluid rounded border"
+                    style="width: 100%; height: 100%; object-fit: cover; cursor: pointer;"
+                    muted
+                    preload="metadata"
+                    onloadedmetadata="this.currentTime = 1"
+                    onerror="this.style.display='none'; this.nextElementSibling.style.display='flex'">
+                </video>
+                <div class="d-none align-items-center justify-content-center rounded border bg-gradient" 
+                     style="width: 100%; height: 100%; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); position: absolute; top: 0; left: 0;">
+                    <i class="fas fa-play text-white" style="font-size: 20px;"></i>
+                </div>
+                <div class="position-absolute top-0 end-0" style="margin: 2px;">
+                    <small class="badge bg-dark bg-opacity-75 text-white" style="font-size: 10px;">
+                        <i class="fas fa-play"></i>
+                    </small>
+                </div>
+            </div>
+        `;
+    } else if (file.mimetype.startsWith('audio/')) {
+        // Para áudios: preview estilizado com ícone musical
+        return `
+            <div class="file-preview audio-preview" style="width: ${previewSize}; height: ${previewSize};">
+                <div class="d-flex align-items-center justify-content-center rounded border bg-gradient" 
+                     style="width: 100%; height: 100%; background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);">
+                    <i class="fas fa-music text-white" style="font-size: 18px;"></i>
+                </div>
+            </div>
+        `;
+    } else {
+        // Para outros tipos: preview genérico
+        return `
+            <div class="file-preview document-preview" style="width: ${previewSize}; height: ${previewSize};">
+                <div class="d-flex align-items-center justify-content-center rounded border bg-light" 
+                     style="width: 100%; height: 100%;">
+                    <i class="fas fa-file text-secondary" style="font-size: 18px;"></i>
+                </div>
+            </div>
+        `;
+    }
+}
+
+// Renderizar linha da tabela para um arquivo
+function renderFileRow(file) {
+    const fileSize = formatFileSize(file.size);
+    const uploadDate = new Date(file.upload_date).toLocaleDateString('pt-BR');
+    const fileIcon = getFileIcon(file.mimetype);
+    const fileTypeDisplay = getFileTypeDisplay(file.mimetype);
+    const preview = generateFilePreview(file);
+    
+    return `
+        <tr>
+            <td>
+                <div class="d-flex align-items-center">
+                    ${preview}
+                    <div class="ms-3">
+                        <div class="fw-bold">${escapeHtml(file.original_name)}</div>
+                        <small class="text-muted">${escapeHtml(file.filename)}</small>
+                    </div>
+                </div>
+            </td>
+            <td>
+                <span class="badge bg-secondary">${fileTypeDisplay}</span>
+            </td>
+            <td>${fileSize}</td>
+            <td>${uploadDate}</td>
+            <td>
+                <small class="text-muted font-monospace">${file.id}</small>
+                <button class="btn btn-outline-secondary btn-sm ms-1" onclick="copyFileId('${file.id}')" title="Copiar ID">
+                    <i class="fas fa-copy"></i>
+                </button>
+            </td>
+            <td>
+                <div class="btn-group btn-group-sm">
+                    <button class="btn btn-outline-info" onclick="showFileDetails('${file.id}')" title="Detalhes">
+                        <i class="fas fa-info-circle"></i>
+                    </button>
+                    <button class="btn btn-outline-success" onclick="copyFileUsage('${file.id}')" title="Copiar código para workflow">
+                        <i class="fas fa-code"></i>
+                    </button>
+                    <button class="btn btn-outline-danger" onclick="confirmDeleteFile('${file.id}')" title="Excluir">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                </div>
+            </td>
+        </tr>
+    `;
+}
+
+// Função para mostrar detalhes do arquivo
+function showFileDetails(fileId) {
+    const file = currentMediaFiles.find(f => f.id === fileId);
+    if (!file) return;
+    
+    const fileSize = formatFileSize(file.size);
+    const uploadDate = new Date(file.upload_date).toLocaleString('pt-BR');
+    const fileIcon = getFileIcon(file.mimetype);
+    
+    // Criar div simples para detalhes
+    const detailsDiv = document.createElement('div');
+    detailsDiv.className = 'position-fixed top-0 start-0 w-100 h-100 bg-white p-4 overflow-auto';
+    detailsDiv.style.zIndex = '99999';
+    detailsDiv.innerHTML = `
+        <div class="container">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h5><i class="${fileIcon} me-2"></i>Detalhes do Arquivo</h5>
+                <button class="btn btn-secondary" onclick="this.closest('.position-fixed').remove()">Fechar</button>
+            </div>
+            <div class="row">
+                <div class="col-md-6">
+                    <h6><i class="${fileIcon} me-2"></i>Informações do Arquivo</h6>
+                    <table class="table table-sm">
+                        <tr><th>Nome Original:</th><td>${escapeHtml(file.original_name)}</td></tr>
+                        <tr><th>Nome do Sistema:</th><td><code>${escapeHtml(file.filename)}</code></td></tr>
+                        <tr><th>Tipo MIME:</th><td><code>${file.mimetype}</code></td></tr>
+                        <tr><th>Tamanho:</th><td>${fileSize}</td></tr>
+                        <tr><th>Data Upload:</th><td>${uploadDate}</td></tr>
+                        <tr><th>ID do Arquivo:</th><td><code>${file.id}</code></td></tr>
+                    </table>
+                </div>
+                <div class="col-md-6">
+                    <h6><i class="fas fa-code me-2"></i>Como Usar no Workflow</h6>
+                    <div class="bg-light p-3 rounded">
+                        <p class="mb-2"><strong>Adicione ao seu bloco:</strong></p>
+                        <pre class="mb-0"><code>"media": {
+  "attachment": {
+    "file_id": "${file.id}"
+  }
+}</code></pre>
+                    </div>
+                    <div class="mt-3">
+                        <button class="btn btn-primary btn-sm" onclick="copyFileUsage('${file.id}')">
+                            <i class="fas fa-copy me-1"></i>Copiar Código
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    document.body.appendChild(detailsDiv);
+}
+
+// Confirmar exclusão de arquivo
+function confirmDeleteFile(fileId) {
+    const file = currentMediaFiles.find(f => f.id === fileId);
+    if (!file) return;
+    
+    fileToDelete = fileId;
+    
+    const fileSize = formatFileSize(file.size);
+    const fileIcon = getFileIcon(file.mimetype);
+    
+    // Criar div simples para confirmação
+    const confirmDiv = document.createElement('div');
+    confirmDiv.className = 'position-fixed top-50 start-50 translate-middle bg-white border shadow p-4';
+    confirmDiv.style.zIndex = '99999';
+    confirmDiv.innerHTML = `
+        <h6>Confirmar Exclusão</h6>
+        <div class="d-flex align-items-center mb-3">
+            <i class="${fileIcon} me-2 text-primary fa-2x"></i>
+            <div>
+                <div class="fw-bold">${escapeHtml(file.original_name)}</div>
+                <small class="text-muted">${file.mimetype} • ${fileSize}</small>
+            </div>
+        </div>
+        <p class="text-danger">Esta ação não pode ser desfeita!</p>
+        <div class="d-flex gap-2">
+            <button class="btn btn-danger" onclick="executeDeleteFile()">Excluir</button>
+            <button class="btn btn-secondary" onclick="this.closest('.position-fixed').remove(); fileToDelete = null;">Cancelar</button>
+        </div>
+    `;
+    
+    document.body.appendChild(confirmDiv);
+}
+
+// Executar exclusão do arquivo
+async function executeDeleteFile() {
+    if (!fileToDelete) return;
+    
+    try {
+        const response = await fetch(`/api/media-files/${fileToDelete}`, {
+            method: 'DELETE',
+            headers: {
+                'Authorization': `Bearer ${getAuthToken()}`
+            }
+        });
+        
+        const result = await response.json();
+        
+        if (response.ok && result.success) {
+            // Fechar div de confirmação
+            document.querySelector('.position-fixed').remove();
+            
+            // Mostrar sucesso
+            window.app.showAlert('Arquivo excluído com sucesso!', 'success');
+            
+            // Recarregar lista
+            loadMediaFiles();
+            
+        } else {
+            throw new Error(result.error || 'Erro ao excluir arquivo');
+        }
+        
+    } catch (error) {
+        console.error('Erro ao excluir arquivo:', error);
+        window.app.showAlert('Erro ao excluir arquivo: ' + error.message, 'danger');
+    } finally {
+        fileToDelete = null;
+    }
+}
+
+// Copiar ID do arquivo
+function copyFileId(fileId) {
+    navigator.clipboard.writeText(fileId).then(() => {
+        window.app.showAlert('ID copiado para a área de transferência!', 'success');
+    }).catch(() => {
+        // Fallback para navegadores antigos
+        const textArea = document.createElement('textarea');
+        textArea.value = fileId;
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+        window.app.showAlert('ID copiado para a área de transferência!', 'success');
+    });
+}
+
+// Copiar código de uso do arquivo
+function copyFileUsage(fileId) {
+    const code = `"media": {
+  "attachment": {
+    "file_id": "${fileId}"
+  }
+}`;
+    
+    navigator.clipboard.writeText(code).then(() => {
+        window.app.showAlert('Código copiado para a área de transferência!', 'success');
+    }).catch(() => {
+        // Fallback para navegadores antigos
+        const textArea = document.createElement('textarea');
+        textArea.value = code;
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+        window.app.showAlert('Código copiado para a área de transferência!', 'success');
+    });
+}
+
+// Funções utilitárias
+
+function formatFileSize(bytes) {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+function getFileIcon(mimetype) {
+    if (mimetype.startsWith('video/')) return 'fas fa-file-video';
+    if (mimetype.startsWith('image/')) return 'fas fa-file-image';
+    if (mimetype.startsWith('audio/')) return 'fas fa-file-audio';
+    return 'fas fa-file';
+}
+
+function getFileTypeDisplay(mimetype) {
+    if (mimetype.startsWith('video/')) return 'Vídeo';
+    if (mimetype.startsWith('image/')) return 'Imagem';
+    if (mimetype.startsWith('audio/')) return 'Áudio';
+    return 'Arquivo';
+}
+
+// Mostrar modal com imagem em tamanho completo
+function showImageModal(fileId, fileName) {
+    const modal = document.createElement('div');
+    modal.className = 'modal fade show';
+    modal.style.display = 'block';
+    modal.style.backgroundColor = 'rgba(0,0,0,0.8)';
+    modal.style.zIndex = '99999';
+    
+    modal.innerHTML = `
+        <div class="modal-dialog modal-xl modal-dialog-centered">
+            <div class="modal-content bg-dark">
+                <div class="modal-header bg-dark text-white border-secondary">
+                    <h5 class="modal-title">
+                        <i class="fas fa-image me-2"></i>${escapeHtml(fileName)}
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" onclick="this.closest('.modal').remove()"></button>
+                </div>
+                <div class="modal-body bg-dark text-center p-2">
+                    <img src="/public-preview/${fileId}" 
+                         alt="${escapeHtml(fileName)}"
+                         class="img-fluid rounded"
+                         style="max-height: 70vh; max-width: 100%; object-fit: contain;"
+                         onerror="this.parentElement.innerHTML='<div class=\\"text-white\\"><i class=\\"fas fa-exclamation-triangle\\"></i> Erro ao carregar imagem</div>'" />
+                </div>
+                <div class="modal-footer bg-dark border-secondary justify-content-center">
+                    <button class="btn btn-outline-light btn-sm" onclick="copyFileId('${fileId}')">
+                        <i class="fas fa-copy me-1"></i>Copiar ID
+                    </button>
+                    <button class="btn btn-outline-primary btn-sm" onclick="copyFileUsage('${fileId}')">
+                        <i class="fas fa-code me-1"></i>Copiar Código
+                    </button>
+                    <button class="btn btn-secondary btn-sm" onclick="this.closest('.modal').remove()">
+                        <i class="fas fa-times me-1"></i>Fechar
+                    </button>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // Fechar modal ao clicar fora
+    modal.addEventListener('click', function(e) {
+        if (e.target === modal) {
+            modal.remove();
+        }
+    });
+    
+    // Fechar modal com ESC
+    const escapeHandler = function(e) {
+        if (e.key === 'Escape') {
+            modal.remove();
+            document.removeEventListener('keydown', escapeHandler);
+        }
+    };
+    document.addEventListener('keydown', escapeHandler);
+    
+    document.body.appendChild(modal);
+}
+
+// Mostrar informações do vídeo
+function showVideoInfo(fileId, fileName) {
+    const file = currentMediaFiles.find(f => f.id === fileId);
+    if (!file) return;
+    
+    const fileSize = formatFileSize(file.size);
+    const uploadDate = new Date(file.upload_date).toLocaleString('pt-BR');
+    
+    const modal = document.createElement('div');
+    modal.className = 'modal fade show';
+    modal.style.display = 'block';
+    modal.style.backgroundColor = 'rgba(0,0,0,0.8)';
+    modal.style.zIndex = '99999';
+    
+    modal.innerHTML = `
+        <div class="modal-dialog modal-xl modal-dialog-centered">
+            <div class="modal-content bg-dark">
+                <div class="modal-header bg-dark text-white border-secondary">
+                    <h5 class="modal-title">
+                        <i class="fas fa-video me-2"></i>${escapeHtml(fileName)}
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" onclick="this.closest('.modal').remove()"></button>
+                </div>
+                <div class="modal-body bg-dark text-center p-3">
+                    <video 
+                        src="/public-preview/${fileId}" 
+                        controls 
+                        class="img-fluid rounded mb-3"
+                        style="max-height: 60vh; max-width: 100%;"
+                        onerror="this.parentElement.innerHTML='<div class=\\"text-white\\"><i class=\\"fas fa-exclamation-triangle\\"></i> Erro ao carregar vídeo</div>'">
+                    </video>
+                    <div class="text-white">
+                        <small>
+                            <strong>Tamanho:</strong> ${fileSize} | 
+                            <strong>Tipo:</strong> ${file.mimetype} | 
+                            <strong>Data:</strong> ${uploadDate}
+                        </small>
+                    </div>
+                </div>
+                <div class="modal-footer bg-dark border-secondary justify-content-center">
+                    <button class="btn btn-outline-light btn-sm" onclick="copyFileId('${fileId}')">
+                        <i class="fas fa-copy me-1"></i>Copiar ID
+                    </button>
+                    <button class="btn btn-outline-primary btn-sm" onclick="copyFileUsage('${fileId}')">
+                        <i class="fas fa-code me-1"></i>Copiar Código
+                    </button>
+                    <button class="btn btn-secondary btn-sm" onclick="this.closest('.modal').remove()">
+                        <i class="fas fa-times me-1"></i>Fechar
+                    </button>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // Fechar modal ao clicar fora
+    modal.addEventListener('click', function(e) {
+        if (e.target === modal) {
+            modal.remove();
+        }
+    });
+    
+    // Fechar modal com ESC
+    const escapeHandler = function(e) {
+        if (e.key === 'Escape') {
+            modal.remove();
+            document.removeEventListener('keydown', escapeHandler);
+        }
+    };
+    document.addEventListener('keydown', escapeHandler);
+    
+    document.body.appendChild(modal);
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function showUploadSuccess(message) {
+    const successDiv = document.getElementById('uploadSuccess');
+    successDiv.textContent = message;
+    successDiv.classList.remove('d-none');
+}
+
+function showUploadError(message) {
+    const errorDiv = document.getElementById('uploadError');
+    errorDiv.textContent = message;
+    errorDiv.classList.remove('d-none');
 }
 
 // Função para adicionar estilos CSS para o preview dos workflows
@@ -1733,18 +2597,6 @@ function addWorkflowPreviewStyles() {
             box-shadow: 0 2px 8px rgba(13, 110, 253, 0.3) !important;
         }
         
-        .tooltip {
-            --bs-tooltip-max-width: 350px;
-            font-size: 12px;
-        }
-        
-        .tooltip-inner {
-            text-align: left;
-            background-color: #212529;
-            border-radius: 6px;
-            padding: 8px 12px;
-        }
-        
         .workflow-block {
             border: 2px solid #e9ecef;
             border-radius: 8px;
@@ -1770,7 +2622,258 @@ function addWorkflowPreviewStyles() {
             font-size: 12px;
             color: #495057;
         }
+        
+        /* Estilos para mídia dos blocos */
+        .block-media {
+            margin: 12px 0;
+            padding: 12px;
+            background-color: #f8f9fa;
+            border-radius: 8px;
+            border-left: 4px solid #dc3545;
+        }
+        
+        .media-card {
+            display: flex;
+            gap: 12px;
+            align-items: flex-start;
+        }
+        
+        .media-thumbnail {
+            position: relative;
+            flex-shrink: 0;
+            width: 160px;
+            height: 90px;
+            border-radius: 6px;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        
+        .youtube-thumbnail {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transition: transform 0.2s ease;
+            border-radius: 4px;
+        }
+        
+        .media-thumbnail:hover .youtube-thumbnail {
+            transform: scale(1.05);
+        }
+        
+        /* Placeholder para YouTube */
+        .youtube-placeholder {
+            background: linear-gradient(135deg, #ff0000, #cc0000);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            border-radius: 4px;
+        }
+        
+        .placeholder-content {
+            text-align: center;
+            color: white;
+        }
+        
+        .youtube-logo {
+            font-size: 28px;
+            margin-bottom: 8px;
+        }
+        
+        .placeholder-text {
+            font-size: 11px;
+        }
+        
+        .video-title {
+            font-weight: bold;
+            margin-bottom: 4px;
+        }
+        
+        .video-id {
+            opacity: 0.8;
+            font-size: 10px;
+        }
+        
+        .play-overlay {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #fff;
+            font-size: 24px;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+            transition: transform 0.2s ease;
+        }
+        
+        .media-thumbnail:hover .play-overlay {
+            transform: translate(-50%, -50%) scale(1.1);
+        }
+        
+        .media-info {
+            flex: 1;
+            min-width: 0;
+        }
+        
+        .media-title {
+            margin: 0 0 8px 0;
+            font-size: 14px;
+            font-weight: 600;
+            color: #495057;
+            display: flex;
+            align-items: center;
+        }
+        
+        .media-description {
+            margin: 0 0 8px 0;
+            font-size: 12px;
+            color: #6c757d;
+            line-height: 1.4;
+            white-space: pre-line;
+        }
+        
+        .media-url {
+            font-size: 11px;
+            color: #6c757d;
+            display: block;
+            margin-bottom: 0;
+        }
+        
+        .media-url a {
+            color: #0d6efd;
+            word-break: break-all;
+        }
+        
+        .media-file-id {
+            font-size: 11px;
+            color: #6c757d;
+        }
+        
+        .media-file-id code {
+            background-color: #e9ecef;
+            padding: 2px 4px;
+            border-radius: 3px;
+            font-size: 10px;
+        }
+        
+        /* Responsividade para thumbnails */
+        @media (max-width: 576px) {
+            .media-card {
+                flex-direction: column;
+            }
+            
+            .media-thumbnail {
+                width: 100%;
+                max-width: 280px;
+                height: 157px;
+                align-self: center;
+            }
+        }
     `;
     
     document.head.appendChild(style);
+}
+
+// Função global para mostrar senha div
+function showChangePasswordDiv() {
+    if (window.app) {
+        window.app.showChangePasswordDiv();
+    }
+}
+
+// Função para tratar erro de thumbnail do YouTube
+function handleThumbnailError(thumbnailId, videoId) {
+    console.log(`Erro ao carregar thumbnail para vídeo ${videoId}, tentando fallbacks...`);
+    
+    const img = document.getElementById(thumbnailId);
+    if (!img) return;
+    
+    // Lista de URLs de thumbnail para tentar como fallback
+    const fallbackUrls = [
+        `https://img.youtube.com/vi/${videoId}/mqdefault.jpg`,
+        `https://img.youtube.com/vi/${videoId}/default.jpg`,
+        `https://img.youtube.com/vi/${videoId}/1.jpg`,
+        `https://img.youtube.com/vi/${videoId}/2.jpg`,
+        `https://img.youtube.com/vi/${videoId}/3.jpg`
+    ];
+    
+    // Tentar próximo fallback
+    if (!img.dataset.fallbackIndex) {
+        img.dataset.fallbackIndex = '0';
+    }
+    
+    const currentIndex = parseInt(img.dataset.fallbackIndex);
+    
+    if (currentIndex < fallbackUrls.length) {
+        img.dataset.fallbackIndex = (currentIndex + 1).toString();
+        img.src = fallbackUrls[currentIndex];
+    } else {
+        // Se todos os fallbacks falharam, usar um placeholder personalizado
+        createYouTubePlaceholder(img, videoId);
+    }
+}
+
+// Criar placeholder personalizado para vídeo do YouTube
+function createYouTubePlaceholder(img, videoId) {
+    const container = img.parentElement;
+    if (!container) return;
+    
+    console.log(`Criando placeholder para vídeo ${videoId}`);
+    
+    try {
+        // Criar div placeholder com CSS
+        const placeholder = document.createElement('div');
+        placeholder.className = 'youtube-thumbnail youtube-placeholder';
+        placeholder.innerHTML = `
+            <div class="placeholder-content">
+                <div class="youtube-logo">
+                    <i class="fab fa-youtube"></i>
+                </div>
+                <div class="placeholder-text">
+                    <div class="video-title">YouTube Video</div>
+                    <div class="video-id">ID: ${videoId}</div>
+                </div>
+            </div>
+        `;
+        
+        // Substituir a imagem pelo placeholder
+        container.replaceChild(placeholder, img);
+        
+    } catch (error) {
+        console.error('Erro ao criar placeholder:', error);
+        
+        // Fallback ultra simples - apenas esconder a imagem quebrada
+        img.style.display = 'none';
+        
+        // Adicionar texto simples
+        const textPlaceholder = document.createElement('div');
+        textPlaceholder.className = 'youtube-thumbnail simple-placeholder';
+        textPlaceholder.innerHTML = `
+            <div style="
+                display: flex; 
+                align-items: center; 
+                justify-content: center; 
+                height: 100%; 
+                background: linear-gradient(135deg, #ff0000, #cc0000); 
+                color: white; 
+                font-weight: bold;
+                border-radius: 4px;
+                flex-direction: column;
+            ">
+                <i class="fab fa-youtube" style="font-size: 24px; margin-bottom: 8px;"></i>
+                <div style="font-size: 12px;">YouTube Video</div>
+                <div style="font-size: 10px; opacity: 0.8;">${videoId}</div>
+            </div>
+        `;
+        
+        container.appendChild(textPlaceholder);
+    }
+}
+
+function showAlert(message, type = 'info') {
+    // Usar o método existente da classe principal se disponível
+    if (window.app && window.app.showAlert) {
+        window.app.showAlert(message, type);
+    } else {
+        console.log(`[${type.toUpperCase()}] ${message}`);
+    }
 }

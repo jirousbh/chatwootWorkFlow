@@ -1,0 +1,257 @@
+{
+  "name": "Fluxo Comercial Wizard BH Buritis - Por Inbox",
+  "description": "Fluxo para prospects e leads - configurado por caixa de entrada",
+  "blocks": {
+    "inicio": {
+      "id": "inicio",
+      "name": "Boas-vindas Comercial",
+      "buttons": [
+        {
+          "text": "Quero saber mais!",
+          "next_block": "objetivo_aluno"
+        },
+        {
+          "tag": "lead_frio",
+          "text": "Não tenho interesse",
+          "next_block": "finalizar",
+          "assign_labels": [
+            "lead_frio"
+          ],
+          "contact_labels": [
+            "desinteressado"
+          ]
+        }
+      ],
+      "message": "Oi {{nome}}, aqui é o Rafa da Wizard BH Buritis! 🌟\n\nVi que você se interessou pelos nossos cursos de inglês. Ainda tem vontade de aprender com a gente?",
+      "assign_labels": [
+        "novo_lead",
+        "inbox_comercial"
+      ],
+      "contact_labels": [
+        "prospect"
+      ]
+    },
+    "objetivo_aluno": {
+      "id": "objetivo_aluno",
+      "name": "Objetivo do Aluno",
+      "buttons": [
+        {
+          "text": "✈️ Viagem",
+          "next_block": "objetivo_viagem",
+          "assign_labels": [
+            "interesse_confirmado"
+          ]
+        },
+        {
+          "text": "💼 Carreira",
+          "next_block": "objetivo_carreira",
+          "assign_labels": [
+            "interesse_confirmado"
+          ]
+        },
+        {
+          "text": "📚 Faculdade/intercâmbio",
+          "next_block": "objetivo_faculdade",
+          "assign_labels": [
+            "interesse_confirmado"
+          ]
+        },
+        {
+          "text": "Outro motivo",
+          "next_block": "objetivo_outro",
+          "assign_labels": [
+            "interesse_confirmado"
+          ]
+        }
+      ],
+      "message": "Legal! Qual o seu principal objetivo com o inglês?"
+    },
+    "objetivo_viagem": {
+      "id": "objetivo_viagem",
+      "tag": "objetivo_viagem",
+      "name": "Objetivo - Viagem",
+      "message": "Show! Já sabe o país que quer visitar?",
+      "next_block": "metodologia",
+      "assign_labels": [
+        "objetivo_viagem"
+      ],
+      "contact_labels": [
+        "viajante"
+      ]
+    },
+    "objetivo_carreira": {
+      "id": "objetivo_carreira",
+      "tag": "objetivo_carreira",
+      "name": "Objetivo - Carreira",
+      "message": "Bacana! Em qual área você atua? Podemos focar nisso.",
+      "next_block": "metodologia",
+      "assign_labels": [
+        "objetivo_carreira"
+      ],
+      "contact_labels": [
+        "profissional"
+      ]
+    },
+    "objetivo_faculdade": {
+      "id": "objetivo_faculdade",
+      "tag": "objetivo_faculdade",
+      "name": "Objetivo - Faculdade/Intercâmbio",
+      "message": "Legal! Já tem destino de intercâmbio ou curso em mente?",
+      "next_block": "metodologia",
+      "assign_labels": [
+        "objetivo_intercambio"
+      ],
+      "contact_labels": [
+        "estudante"
+      ]
+    },
+    "objetivo_outro": {
+      "id": "objetivo_outro",
+      "tag": "objetivo_outro",
+      "name": "Objetivo - Outro",
+      "message": "Conta pra mim o que você espera do inglês, quero te ajudar!",
+      "next_block": "metodologia",
+      "assign_labels": [
+        "objetivo_personalizado"
+      ]
+    },
+    "metodologia": {
+      "id": "metodologia",
+      "name": "Metodologia Wizard",
+      "media": {
+        "delay": 15000,
+        "attachment": {
+          "file_id": "1752608369518"
+        }
+      },
+      "buttons": [
+        {
+          "text": "Perfeito, quero ver os planos!",
+          "next_block": "planos"
+        },
+        {
+          "tag": "duvida_metodologia",
+          "text": "Tenho dúvidas sobre o método",
+          "next_block": "atendimento_humano",
+          "assign_agent": 3,
+          "assign_labels": [
+            "duvida_metodologia",
+            "precisa_atendimento"
+          ]
+        }
+      ],
+      "message": "Perfeito!\n\nAntes de te mostrar os planos, deixa eu te explicar como funciona nosso método:\n\n📘 **CONNECTIONS**: aula em turma, mesmo nível, professor conduz\n📱 **INTERACTIVE**: autonomia, diferentes níveis, professor mentor\n\nAgora vamos entender como a metodologia da Wizard realmente funciona? Dá o play nesse vídeo 😉\n\nE com qual dessas experiências você se identifica mais?\n\n📌 **OBS**: Método Wizard trabalha fala, escuta, leitura e escrita desde a primeira aula – aprendizado 3x mais rápido e fluência em até 2 anos!"
+    },
+    "planos": {
+      "id": "planos",
+      "name": "Apresentação de Planos",
+      "buttons": [
+        {
+          "tag": "interesse_signature",
+          "text": "💎 Signature",
+          "next_block": "plano_escolhido",
+          "assign_labels": [
+            "plano_signature"
+          ],
+          "contact_labels": [
+            "alto_valor"
+          ]
+        },
+        {
+          "tag": "interesse_essential",
+          "text": "🔶 Essential",
+          "next_block": "plano_escolhido",
+          "assign_labels": [
+            "plano_essential"
+          ]
+        },
+        {
+          "tag": "interesse_digital_plus",
+          "text": "🟢 Digital Plus",
+          "next_block": "plano_escolhido",
+          "assign_labels": [
+            "plano_digital_plus"
+          ]
+        },
+        {
+          "tag": "interesse_light",
+          "text": "🔵 Light",
+          "next_block": "plano_escolhido",
+          "assign_labels": [
+            "plano_light"
+          ]
+        },
+        {
+          "tag": "precisa_ajuda",
+          "text": "❓ Preciso de ajuda para escolher",
+          "next_block": "consultoria",
+          "assign_team": 1,
+          "assign_labels": [
+            "precisa_consultoria"
+          ]
+        }
+      ],
+      "message": "Agora vou te mostrar nossos planos:\n\n💎 **Wizard Signature** – 13x R$419,90\n✅ Monitoria ilimitada\n✅ 10 Reposições de aulas sem custo\n✅ Revisão nas férias\n✅ Isenção no segundo idioma\n💡 Para quem busca resultado rápido com suporte total.\n\n🔶 **Wizard Essential** – 13x R$389,90\n✅ 2 monitorias/mês de 30 min\n✅ 3 reposições gratuitas (demais R$50)\n✅ Isenção no segundo idioma\n💡 Equilíbrio entre valor e suporte.\n\n🟢 **Wizard Digital Plus** – 13x R$349,00\n✅ 100% online com aulas ao vivo\n✅ Experiência CONNECTIONS ou INTERACTIVE\n✅ 3 reposições gratuitas (demais R$50)\n💡 Flexibilidade com alto nível de acompanhamento.\n\n🔵 **Wizard Light** – 13x R$329,00 (somente INTERACTIVE)\n✅ Online ao vivo e mais acessível\n✅ Experiência INTERACTIVE\n❌ Sem reposição de aulas\n💡 Pra quem quer economia sem perder qualidade.\n\nCom base no que te mostrei, qual desses planos combina mais com você?",
+      "assign_labels": [
+        "visualizou_planos"
+      ]
+    },
+    "plano_escolhido": {
+      "id": "plano_escolhido",
+      "tag": "lead_quente",
+      "name": "Plano Escolhido",
+      "message": "Perfeito! Vamos agora encaminhar para nosso especialista que vai organizar com você todos os outros detalhes do seu curso!\n\nMuito Obrigado e seja bem-vindo à Wizard BH Buritis! 🎉",
+      "next_block": "finalizar",
+      "assign_agent": 3,
+      "assign_labels": [
+        "lead_quente",
+        "plano_escolhido"
+      ],
+      "contact_labels": [
+        "cliente_potencial"
+      ]
+    },
+    "consultoria": {
+      "id": "consultoria",
+      "tag": "precisa_ajuda",
+      "name": "Consultoria Necessária",
+      "message": "Não se preocupe! Nosso especialista continuará seu atendimento e vai tirar todas as suas dúvidas para te ajudar a escolher o plano ideal!\n\nDesde já agradeço e qualquer coisa é só chamar! 😊",
+      "next_block": "atendimento_humano",
+      "assign_team": 1,
+      "assign_labels": [
+        "consultoria_necessaria"
+      ]
+    },
+    "atendimento_humano": {
+      "id": "atendimento_humano",
+      "tag": "encaminhado_atendimento",
+      "name": "Encaminhar para Atendimento Humano",
+      "message": "Perfeito! Vou te conectar agora mesmo com nossa equipe especializada que vai te ajudar com todas as suas dúvidas e organizar seu curso! 😊\n\nEm instantes você receberá o contato de um de nossos especialistas.",
+      "next_block": "finalizar",
+      "assign_team": 1,
+      "assign_labels": [
+        "atendimento_humano",
+        "transferido"
+      ],
+      "contact_labels": [
+        "atendimento_especializado"
+      ]
+    },
+    "finalizar": {
+      "id": "finalizar",
+      "name": "Encerramento",
+      "type": "end",
+      "message": "Obrigado por conversar comigo! Se precisar de mais alguma coisa, é só chamar.\n\nTenha um ótimo dia! 😊",
+      "assign_labels": [
+        "conversa_finalizada"
+      ]
+    }
+  },
+  "inbox_specific": true,
+  "auto_followup": {
+    "metodologia": {
+      "delay": 1800000,
+      "condition": "inactive"
+    }
+  }
+} 

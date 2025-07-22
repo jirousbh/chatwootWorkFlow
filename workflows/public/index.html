@@ -9,30 +9,196 @@
     <link href="styles.css" rel="stylesheet">
 </head>
 <body>
-    <!-- Login Modal -->
-    <div class="modal fade" id="loginModal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false">
-        <div class="modal-dialog modal-dialog-centered">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title">
-                        <i class="fas fa-lock me-2"></i>Login - Chatwoot Workflows
-                    </h5>
+    <!-- Login Div -->
+    <div id="loginDiv" class="d-none position-fixed top-0 start-0 w-100 h-100 bg-white d-flex align-items-center justify-content-center" style="z-index: 9999;">
+        <div class="card shadow-lg" style="width: 400px;">
+            <div class="card-header text-center bg-primary text-white">
+                <h5 class="mb-0">
+                    <i class="fas fa-lock me-2"></i>Login - Chatwoot Workflows
+                </h5>
+            </div>
+            <div class="card-body">
+                <form id="loginForm">
+                    <div class="mb-3">
+                        <label for="username" class="form-label">Usuário</label>
+                        <input type="text" class="form-control" id="username" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="password" class="form-label">Senha</label>
+                        <input type="password" class="form-control" id="password" required>
+                    </div>
+                    <div class="alert alert-danger d-none" id="loginError"></div>
+                    <button type="submit" class="btn btn-primary w-100">
+                        <i class="fas fa-sign-in-alt me-2"></i>Entrar
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Change Password Div -->
+    <div id="changePasswordDiv" class="d-none position-fixed top-50 start-50 translate-middle bg-white border shadow p-4" style="z-index: 9999; width: 400px;">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h5><i class="fas fa-key me-2"></i>Mudar senha</h5>
+            <button type="button" class="btn-close" onclick="window.app.hideDiv('changePasswordDiv')"></button>
+        </div>
+        <form id="changePasswordForm">
+            <div class="mb-3">
+                <label for="currentPassword" class="form-label">Senha atual</label>
+                <input type="password" class="form-control" id="currentPassword" required>
+            </div>
+            <div class="mb-3">
+                <label for="newPassword" class="form-label">Nova senha</label>
+                <input type="password" class="form-control" id="newPassword" required>
+            </div>
+            <div class="alert alert-danger d-none" id="changePasswordError"></div>
+            <button type="submit" class="btn btn-primary w-100">Alterar senha</button>
+        </form>
+    </div>
+
+    <!-- Campanhas Div -->
+    <div id="campanhasDiv" class="d-none position-fixed top-0 start-0 w-100 h-100 bg-white p-4 overflow-auto" style="z-index: 9999;">
+        <div class="container">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h2>Criar Campanha WhatsApp</h2>
+                <button class="btn btn-secondary" id="closeCampanha">
+                    <i class="fas fa-times"></i> Fechar
+                </button>
+            </div>
+            <form id="formCampanha">
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="mb-3">
+                            <label for="campanhaNome" class="form-label">Nome da Campanha</label>
+                            <input type="text" class="form-control" id="campanhaNome" name="campanhaNome" required>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Método de Envio</label>
+                            <div class="d-flex gap-3">
+                                <div class="form-check">
+                                    <input type="radio" class="form-check-input" id="metodoTag" name="metodoEnvio" value="tag" checked>
+                                    <label class="form-check-label" for="metodoTag">Tag</label>
+                                </div>
+                                <div class="form-check">
+                                    <input type="radio" class="form-check-input" id="metodoLista" name="metodoEnvio" value="csv">
+                                    <label class="form-check-label" for="metodoLista">Lista (CSV)</label>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div id="detalhesTag" class="mb-3">
+                            <label for="tagNome" class="form-label">Nome da Tag</label>
+                            <input type="text" class="form-control" id="tagNome" name="tagNome" placeholder="Digite o nome da tag">
+                        </div>
+                        
+                        <div id="detalhesCSV" class="mb-3" style="display:none;">
+                            <label for="csvContatos" class="form-label">Arquivo CSV com Contatos</label>
+                            <input type="file" class="form-control" id="csvContatos" name="csvContatos" accept=".csv">
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="modeloMensagem" class="form-label">Modelo de Mensagem</label>
+                            <div class="d-flex gap-2">
+                                <select id="modeloMensagem" name="modeloMensagem" required class="form-select">
+                                    <option value="">Selecione um modelo</option>
+                                </select>
+                                <button type="button" id="syncTemplatesBtn" class="btn btn-outline-primary" onclick="syncTemplates()" title="Sincronizar templates via API oficial do WhatsApp">
+                                    <i class="fas fa-sync-alt"></i>
+                                    <small class="d-none d-md-inline ms-1">API</small>
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <div class="form-check">
+                                <input type="checkbox" class="form-check-input" id="agendarEnvio">
+                                <label class="form-check-label" for="agendarEnvio">Agendar envio</label>
+                            </div>
+                            <div id="agendamentoCampos" style="display:none;" class="mt-2">
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <label for="dataEnvio" class="form-label">Data de envio</label>
+                                        <input type="date" class="form-control" id="dataEnvio" name="dataEnvio">
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label for="horaEnvio" class="form-label">Hora de envio</label>
+                                        <input type="time" class="form-control" id="horaEnvio" name="horaEnvio">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <button type="submit" class="btn btn-success" id="btnEnviarCampanha">Enviar Agora</button>
+                    </div>
                 </div>
-                <div class="modal-body">
-                    <form id="loginForm">
-                        <div class="mb-3">
-                            <label for="username" class="form-label">Usuário</label>
-                            <input type="text" class="form-control" id="username" required>
+            </form>
+        </div>
+    </div>
+
+    <!-- Media Manager Div -->
+    <div id="mediaManagerDiv" class="d-none position-fixed top-0 start-0 w-100 h-100 bg-white p-4 overflow-auto" style="z-index: 9999;">
+        <div class="container">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h3><i class="fas fa-photo-video me-2"></i>Gerenciamento de Mídia</h3>
+                <button class="btn btn-secondary" id="closeMediaManager">
+                    <i class="fas fa-times"></i> Fechar
+                </button>
+            </div>
+            
+            <!-- Área de Upload -->
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h6 class="mb-0">
+                        <i class="fas fa-upload me-2"></i>Upload de Arquivos
+                    </h6>
+                </div>
+                <div class="card-body">
+                    <form id="uploadForm" enctype="multipart/form-data">
+                        <div class="row">
+                            <div class="col-md-8">
+                                <div class="mb-3">
+                                    <label for="mediaFile" class="form-label">Selecionar Arquivo</label>
+                                    <input type="file" class="form-control" id="mediaFile" name="media" accept="video/*,image/*,audio/*" required>
+                                    <div class="form-text">
+                                        Tipos suportados: MP4, AVI, MOV, JPEG, PNG, GIF, MP3, WAV (máximo 16MB)
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">&nbsp;</label>
+                                <button type="submit" class="btn btn-primary w-100" id="uploadBtn">
+                                    <i class="fas fa-upload me-2"></i>Fazer Upload
+                                </button>
+                            </div>
                         </div>
-                        <div class="mb-3">
-                            <label for="password" class="form-label">Senha</label>
-                            <input type="password" class="form-control" id="password" required>
+                        <div class="progress d-none" id="uploadProgress">
+                            <div class="progress-bar" role="progressbar" style="width: 0%"></div>
                         </div>
-                        <div class="alert alert-danger d-none" id="loginError"></div>
-                        <button type="submit" class="btn btn-primary w-100">
-                            <i class="fas fa-sign-in-alt me-2"></i>Entrar
-                        </button>
+                        <div class="alert alert-success d-none" id="uploadSuccess"></div>
+                        <div class="alert alert-danger d-none" id="uploadError"></div>
                     </form>
+                </div>
+            </div>
+
+            <!-- Lista de Arquivos -->
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h6 class="mb-0">
+                        <i class="fas fa-list me-2"></i>Arquivos Carregados
+                    </h6>
+                    <button class="btn btn-outline-primary btn-sm" onclick="loadMediaFiles()">
+                        <i class="fas fa-sync-alt me-1"></i>Atualizar
+                    </button>
+                </div>
+                <div class="card-body">
+                    <div id="mediaFilesList">
+                        <div class="text-center">
+                            <div class="spinner-border" role="status" id="loadingSpinner">
+                                <span class="visually-hidden">Carregando...</span>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -55,7 +221,7 @@
                         <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="userDropdown">
                             <li><a class="dropdown-item text-dark" href="#" id="menuListarCampanhas"><i class="fas fa-bullhorn me-2"></i>Listar Campanhas</a></li>
                             <li><hr class="dropdown-divider"></li>
-                            <li><a class="dropdown-item text-dark" href="#" onclick="app.showChangePasswordModal()"><i class="fas fa-key me-2"></i>Mudar senha</a></li>
+                            <li><a class="dropdown-item text-dark" href="#" onclick="showChangePasswordDiv()"><i class="fas fa-key me-2"></i>Mudar senha</a></li>
                             <li><hr class="dropdown-divider"></li>
                             <li><a class="dropdown-item text-danger" href="#" onclick="logout()"><i class="fas fa-sign-out-alt me-2"></i>Sair</a></li>
                         </ul>
@@ -94,6 +260,10 @@
                             <!-- Botão Criar Campanha -->
                             <button id="btnCriarCampanha" class="btn btn-primary w-100 mt-2">
                                 <i class="fas fa-bullhorn me-2"></i>Criar Campanha
+                            </button>
+                            <!-- Botão Gerenciar Mídia -->
+                            <button id="btnGerenciarMidia" class="btn btn-info w-100 mt-2" onclick="showMediaManager()">
+                                <i class="fas fa-photo-video me-2"></i>Gerenciar Mídia
                             </button>
                         </div>
                     </div>
@@ -181,84 +351,5 @@
     <!-- Scripts -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="app.js"></script>
-
-    <!-- Modal de alteração de senha -->
-    <div class="modal fade" id="changePasswordModal" tabindex="-1" aria-labelledby="changePasswordModalLabel" aria-hidden="true">
-        <div class="modal-dialog">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title" id="changePasswordModalLabel"><i class="fas fa-key me-2"></i>Mudar senha</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
-                </div>
-                <div class="modal-body">
-                    <form id="changePasswordForm">
-                        <div class="mb-3">
-                            <label for="currentPassword" class="form-label">Senha atual</label>
-                            <input type="password" class="form-control" id="currentPassword" required>
-                        </div>
-                        <div class="mb-3">
-                            <label for="newPassword" class="form-label">Nova senha</label>
-                            <input type="password" class="form-control" id="newPassword" required>
-                        </div>
-                        <div class="alert alert-danger d-none" id="changePasswordError"></div>
-                        <button type="submit" class="btn btn-primary w-100">Alterar senha</button>
-                    </form>
-                </div>
-            </div>
-        </div>
-    </div>
-
-
-
-    <!-- Modal de Criação de Campanha -->
-    <div id="modalCampanha" class="modal" style="display:none;">
-      <div class="modal-content">
-        <span class="close" id="closeModalCampanha">&times;</span>
-        <h2>Criar Campanha WhatsApp</h2>
-        <form id="formCampanha">
-          <label for="campanhaNome">Nome da Campanha</label>
-          <input type="text" id="campanhaNome" name="campanhaNome" required>
-
-          <label>Método de Envio</label>
-          <div class="envio-metodo">
-            <input type="radio" id="metodoTag" name="metodoEnvio" value="tag" checked>
-            <label for="metodoTag">Tag</label>
-            <input type="radio" id="metodoLista" name="metodoEnvio" value="csv">
-            <label for="metodoLista">Lista (CSV)</label>
-          </div>
-
-          <div id="detalhesTag">
-            <label for="tagNome">Nome da Tag</label>
-            <input type="text" id="tagNome" name="tagNome" placeholder="Digite o nome da tag">
-          </div>
-          <div id="detalhesCSV" style="display:none;">
-            <label for="csvContatos">Arquivo CSV com Contatos</label>
-            <input type="file" id="csvContatos" name="csvContatos" accept=".csv">
-          </div>
-
-          <label for="modeloMensagem">Modelo de Mensagem</label>
-          <div class="d-flex gap-2">
-            <select id="modeloMensagem" name="modeloMensagem" required class="form-select">
-              <option value="">Selecione um modelo</option>
-            </select>
-            <button type="button" id="syncTemplatesBtn" class="btn btn-outline-secondary" onclick="syncTemplates()" title="Sincronizar templates do WhatsApp">
-              <i class="fas fa-sync-alt"></i>
-            </button>
-          </div>
-
-          <div class="agendamento">
-            <label><input type="checkbox" id="agendarEnvio"> Agendar envio</label>
-            <div id="agendamentoCampos" style="display:none;">
-              <label for="dataEnvio">Data de envio</label>
-              <input type="date" id="dataEnvio" name="dataEnvio">
-              <label for="horaEnvio">Hora de envio</label>
-              <input type="time" id="horaEnvio" name="horaEnvio">
-            </div>
-          </div>
-
-          <button type="submit" class="btn btn-success" id="btnEnviarCampanha">Agendar Campanha</button>
-        </form>
-      </div>
-    </div>
 </body>
 </html> 

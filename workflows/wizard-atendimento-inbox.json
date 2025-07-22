@@ -1,0 +1,148 @@
+{
+  "name": "Fluxo Atendimento Wizard BH Buritis - Por Inbox",
+  "description": "Fluxo para alunos existentes e suporte - configurado por caixa de entrada",
+  "blocks": {
+    "inicio": {
+      "id": "inicio",
+      "name": "Boas-vindas Atendimento",
+      "buttons": [
+        {
+          "text": "Sim, já sou aluno",
+          "next_block": "escolha_setor",
+          "assign_labels": [
+            "aluno_existente"
+          ],
+          "contact_labels": [
+            "aluno_ativo"
+          ]
+        },
+        {
+          "text": "Não, ainda não sou aluno",
+          "next_block": "redirecionar_comercial",
+          "assign_labels": [
+            "prospect"
+          ],
+          "contact_labels": [
+            "lead_potencial"
+          ]
+        }
+      ],
+      "message": "Olá {{nome}}! 👋\n\nEu sou o assistente virtual da Wizard BH Buritis.\n\nVocê já é nosso aluno?",
+      "assign_labels": [
+        "inicio_atendimento",
+        "inbox_atendimento"
+      ]
+    },
+    "redirecionar_comercial": {
+      "id": "redirecionar_comercial",
+      "name": "Redirecionamento para Comercial",
+      "message": "Perfeito! Como você ainda não é nosso aluno, vou te conectar com nossa equipe comercial que vai te apresentar nossos cursos e planos! 💼\n\n📞 **Para falar com o comercial:**\n- Acesse nossa caixa de entrada comercial\n- Ou aguarde que em instantes você receberá o contato de um especialista\n\nObrigado pelo interesse na Wizard BH Buritis! 😊",
+      "next_block": "finalizar",
+      "assign_team": 1,
+      "assign_labels": [
+        "redirecionado_comercial"
+      ]
+    },
+    "escolha_setor": {
+      "id": "escolha_setor",
+      "name": "Escolha de Setor",
+      "buttons": [
+        {
+          "text": "📚 Pedagógico",
+          "next_block": "transferir_pedagogico",
+          "assign_team": 2,
+          "assign_labels": [
+            "setor_pedagogico"
+          ],
+          "contact_labels": [
+            "duvida_pedagogica"
+          ]
+        },
+        {
+          "text": "💰 Financeiro",
+          "next_block": "transferir_financeiro",
+          "assign_team": 3,
+          "assign_labels": [
+            "setor_financeiro"
+          ],
+          "contact_labels": [
+            "questao_financeira"
+          ]
+        },
+        {
+          "text": "💼 Comercial",
+          "next_block": "transferir_comercial",
+          "assign_team": 1,
+          "assign_labels": [
+            "setor_comercial"
+          ],
+          "contact_labels": [
+            "interesse_comercial"
+          ]
+        },
+        {
+          "text": "🔧 Suporte Técnico",
+          "next_block": "transferir_suporte",
+          "assign_team": 4,
+          "assign_labels": [
+            "setor_suporte"
+          ],
+          "contact_labels": [
+            "problema_tecnico"
+          ]
+        }
+      ],
+      "message": "Perfeito! Como nosso aluno, com qual setor você gostaria de falar?\n\n📚 **Pedagógico**: Dúvidas sobre aulas, conteúdo, metodologia\n💰 **Financeiro**: Pagamentos, mensalidades, boletos\n💼 **Comercial**: Novos cursos, upgrades de plano\n🔧 **Suporte**: Problemas técnicos, acesso à plataforma"
+    },
+    "transferir_pedagogico": {
+      "id": "transferir_pedagogico",
+      "name": "Transferir para Pedagógico",
+      "message": "Perfeito! Vou te conectar agora mesmo com nossa **equipe pedagógica** que vai te ajudar com todas as suas dúvidas sobre:\n\n📚 Aulas e conteúdo\n📖 Metodologia de ensino\n📝 Atividades e exercícios\n📊 Acompanhamento do progresso\n\n⏰ **Em instantes** você receberá o contato de um de nossos especialistas pedagógicos.\n\nObrigado por ser nosso aluno! 😊",
+      "next_block": "finalizar",
+      "assign_team": 2,
+      "assign_labels": [
+        "transferido_pedagogico"
+      ]
+    },
+    "transferir_financeiro": {
+      "id": "transferir_financeiro",
+      "name": "Transferir para Financeiro",
+      "message": "Perfeito! Vou te conectar agora mesmo com nossa **equipe financeira** que vai te ajudar com:\n\n💰 Pagamentos e mensalidades\n📄 Boletos e segunda via\n💳 Formas de pagamento\n📊 Situação da conta\n🔄 Renegociação de débitos\n\n⏰ **Em instantes** você receberá o contato de um de nossos especialistas financeiros.\n\nObrigado por ser nosso aluno! 😊",
+      "next_block": "finalizar",
+      "assign_team": 3,
+      "assign_labels": [
+        "transferido_financeiro"
+      ]
+    },
+    "transferir_comercial": {
+      "id": "transferir_comercial",
+      "name": "Transferir para Comercial",
+      "message": "Perfeito! Vou te conectar agora mesmo com nossa **equipe comercial** que vai te ajudar com:\n\n💼 Novos cursos e idiomas\n⬆️ Upgrade de plano\n🎯 Cursos especializados\n👥 Indicação de amigos\n🎁 Promoções especiais\n\n⏰ **Em instantes** você receberá o contato de um de nossos especialistas comerciais.\n\nObrigado por ser nosso aluno! 😊",
+      "next_block": "finalizar",
+      "assign_team": 1,
+      "assign_labels": [
+        "transferido_comercial"
+      ]
+    },
+    "transferir_suporte": {
+      "id": "transferir_suporte",
+      "name": "Transferir para Suporte Técnico",
+      "message": "Perfeito! Vou te conectar agora mesmo com nossa **equipe de suporte técnico** que vai te ajudar com:\n\n🔧 Problemas de acesso\n💻 Dificuldades na plataforma\n🎧 Problemas de áudio/vídeo\n📱 App mobile\n🔐 Login e senhas\n\n⏰ **Em instantes** você receberá o contato de um de nossos especialistas técnicos.\n\nObrigado por ser nosso aluno! 😊",
+      "next_block": "finalizar",
+      "assign_team": 4,
+      "assign_labels": [
+        "transferido_suporte"
+      ]
+    },
+    "finalizar": {
+      "id": "finalizar",
+      "name": "Encerramento",
+      "type": "end",
+      "message": "Obrigado por entrar em contato conosco!\n\nSe precisar de mais alguma coisa, é só chamar.\n\nTenha um ótimo dia! 😊\n\n**Wizard BH Buritis** - Onde seu sonho se realiza! 🌟",
+      "assign_labels": [
+        "conversa_finalizada"
+      ]
+    }
+  },
+  "inbox_specific": true
+} 

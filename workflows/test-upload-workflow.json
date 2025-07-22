@@ -1,0 +1,55 @@
+{
+  "name": "Teste de Upload e Anexos",
+  "description": "Workflow demonstrando como usar arquivos carregados",
+  "blocks": {
+    "bloco_1": {
+      "name": "Início",
+      "message": "Olá! Vou enviar alguns arquivos de exemplo para você.",
+      "buttons": [
+        {
+          "text": "📷 Ver Imagem",
+          "next_block": "bloco_imagem"
+        },
+        {
+          "text": "🎥 Ver Vídeo",
+          "next_block": "bloco_video"
+        }
+      ]
+    },
+    "bloco_imagem": {
+      "name": "Enviar Imagem",
+      "message": "Aqui está uma imagem que foi carregada:",
+      "media": {
+        "attachment": {
+          "file_id": "1752608228555"
+        }
+      },
+      "buttons": [
+        {
+          "text": "✅ Entendi",
+          "next_block": "bloco_final"
+        }
+      ]
+    },
+    "bloco_video": {
+      "name": "Enviar Vídeo",
+      "message": "Aqui está o vídeo metodologia:",
+      "media": {
+        "attachment": {
+          "file_id": "1752605964831"
+        }
+      },
+      "buttons": [
+        {
+          "text": "✅ Entendi",
+          "next_block": "bloco_final"
+        }
+      ]
+    },
+    "bloco_final": {
+      "name": "Final",
+      "type": "end",
+      "message": "Obrigado! O sistema de anexos está funcionando perfeitamente! 🎉"
+    }
+  }
+} 

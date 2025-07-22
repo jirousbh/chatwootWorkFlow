@@ -36,6 +36,23 @@ services:
     command: ['bundle', 'exec', 'sidekiq', '-C', 'config/sidekiq.yml']
     restart: always
 
+  # Evolution API - WhatsApp API Service
+  evolution_api:
+    container_name: evolution_api
+    image: evoapicloud/evolution-api:latest
+    restart: always
+    depends_on:
+      - redis
+      - postgres
+    ports:
+      - '127.0.0.1:8080:8080'
+    volumes:
+      - ./data/evolution_instances:/evolution/instances
+    env_file:
+      - .env-evolution
+    expose:
+      - 8080
+
   postgres:
     image: pgvector/pgvector:pg16
     restart: always
@@ -72,7 +89,11 @@ services:
     volumes:
       - ./workflows/chatbot-workflow-system.js:/app/chatbot-workflow-system.js
       - ./data/workflows-logs:/app/logs
+      - ./data/workflows-uploads:/app/uploads
     restart: unless-stopped
     depends_on:
       - postgres
       - redis
+
+volumes:
+  evolution_instances:
