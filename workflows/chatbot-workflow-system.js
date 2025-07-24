@@ -24,9 +24,20 @@ if (!fs.existsSync(logDir)) {
   fs.mkdirSync(logDir, { recursive: true });
 }
 
-// Função para formatar timestamp
+// Função para formatar timestamp (horário local do Brasil)
 function getTimestamp() {
-  return new Date().toISOString().replace('T', ' ').substr(0, 19);
+  const now = new Date();
+  // Configurar para fuso horário do Brasil (UTC-3)
+  const brazilTime = new Date(now.toLocaleString("en-US", {timeZone: "America/Sao_Paulo"}));
+  
+  const year = brazilTime.getFullYear();
+  const month = String(brazilTime.getMonth() + 1).padStart(2, '0');
+  const day = String(brazilTime.getDate()).padStart(2, '0');
+  const hours = String(brazilTime.getHours()).padStart(2, '0');
+  const minutes = String(brazilTime.getMinutes()).padStart(2, '0');
+  const seconds = String(brazilTime.getSeconds()).padStart(2, '0');
+  
+  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
 }
 
 // Salvamos o console original antes de redefinir
@@ -1432,7 +1443,10 @@ async function initializeSystem() {
     startChatwootPolling();
     
     // Iniciar verificador de reativação automática
-    startBotReactivationScheduler();
+startBotReactivationScheduler();
+
+// Iniciar verificador de campanhas agendadas
+startCampaignScheduler();
   } catch (error) {
     console.error('❌ Erro ao inicializar sistema:', error);
     process.exit(1);
@@ -1472,6 +1486,88 @@ function startBotReactivationScheduler() {
   }, 1800000); // 30 minutos = 1800000ms
   
   console.log('✅ Verificador de reativação automática configurado (verificação a cada 30 minutos)');
+}
+
+// Iniciador do scheduler de campanhas agendadas
+function startCampaignScheduler() {
+  console.log('📅 Iniciando verificador de campanhas agendadas...');
+  
+  // Executar primeira verificação após 30 segundos
+  setTimeout(() => {
+    checkAndExecuteScheduledCampaigns();
+  }, 30000);
+  
+  // Executar verificação a cada 5 minutos
+  setInterval(async () => {
+    try {
+      await checkAndExecuteScheduledCampaigns();
+    } catch (error) {
+      console.error('❌ Erro na verificação de campanhas agendadas:', error);
+    }
+  }, 5 * 60 * 1000); // 5 minutos
+  
+  console.log('✅ Verificador de campanhas agendadas configurado (verificação a cada 5 minutos)');
+}
+
+// Verificar e executar campanhas agendadas
+async function checkAndExecuteScheduledCampaigns() {
+  try {
+    // Usar timestamp atual direto (PostgreSQL irá comparar com o fuso horário correto)
+    const now = new Date();
+    
+    console.log(`📅 Verificando campanhas agendadas... Horário atual (Brasil): ${getTimestamp()}`);
+    
+    // Buscar campanhas agendadas que devem ser executadas agora
+    // PostgreSQL irá interpretar o scheduled_at considerando o fuso horário
+    const scheduledCampaigns = await pool.query(`
+      SELECT 
+        c.id, 
+        c.name, 
+        c.scheduled_at,
+        c.status,
+        c.scheduled_at AT TIME ZONE 'America/Sao_Paulo' as scheduled_at_local
+      FROM campaigns c
+      WHERE c.status = 'pending' 
+        AND c.scheduled_at IS NOT NULL 
+        AND c.scheduled_at <= NOW()
+      ORDER BY c.scheduled_at ASC
+    `);
+    
+    if (scheduledCampaigns.rows.length === 0) {
+      console.log(`📅 Nenhuma campanha agendada para execução encontrada`);
+      return;
+    }
+    
+    console.log(`🚀 Encontradas ${scheduledCampaigns.rows.length} campanha(s) agendada(s) para execução:`);
+    
+    for (const campaign of scheduledCampaigns.rows) {
+      const { id, name, scheduled_at, scheduled_at_local } = campaign;
+      
+      console.log(`📤 Executando campanha agendada: ${name} (ID: ${id})`);
+      console.log(`   📅 Agendada para: ${scheduled_at_local || scheduled_at} (Brasil)`);
+      
+      try {
+        // Atualizar status para 'running'
+        await pool.query('UPDATE campaigns SET status = $1, updated_at = NOW() WHERE id = $2', ['running', id]);
+        
+        // Processar campanha em background
+        processCampaign(id).catch(err => {
+          console.error(`❌ Erro no processamento da campanha agendada ${id}:`, err);
+        });
+        
+        console.log(`✅ Campanha ${name} (ID: ${id}) iniciada com sucesso`);
+        
+      } catch (campaignError) {
+        console.error(`❌ Erro ao executar campanha agendada ${id}:`, campaignError);
+        
+        // Marcar campanha como failed em caso de erro
+        await pool.query('UPDATE campaigns SET status = $1, updated_at = NOW() WHERE id = $2', ['failed', id]);
+      }
+    }
+    
+  } catch (error) {
+    console.error('❌ Erro ao verificar campanhas agendadas:', error);
+  }
 }
 
 // Função de polling para verificar novas mensagens no Chatwoot
@@ -3404,6 +3500,25 @@ app.get('/api/campaigns/:id', authenticateToken, async (req, res) => {
   }
 });
 
+app.delete('/api/campaigns/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    // Excluir status/envios
+    await pool.query('DELETE FROM campaign_status WHERE campaign_id = $1', [id]);
+    // Excluir contatos da campanha
+    await pool.query('DELETE FROM campaign_contacts WHERE campaign_id = $1', [id]);
+    // Excluir a campanha
+    const result = await pool.query('DELETE FROM campaigns WHERE id = $1 RETURNING *', [id]);
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Campanha não encontrada' });
+    }
+    res.json({ success: true, message: 'Campanha e registros relacionados excluídos com sucesso!' });
+  } catch (error) {
+    console.error('Erro ao excluir campanha:', error);
+    res.status(500).json({ error: 'Erro ao excluir campanha' });
+  }
+});
+
 // Upload de CSV de contatos para uma campanha
 app.post('/api/campaigns/:id/upload-csv', authenticateToken, upload.single('file'), async (req, res) => {
   const { id } = req.params;
@@ -3544,7 +3659,7 @@ app.post('/api/chatwoot/labels', authenticateToken, [
 });
 
 // Buscar modelos/templates disponíveis via API oficial do WhatsApp
-app.get('/api/chatwoot/templates', authenticateToken, async (req, res) => {
+app.get('/api/whatsapp/templates', authenticateToken, async (req, res) => {
   try {
     console.log('🔍 Buscando templates via API oficial do WhatsApp...');
     
@@ -3552,8 +3667,6 @@ app.get('/api/chatwoot/templates', authenticateToken, async (req, res) => {
     const { accountId, inboxId } = req.query;
     
     console.log(`📋 Parâmetros recebidos: Account ID: ${accountId}, Inbox ID: ${inboxId}`);
-    
-    let templatesFound = false;
     
     // Primeira prioridade: Usar credenciais da caixa de entrada selecionada
     if (accountId && inboxId) {
@@ -3564,8 +3677,16 @@ app.get('/api/chatwoot/templates', authenticateToken, async (req, res) => {
           headers: { 'api_access_token': CHATWOOT_API_TOKEN }
         });
         
-        const inboxDetails = inboxDetailsResponse.data.payload;
-        const config = inboxDetails?.provider_config;
+        let inboxDetails = inboxDetailsResponse.data.payload;
+        // Se não houver payload, mas data tem 'id' e 'name', usar data diretamente
+        if (!inboxDetails && inboxDetailsResponse.data && inboxDetailsResponse.data.id && inboxDetailsResponse.data.name) {
+          inboxDetails = inboxDetailsResponse.data;
+        }
+        if (!inboxDetails) {
+          console.error('❌ Caixa de entrada não encontrada ou resposta inválida:', JSON.stringify(inboxDetailsResponse.data, null, 2));
+          return res.status(404).json({ error: 'Caixa de entrada não encontrada ou resposta inválida da API' });
+        }
+        const config = inboxDetails.provider_config;
         
         console.log(`📱 Caixa de entrada: ${inboxDetails.name}`);
         console.log(`🔑 Configurações disponíveis:`, {
@@ -3628,24 +3749,32 @@ app.get('/api/chatwoot/templates', authenticateToken, async (req, res) => {
             }
           } catch (whatsappError) {
             console.error(`❌ Erro ao buscar templates via API oficial para caixa '${inboxDetails.name}':`, whatsappError.response?.data?.error || whatsappError.message);
-            
             // Se for erro de autenticação, mostrar detalhes
             if (whatsappError.response?.status === 401) {
               console.log('🔑 Erro de autenticação - token da caixa pode estar expirado');
             }
+            return res.status(400).json({
+              error: 'Erro ao buscar templates via API oficial para a caixa',
+              details: whatsappError.response?.data?.error || whatsappError.message
+            });
           }
         } else {
           console.log(`⚠️ Caixa '${inboxDetails.name}' não possui credenciais completas da API do WhatsApp`);
+          return res.status(400).json({
+            error: 'Caixa de entrada não possui credenciais completas da API do WhatsApp'
+          });
         }
       } catch (inboxError) {
         console.error(`❌ Erro ao buscar detalhes da caixa de entrada:`, inboxError.response?.data || inboxError.message);
+        return res.status(400).json({
+          error: 'Erro ao buscar detalhes da caixa de entrada',
+          details: inboxError.response?.data || inboxError.message
+        });
       }
-    } else {
-      console.log('⚠️ Account ID ou Inbox ID não fornecidos na requisição');
     }
     
     // Segunda prioridade: Usar configurações globais como fallback
-    if (!templatesFound && WHATSAPP_BUSINESS_ACCOUNT_ID && WHATSAPP_API_TOKEN) {
+    if (WHATSAPP_BUSINESS_ACCOUNT_ID && WHATSAPP_API_TOKEN) {
       try {
         console.log(`🔄 Tentando com configurações globais (Business Account: ${WHATSAPP_BUSINESS_ACCOUNT_ID})`);
         
@@ -3683,202 +3812,23 @@ app.get('/api/chatwoot/templates', authenticateToken, async (req, res) => {
         }
       } catch (whatsappError) {
         console.error('❌ Erro ao buscar templates via configurações globais:', whatsappError.response?.data || whatsappError.message);
+        return res.status(400).json({
+          error: 'Erro ao buscar templates via API oficial global',
+          details: whatsappError.response?.data || whatsappError.message
+        });
       }
     }
     
-    // Segunda prioridade: Buscar via Chatwoot como fallback
-    console.log('🔄 Tentando buscar templates via Chatwoot...');
-    
-    // Buscar caixas de entrada do WhatsApp
-    const inboxesResponse = await axios.get(`${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/inboxes`, {
-      headers: { 'api_access_token': CHATWOOT_API_TOKEN }
+    // Se não encontrou credenciais válidas
+    return res.status(400).json({
+      error: 'Nenhuma credencial válida da API oficial do WhatsApp encontrada para buscar templates.'
     });
-    
-    const whatsappInboxes = (inboxesResponse.data.payload || []).filter(i => 
-      i.channel_type === 'Channel::Whatsapp'
-    );
-    
-    console.log(`📱 Caixas WhatsApp encontradas: ${whatsappInboxes.length}`);
-    
-    if (whatsappInboxes.length === 0) {
-      console.log('⚠️ Nenhuma caixa de entrada WhatsApp encontrada');
-      return res.json([]);
-    }
-    
-    // Tentar buscar templates de cada caixa de entrada WhatsApp
-    
-    for (const inbox of whatsappInboxes) {
-      try {
-        console.log(`📋 Buscando templates da caixa: ${inbox.name} (ID: ${inbox.id})`);
-        
-        // Primeiro, tentar via configuração da caixa (pode ter credenciais específicas)
-        try {
-          const inboxDetailsResponse = await axios.get(`${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/inboxes/${inbox.id}`, {
-            headers: { 'api_access_token': CHATWOOT_API_TOKEN }
-          });
-          
-          const inboxDetails = inboxDetailsResponse.data.payload;
-          const config = inboxDetails?.provider_config;
-          
-          // Se a caixa tem credenciais próprias do WhatsApp, usar API oficial
-          if (config?.business_account_id && config?.api_key) {
-            try {
-              console.log(`🚀 Usando credenciais da caixa ${inbox.name} para API oficial...`);
-              const whatsappResponse = await axios.get(
-                `https://graph.facebook.com/v23.0/${config.business_account_id}/message_templates`,
-                {
-                  headers: { 'Authorization': `Bearer ${config.api_key}` },
-                  params: { 
-                    fields: 'name,status,category,language,components',
-                    limit: 100 
-                  }
-                }
-              );
-              
-              if (whatsappResponse.data?.data) {
-                const templates = whatsappResponse.data.data.filter(t => t.status === 'APPROVED');
-                console.log(`🎉 ${templates.length} templates encontrados para caixa ${inbox.name}`);
-                
-                const formattedTemplates = templates.map(template => ({
-                  name: template.name,
-                  displayName: template.name.replace(/_/g, ' ').toUpperCase(),
-                  status: template.status,
-                  category: template.category || 'UTILITY',
-                  language: template.language || 'pt_BR',
-                  components: template.components || [],
-                  source: `whatsapp_api_inbox_${inbox.id}`
-                }));
-                
-                allTemplates = allTemplates.concat(formattedTemplates);
-                continue; // Pular tentativas via Chatwoot para esta caixa
-              }
-            } catch (whatsappError) {
-              console.log(`❌ Erro ao buscar via API oficial para caixa ${inbox.name}:`, whatsappError.response?.data?.error || whatsappError.message);
-            }
-          }
-        } catch (inboxError) {
-          console.log(`⚠️ Erro ao obter detalhes da caixa ${inbox.name}:`, inboxError.message);
-        }
-        
-        // Fallback: Tentar endpoints do Chatwoot
-        const possibleEndpoints = [
-          `/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/inboxes/${inbox.id}/whatsapp_templates`,
-          `/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/whatsapp_templates?inbox_id=${inbox.id}`,
-          `/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/whatsapp_templates`
-        ];
-        
-        let templates = [];
-        
-        for (const endpoint of possibleEndpoints) {
-          try {
-            const templatesResponse = await axios.get(`${CHATWOOT_BASE_URL}${endpoint}`, {
-              headers: { 'api_access_token': CHATWOOT_API_TOKEN }
-            });
-            
-            let responseData = templatesResponse.data;
-            if (responseData.payload) responseData = responseData.payload;
-            if (responseData.data) responseData = responseData.data;
-            
-            if (Array.isArray(responseData) && responseData.length > 0) {
-              templates = responseData;
-              console.log(`✅ ${templates.length} templates encontrados via Chatwoot: ${endpoint}`);
-              break;
-            }
-          } catch (endpointError) {
-            // Ignorar erros 404, logar outros
-            if (endpointError.response?.status !== 404) {
-              console.log(`❌ Endpoint ${endpoint} falhou: ${endpointError.response?.status}`);
-            }
-          }
-        }
-        
-        // Formatar templates encontrados de Chatwoot se houver
-        if (templates.length > 0) {
-          const formattedTemplates = templates.map(template => ({
-            name: template.name,
-            category: template.category || 'UTILITY',
-            language: template.language || 'pt_BR',
-            status: template.status || 'APPROVED',
-            displayName: `${template.name} (${template.category || 'UTILITY'})`,
-            inboxId: inbox.id,
-            inboxName: inbox.name,
-            components: template.components || [],
-            lastUpdated: new Date().toISOString()
-          }));
-          
-          allTemplates = allTemplates.concat(formattedTemplates);
-          console.log(`✅ ${formattedTemplates.length} templates formatados da caixa ${inbox.name}`);
-        }
-        
-      } catch (inboxError) {
-        console.error(`❌ Erro ao buscar templates da caixa ${inbox.name}:`, inboxError.response?.data || inboxError.message);
-        continue;
-      }
-    }
-    
-    console.log(`✅ Total de templates encontrados: ${allTemplates.length}`);
-    
-    // Remover duplicatas por nome, priorizando templates mais recentes
-    const uniqueTemplates = allTemplates.reduce((acc, template) => {
-      const existing = acc.find(t => t.name === template.name);
-      if (!existing || new Date(template.lastUpdated) > new Date(existing.lastUpdated)) {
-        return [...acc.filter(t => t.name !== template.name), template];
-      }
-      return acc;
-    }, []);
-    
-    console.log(`📋 Templates únicos após dedupe: ${uniqueTemplates.length}`);
-    
-    // Ordenar por categoria (MARKETING primeiro) e depois por nome
-    const sortedTemplates = uniqueTemplates.sort((a, b) => {
-      const categoryOrder = { 'MARKETING': 0, 'UTILITY': 1, 'AUTHENTICATION': 2 };
-      const aCategoryOrder = categoryOrder[a.category] ?? 3;
-      const bCategoryOrder = categoryOrder[b.category] ?? 3;
-      
-      if (aCategoryOrder !== bCategoryOrder) {
-        return aCategoryOrder - bCategoryOrder;
-      }
-      return a.name.localeCompare(b.name);
-    });
-    
-    if (sortedTemplates.length === 0) {
-      console.log('⚠️ Nenhum template encontrado, retornando templates padrão');
-      
-      // Templates padrão que podem existir
-      const defaultTemplates = [
-        {
-          name: 'hello_world',
-          displayName: 'Hello World (UTILITY)',
-          category: 'UTILITY',
-          language: 'en_US',
-          status: 'APPROVED',
-          inboxId: whatsappInboxes[0].id,
-          inboxName: whatsappInboxes[0].name
-        }
-      ];
-      
-      return res.json(defaultTemplates);
-    }
-    
-    console.log(`🎯 Retornando ${sortedTemplates.length} templates ordenados`);
-    res.json(sortedTemplates);
-    
   } catch (error) {
     console.error('❌ Erro geral ao buscar templates:', error.response?.data || error.message);
-    
-    // Fallback: retornar templates padrão
-    const fallbackTemplates = [
-      {
-        name: 'hello_world',
-        displayName: 'Hello World (UTILITY)',
-        category: 'UTILITY',
-        language: 'en_US',
-        status: 'APPROVED'
-      }
-    ];
-    
-    console.log('⚠️ Usando templates de fallback devido a erro');
-    res.json(fallbackTemplates);
+    return res.status(500).json({
+      error: 'Erro ao buscar templates',
+      details: error.message
+    });
   }
 });
 
@@ -3899,7 +3849,7 @@ app.get('/api/campaigns/:id/status', authenticateToken, async (req, res) => {
 // if (status.rows[0].status === 'cancelled') { interromper envio }
 
 // Forçar sincronização de templates WhatsApp
-app.post('/api/chatwoot/templates/sync', authenticateToken, async (req, res) => {
+app.post('/api/whatsapp/templates/sync', authenticateToken, async (req, res) => {
   try {
     console.log('🔄 Iniciando sincronização forçada de templates WhatsApp...');
     
@@ -3908,6 +3858,7 @@ app.post('/api/chatwoot/templates/sync', authenticateToken, async (req, res) => 
     console.log(`📋 Sincronização para Account ID: ${accountId}, Inbox ID: ${inboxId}`);
     
     let syncResults = [];
+    let found = false;
     
     // Primeira prioridade: Usar credenciais da caixa de entrada selecionada
     if (accountId && inboxId) {
@@ -3953,7 +3904,7 @@ app.post('/api/chatwoot/templates/sync', authenticateToken, async (req, res) => 
                 approvedCount: approvedTemplates.length,
                 message: `Templates verificados via API oficial para caixa '${inboxDetails.name}'`
               });
-              
+              found = true;
               // Se funcionou, retornar sucesso
               return res.json({
                 success: true,
@@ -3994,7 +3945,7 @@ app.post('/api/chatwoot/templates/sync', authenticateToken, async (req, res) => 
     }
     
     // Segunda prioridade: Verificar se a API oficial global está configurada
-    if (syncResults.length === 0 && WHATSAPP_BUSINESS_ACCOUNT_ID && WHATSAPP_API_TOKEN) {
+    if (!found && WHATSAPP_BUSINESS_ACCOUNT_ID && WHATSAPP_API_TOKEN) {
       try {
         console.log('🚀 Verificando templates via API oficial do WhatsApp...');
         
@@ -4022,7 +3973,7 @@ app.post('/api/chatwoot/templates/sync', authenticateToken, async (req, res) => 
             approvedCount: approvedTemplates.length,
             message: `Templates verificados via API oficial do WhatsApp`
           });
-          
+          found = true;
           // Se a API oficial funcionou, retornar sucesso
           return res.json({
             success: true,
@@ -4040,103 +3991,16 @@ app.post('/api/chatwoot/templates/sync', authenticateToken, async (req, res) => 
           error: whatsappError.response?.data?.error?.message || whatsappError.message
         });
       }
-    } else {
-      console.log('⚠️ Credenciais da API oficial não configuradas, tentando via Chatwoot...');
-      syncResults.push({
-        method: 'whatsapp_official_api',
-        status: 'skipped',
-        message: 'Credenciais da API oficial não configuradas'
-      });
     }
     
-    // Segunda prioridade: Tentar sincronização via Chatwoot
-    console.log('🔄 Tentando sincronização via Chatwoot...');
-    
-    // Buscar caixas de entrada WhatsApp
-    const inboxesResponse = await axios.get(`${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/inboxes`, {
-      headers: { 'api_access_token': CHATWOOT_API_TOKEN }
-    });
-    
-    const whatsappInboxes = (inboxesResponse.data.payload || []).filter(i => 
-      i.channel_type === 'Channel::Whatsapp'
-    );
-    
-    if (whatsappInboxes.length === 0) {
-      console.log('⚠️ Nenhuma caixa de entrada WhatsApp encontrada');
-      return res.json({
+    // Se não encontrou credenciais válidas
+    if (!found) {
+      return res.status(400).json({
         success: false,
-        message: 'Nenhuma caixa de entrada WhatsApp encontrada',
+        message: 'Nenhuma credencial válida da API oficial do WhatsApp encontrada para sincronização.',
         results: syncResults
       });
     }
-    
-    for (const inbox of whatsappInboxes) {
-      try {
-        console.log(`🔄 Sincronizando templates da caixa: ${inbox.name}`);
-        
-        // Tentar diferentes métodos de sincronização
-        const syncEndpoints = [
-          `/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/inboxes/${inbox.id}/whatsapp_templates/sync`,
-          `/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/inboxes/${inbox.id}/sync_templates`,
-          `/webhooks/whatsapp/${inbox.id}/sync_templates`
-        ];
-        
-        let syncSuccess = false;
-        
-        for (const endpoint of syncEndpoints) {
-          try {
-            console.log(`🔄 Tentando sincronização via: ${endpoint}`);
-            
-            const syncResponse = await axios.post(`${CHATWOOT_BASE_URL}${endpoint}`, {}, {
-              headers: { 'api_access_token': CHATWOOT_API_TOKEN }
-            });
-            
-            console.log(`✅ Sincronização bem-sucedida via: ${endpoint}`);
-            syncResults.push({
-              inboxId: inbox.id,
-              inboxName: inbox.name,
-              status: 'success',
-              method: endpoint,
-              templatesCount: syncResponse.data?.templates_count || 'unknown'
-            });
-            syncSuccess = true;
-            break;
-            
-          } catch (syncError) {
-            console.log(`❌ Sincronização falhou via ${endpoint}: ${syncError.response?.status}`);
-          }
-        }
-        
-        if (!syncSuccess) {
-          console.log(`⚠️ Nenhum método de sincronização funcionou para ${inbox.name}`);
-          syncResults.push({
-            inboxId: inbox.id,
-            inboxName: inbox.name,
-            status: 'failed',
-            error: 'Nenhum endpoint de sincronização disponível'
-          });
-        }
-        
-      } catch (inboxError) {
-        console.error(`❌ Erro ao sincronizar caixa ${inbox.name}:`, inboxError.message);
-        syncResults.push({
-          inboxId: inbox.id,
-          inboxName: inbox.name,
-          status: 'error',
-          error: inboxError.message
-        });
-      }
-    }
-    
-    const successCount = syncResults.filter(r => r.status === 'success').length;
-    
-    res.json({
-      success: successCount > 0,
-      message: `Sincronização concluída. ${successCount}/${syncResults.length} métodos bem-sucedidos.`,
-      results: syncResults,
-      nextStep: 'Aguarde alguns momentos e recarregue a lista de templates'
-    });
-    
   } catch (error) {
     console.error('❌ Erro na sincronização forçada:', error.response?.data || error.message);
     res.status(500).json({ 
@@ -4236,7 +4100,209 @@ app.get('/api/campaigns/:id/errors', authenticateToken, async (req, res) => {
   }
 });
 
-// Função para processar envios da campanha
+// Listar campanhas agendadas
+app.get('/api/campaigns/scheduled', authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT 
+        c.id,
+        c.name,
+        c.scheduled_at,
+        c.status,
+        c.created_at,
+        COUNT(cs.id) as total_contacts
+      FROM campaigns c
+      LEFT JOIN campaign_status cs ON c.id = cs.campaign_id
+      WHERE c.scheduled_at IS NOT NULL 
+        AND c.status = 'pending'
+      GROUP BY c.id, c.name, c.scheduled_at, c.status, c.created_at
+      ORDER BY c.scheduled_at ASC
+    `);
+    
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Erro ao listar campanhas agendadas:', error);
+    res.status(500).json({ error: 'Erro ao listar campanhas agendadas' });
+  }
+});
+
+// Verificar e corrigir campanhas presas no status "running"
+app.post('/api/campaigns/fix-stuck', authenticateToken, async (req, res) => {
+  try {
+    console.log('🔧 Verificando campanhas presas no status "running"...');
+    
+    // Buscar campanhas que estão "running" há mais de 30 minutos
+    const stuckCampaigns = await pool.query(`
+      SELECT 
+        c.id,
+        c.name,
+        c.status,
+        c.updated_at,
+        COUNT(cs.id) as total_contacts,
+        COUNT(CASE WHEN cs.status = 'sent' THEN 1 END) as sent_count,
+        COUNT(CASE WHEN cs.status = 'failed' THEN 1 END) as failed_count,
+        COUNT(CASE WHEN cs.status = 'pending' THEN 1 END) as pending_count
+      FROM campaigns c
+      LEFT JOIN campaign_status cs ON c.id = cs.campaign_id
+      WHERE c.status = 'running' 
+        AND c.updated_at < NOW() - INTERVAL '30 minutes'
+      GROUP BY c.id, c.name, c.status, c.updated_at
+      ORDER BY c.updated_at ASC
+    `);
+    
+    if (stuckCampaigns.rows.length === 0) {
+      return res.json({ 
+        success: true, 
+        message: 'Nenhuma campanha presa encontrada',
+        fixed: 0
+      });
+    }
+    
+    let fixedCount = 0;
+    const fixedCampaigns = [];
+    
+    for (const campaign of stuckCampaigns.rows) {
+      const { id, name, total_contacts, sent_count, failed_count, pending_count } = campaign;
+      
+      console.log(`🔍 Analisando campanha ${id} (${name}): ${sent_count}/${total_contacts} enviadas, ${pending_count} pendentes`);
+      
+      // Se não há contatos pendentes, marcar como completed
+      if (pending_count === 0) {
+        await pool.query('UPDATE campaigns SET status = $1, updated_at = NOW() WHERE id = $2', ['completed', id]);
+        console.log(`✅ Campanha ${id} marcada como 'completed'`);
+        fixedCampaigns.push({ id, name, status: 'completed', reason: 'Todos os contatos foram processados' });
+        fixedCount++;
+      }
+      // Se há muitos erros e poucos enviados, marcar como failed
+      else if (failed_count > sent_count && failed_count > total_contacts * 0.5) {
+        await pool.query('UPDATE campaigns SET status = $1, updated_at = NOW() WHERE id = $2', ['failed', id]);
+        console.log(`❌ Campanha ${id} marcada como 'failed' devido a muitos erros`);
+        fixedCampaigns.push({ id, name, status: 'failed', reason: 'Muitos erros de envio detectados' });
+        fixedCount++;
+      }
+      // Se ainda há pendentes, tentar reprocessar
+      else if (pending_count > 0) {
+        console.log(`🔄 Reprocessando campanha ${id} com ${pending_count} contatos pendentes...`);
+        processCampaign(id).catch(err => console.error(`Erro ao reprocessar campanha ${id}:`, err));
+        fixedCampaigns.push({ id, name, status: 'reprocessing', reason: `Reprocessando ${pending_count} contatos pendentes` });
+        fixedCount++;
+      }
+    }
+    
+    res.json({
+      success: true,
+      message: `${fixedCount} campanha(s) corrigida(s)`,
+      fixed: fixedCount,
+      campaigns: fixedCampaigns
+    });
+    
+  } catch (error) {
+    console.error('Erro ao corrigir campanhas presas:', error);
+    res.status(500).json({ error: 'Erro ao corrigir campanhas presas' });
+  }
+});
+
+// Backup da função antiga
+async function processCampaign_legacy(campaignId) {
+  // ... (copiar todo o conteúdo da função processCampaign atual aqui) ...
+   // Busca dados da campanha
+   const { rows } = await pool.query('SELECT * FROM campaigns WHERE id = $1', [campaignId]);
+   if (rows.length === 0) return;
+   const campaign = rows[0];
+   let contacts = [];
+   try {
+     // Busca contatos conforme tipo
+     if (campaign.type === 'csv') {
+       const result = await pool.query('SELECT * FROM campaign_contacts WHERE campaign_id = $1', [campaignId]);
+       contacts = result.rows;
+     } else if (campaign.type === 'tag') {
+       // Busca contatos via API do Chatwoot pela tag
+       const response = await axios.get(`${CHATWOOT_BASE_URL}/api/v1/accounts/${campaign.chatwoot_account_id}/contacts`, {
+         headers: { 'api_access_token': CHATWOOT_API_TOKEN },
+         params: { label: campaign.tag_name }
+       });
+       contacts = (response.data.payload || []).map(c => ({ name: c.name, phone: c.phone_number }));
+     }
+     // Buscar credenciais da caixa de entrada
+     const inboxDetailsResponse = await axios.get(`${CHATWOOT_BASE_URL}/api/v1/accounts/${campaign.chatwoot_account_id}/inboxes/${campaign.chatwoot_inbox_id}`, {
+       headers: { 'api_access_token': CHATWOOT_API_TOKEN }
+     });
+     let inboxDetails = inboxDetailsResponse.data.payload;
+     if (!inboxDetails && inboxDetailsResponse.data && inboxDetailsResponse.data.id && inboxDetailsResponse.data.name) {
+       inboxDetails = inboxDetailsResponse.data;
+     }
+     if (!inboxDetails) {
+       throw new Error('Caixa de entrada não encontrada ou resposta inválida da API');
+     }
+     const config = inboxDetails.provider_config;
+     if (!config?.business_account_id || !config?.api_key || !config?.phone_number_id) {
+       throw new Error('Credenciais da API oficial do WhatsApp não configuradas para esta caixa');
+     }
+     // Buscar informações do template
+     let templateLanguage = campaign.template_language || 'pt_BR';
+     let templateCategory = campaign.template_category || 'UTILITY';
+     // Buscar template na API oficial para garantir que existe
+     const whatsappTemplatesResponse = await axios.get(
+       `https://graph.facebook.com/v17.0/${config.business_account_id}/message_templates`,
+       {
+         headers: { 'Authorization': `Bearer ${config.api_key}` },
+         params: { fields: 'name,status,category,language,components', limit: 100 }
+       }
+     );
+     const templates = (whatsappTemplatesResponse.data.data || []).filter(t => t.status === 'APPROVED');
+     const selectedTemplate = templates.find(t => t.name === campaign.template_name);
+     if (!selectedTemplate) {
+       throw new Error('Template não encontrado ou não aprovado na API oficial do WhatsApp');
+     }
+     templateLanguage = selectedTemplate.language || templateLanguage;
+     templateCategory = selectedTemplate.category || templateCategory;
+     // Enviar mensagem para cada contato
+     for (const contact of contacts) {
+       const normalizedPhone = contact.phone.replace(/[^\d]/g, '');
+       // Montar payload para API oficial do WhatsApp
+       const payload = {
+         messaging_product: 'whatsapp',
+         to: normalizedPhone,
+         type: 'template',
+         template: {
+           name: campaign.template_name,
+           language: { code: templateLanguage },
+           components: [
+             {
+               type: 'body',
+               parameters: [
+                 { type: 'text', text: contact.name || 'Cliente' }
+                 // Adicione mais parâmetros conforme o template
+               ]
+             }
+           ]
+         }
+       };
+       try {
+         const sendResponse = await axios.post(
+           `https://graph.facebook.com/v17.0/${config.phone_number_id}/messages`,
+           payload,
+           { headers: { Authorization: `Bearer ${config.api_key}` } }
+         );
+         console.log(`[Campanha ${campaignId}] ✅ Mensagem enviada para ${normalizedPhone}:`, sendResponse.data);
+         await pool.query(
+           'UPDATE campaign_status SET status = $1, message_id = $2, error_message = NULL WHERE campaign_id = $3 AND contact_id = $4',
+           ['sent', sendResponse.data.messages?.[0]?.id || null, campaignId, contact.id || contact.phone]
+         );
+       } catch (err) {
+         console.error(`[Campanha ${campaignId}] ❌ Erro ao enviar mensagem para ${normalizedPhone}:`, err.response?.data || err.message);
+         await pool.query(
+           'UPDATE campaign_status SET status = $1, error_message = $2 WHERE campaign_id = $3 AND contact_id = $4',
+           ['failed', err.response?.data?.error?.message || err.message, campaignId, contact.id || contact.phone]
+         );
+       }
+     }
+   } catch (error) {
+     console.error('Erro ao processar campanha:', error);
+   }
+}
+
+// Nova função usando API oficial do WhatsApp
 async function processCampaign(campaignId) {
   // Busca dados da campanha
   const { rows } = await pool.query('SELECT * FROM campaigns WHERE id = $1', [campaignId]);
@@ -4256,195 +4322,138 @@ async function processCampaign(campaignId) {
       });
       contacts = (response.data.payload || []).map(c => ({ name: c.name, phone: c.phone_number }));
     }
-    // Envia mensagem para cada contato
+    // Buscar credenciais da caixa de entrada
+    const inboxDetailsResponse = await axios.get(`${CHATWOOT_BASE_URL}/api/v1/accounts/${campaign.chatwoot_account_id}/inboxes/${campaign.chatwoot_inbox_id}`, {
+      headers: { 'api_access_token': CHATWOOT_API_TOKEN }
+    });
+    let inboxDetails = inboxDetailsResponse.data.payload;
+    if (!inboxDetails && inboxDetailsResponse.data && inboxDetailsResponse.data.id && inboxDetailsResponse.data.name) {
+      inboxDetails = inboxDetailsResponse.data;
+    }
+    if (!inboxDetails) {
+      throw new Error('Caixa de entrada não encontrada ou resposta inválida da API');
+    }
+    const config = inboxDetails.provider_config;
+    if (!config?.business_account_id || !config?.api_key || !config?.phone_number_id) {
+      throw new Error('Credenciais da API oficial do WhatsApp não configuradas para esta caixa');
+    }
+    // Buscar informações do template
+    let templateLanguage = campaign.template_language || 'pt_BR';
+    let templateCategory = campaign.template_category || 'UTILITY';
+    // Buscar template na API oficial para garantir que existe
+    const whatsappTemplatesResponse = await axios.get(
+      `https://graph.facebook.com/v17.0/${config.business_account_id}/message_templates`,
+      {
+        headers: { 'Authorization': `Bearer ${config.api_key}` },
+        params: { fields: 'name,status,category,language,components', limit: 100 }
+      }
+    );
+    const templates = (whatsappTemplatesResponse.data.data || []).filter(t => t.status === 'APPROVED');
+    const selectedTemplate = templates.find(t => t.name === campaign.template_name);
+    if (!selectedTemplate) {
+      throw new Error('Template não encontrado ou não aprovado na API oficial do WhatsApp');
+    }
+    console.log("selectedTemplate", JSON.stringify(selectedTemplate, null, 2));
+    templateLanguage = selectedTemplate.language || templateLanguage;
+    templateCategory = selectedTemplate.category || templateCategory;
+    // Enviar mensagem para cada contato
     for (const contact of contacts) {
-      // Checa status da campanha antes de cada envio
-      const statusRes = await pool.query('SELECT status FROM campaigns WHERE id = $1', [campaignId]);
-      if (statusRes.rows[0].status === 'cancelled') {
-        console.log(`[Campanha ${campaignId}] Cancelada durante envio.`);
-        break;
+      // Garantir formato E.164 com +
+      let normalizedPhone = contact.phone.replace(/[^\d+]/g, '');
+      if (!normalizedPhone.startsWith('+')) {
+        normalizedPhone = '+' + normalizedPhone;
       }
-      // Cria registro de status se não existir, ou verifica se já foi processado
-      let statusRow = await pool.query('SELECT * FROM campaign_status WHERE campaign_id = $1 AND contact_id = $2', [campaignId, contact.id || contact.phone]);
-      if (statusRow.rows.length === 0) {
-        await pool.query('INSERT INTO campaign_status (campaign_id, contact_id, status) VALUES ($1, $2, $3)', [campaignId, contact.id || contact.phone, 'pending']);
-      } else if (statusRow.rows[0].status !== 'pending') {
-        // Se não está pendente, pula este contato (já foi processado ou está com erro e não foi resetado)
-        console.log(`[Campanha ${campaignId}] Pulando contato ${contact.phone} - Status: ${statusRow.rows[0].status}`);
-        continue;
-      }
-      // Envia mensagem via API do Chatwoot
-      try {
-        // Primeiro, buscar ou criar contato no Chatwoot
-        let chatwootContact = null;
-        
-        // Normalizar número de telefone
-        let normalizedPhone = contact.phone.replace(/[^\d]/g, ''); // Remove tudo que não é dígito
-        if (normalizedPhone.length > 10) {
-          // Se tem mais de 10 dígitos, assumir que tem código do país
-          normalizedPhone = '+' + normalizedPhone;
+      // Montar payload para API oficial do WhatsApp
+      const bodyComponent = selectedTemplate.components?.find(c => c.type === 'BODY');
+      
+      console.log(`[INFO] Template text: ${bodyComponent?.text}`);
+      console.log(`[INFO] Template example:`, JSON.stringify(bodyComponent?.example, null, 2));
+      
+      const paramValues = [contact.name || 'Cliente', contact.phone || '', campaign.name || '', new Date().toLocaleDateString(templateLanguage === 'pt_BR' ? 'pt-BR' : 'en-US')];
+      const parameters = [];
+      
+      // Verificar se template tem parâmetros nomeados ou numerados
+      if (bodyComponent && bodyComponent.text) {
+        // Primeiro verificar se há parâmetros nomeados na estrutura example
+        if (bodyComponent.example && bodyComponent.example.body_text_named_params) {
+          // Template com parâmetros nomeados - usar estrutura com parameter_name
+          bodyComponent.example.body_text_named_params.forEach((namedParam, index) => {
+            parameters.push({
+              type: 'text',
+              parameter_name: namedParam.param_name,
+              text: paramValues[index] || ''
+            });
+          });
+          console.log(`[INFO] Using named parameters structure, count: ${parameters.length}`);
         } else {
-          // Se tem 10 ou menos, assumir que é local (BR)
-          normalizedPhone = '+55' + normalizedPhone;
-        }
-        
-        console.log(`[Campanha ${campaignId}] 📱 Processando: ${contact.phone} → ${normalizedPhone}`);
-        
-        // Tentar buscar contato existente
-        try {
-          const searchResponse = await axios.get(`${CHATWOOT_BASE_URL}/api/v1/accounts/${campaign.chatwoot_account_id}/contacts/search`, {
-            headers: { 'api_access_token': CHATWOOT_API_TOKEN },
-            params: { q: normalizedPhone }
-          });
+          // Template com parâmetros numerados ou sem exemplo específico
+          const numberedParams = bodyComponent.text.match(/\{\{\d+\}\}/g) || [];
+          const namedParams = bodyComponent.text.match(/\{\{[a-zA-Z_][a-zA-Z0-9_]*\}\}/g) || [];
+          const totalParams = Math.max(numberedParams.length, namedParams.length);
           
-          if (searchResponse.data.payload && searchResponse.data.payload.length > 0) {
-            chatwootContact = searchResponse.data.payload[0];
-            console.log(`[Campanha ${campaignId}] Contato encontrado: ${normalizedPhone}`);
+          for (let i = 0; i < totalParams; i++) {
+            parameters.push({ 
+              type: 'text', 
+              text: paramValues[i] || '' 
+            });
           }
-        } catch (searchError) {
-          console.log(`[Campanha ${campaignId}] Contato não encontrado, criando novo: ${normalizedPhone}`);
+          console.log(`[INFO] Using positional parameters, count: ${totalParams}`);
         }
-        
-        // Se não encontrou, criar novo contato
-        if (!chatwootContact) {
-          const createResponse = await axios.post(`${CHATWOOT_BASE_URL}/api/v1/accounts/${campaign.chatwoot_account_id}/contacts`, {
-            name: contact.name,
-            phone_number: normalizedPhone
-          }, {
-            headers: { 'api_access_token': CHATWOOT_API_TOKEN }
-          });
-          chatwootContact = createResponse.data.payload.contact;
-          console.log(`[Campanha ${campaignId}] Contato criado: ${normalizedPhone}`);
+      }
+      
+      console.log(`[INFO] Final parameters:`, JSON.stringify(parameters, null, 2));
+      
+      const bodyComponentObj = { type: 'body' };
+      if (parameters.length > 0) {
+        bodyComponentObj.parameters = parameters;
+      }
+      const payload = {
+        messaging_product: 'whatsapp',
+        to: normalizedPhone,
+        type: 'template',
+        template: {
+          name: campaign.template_name,
+          language: { code: templateLanguage },
+          components: [bodyComponentObj]
         }
-        
-        // Buscar ou criar conversa
-        let conversation = null;
-        
-        // Tentar buscar conversa existente na caixa
-        try {
-          const conversationsResponse = await axios.get(`${CHATWOOT_BASE_URL}/api/v1/accounts/${campaign.chatwoot_account_id}/conversations`, {
-            headers: { 'api_access_token': CHATWOOT_API_TOKEN },
-            params: { 
-              inbox_id: campaign.chatwoot_inbox_id,
-              contact_id: chatwootContact.id 
-            }
-          });
-          
-          if (conversationsResponse.data.data && conversationsResponse.data.data.length > 0) {
-            conversation = conversationsResponse.data.data[0];
-            console.log(`[Campanha ${campaignId}] Conversa encontrada: ${conversation.id}`);
-          }
-        } catch (convError) {
-          console.log(`[Campanha ${campaignId}] Conversa não encontrada, criando nova para: ${contact.phone}`);
-        }
-        
-        // Se não encontrou conversa, criar nova
-        if (!conversation) {
-          // Para WhatsApp, source_id deve ser apenas números (sem +)
-          const sourceId = chatwootContact.phone_number.replace(/^\+/, '');
-          
-          const createConvResponse = await axios.post(`${CHATWOOT_BASE_URL}/api/v1/accounts/${campaign.chatwoot_account_id}/conversations`, {
-            source_id: sourceId,
-            inbox_id: campaign.chatwoot_inbox_id,
-            contact_id: chatwootContact.id
-          }, {
-            headers: { 'api_access_token': CHATWOOT_API_TOKEN }
-          });
-          conversation = createConvResponse.data;
-          console.log(`[Campanha ${campaignId}] Conversa criada: ${conversation.id} (source_id: ${sourceId})`);
-        }
-        
-        // Enviar template do WhatsApp via Chatwoot - formato correto
-        console.log(`[Campanha ${campaignId}] 📤 Enviando template WhatsApp:`, {
-          template: campaign.template_name,
-          contact: contact.name || normalizedPhone,
-          conversation_id: conversation.id
-        });
-        
-        // Usar o idioma e categoria corretos do template
-        const templateLanguage = campaign.template_language || 'pt_BR';
-        const templateCategory = campaign.template_category || 'UTILITY';
-        
-        // Tentar diferentes categorias se necessário (começando com a categoria original)
-        const templateCategories = [templateCategory];
-        if (!templateCategories.includes("UTILITY")) templateCategories.push("UTILITY");
-        if (!templateCategories.includes("MARKETING")) templateCategories.push("MARKETING");
-        if (!templateCategories.includes("AUTHENTICATION")) templateCategories.push("AUTHENTICATION");
-        
-        let messageResponse = null;
-        let templateSent = false;
-        
-        for (const category of templateCategories) {
-          const messagePayload = {
-            content: `Enviando template: ${campaign.template_name}`,
-            template_params: {
-              name: campaign.template_name,
-              category: category,
-              language: templateLanguage,
-              processed_params: {
-                "1": contact.name || "Cliente",
-                "2": normalizedPhone,
-                "3": campaign.name || "Campanha",
-                "4": new Date().toLocaleDateString(templateLanguage === 'pt_BR' ? 'pt-BR' : 'en-US')
-              }
-            },
-            message_type: "outgoing"
-          };
-          
-          try {
-            console.log(`[Campanha ${campaignId}] 🔄 Tentando categoria: ${category}`);
-            
-            messageResponse = await axios.post(
-              `${CHATWOOT_BASE_URL}/api/v1/accounts/${campaign.chatwoot_account_id}/conversations/${conversation.id}/messages`,
-              messagePayload,
-              { 
-                headers: { 
-                  'api_access_token': CHATWOOT_API_TOKEN,
-                  'Content-Type': 'application/json'
-                } 
-              }
-            );
-            
-            console.log(`[Campanha ${campaignId}] ✅ Template enviado com categoria ${category}! ID: ${messageResponse.data.id}`);
-            templateSent = true;
-            break;
-            
-          } catch (templateError) {
-            console.log(`[Campanha ${campaignId}] ❌ Falha com categoria ${category}:`, templateError.response?.data?.message || templateError.message);
-            
-            // Se é a última tentativa, relançar o erro
-            if (category === templateCategories[templateCategories.length - 1]) {
-              throw templateError;
-            }
-          }
-        }
-        
-        if (!templateSent) {
-          throw new Error('Falha ao enviar template com todas as categorias testadas');
-        }
-        
+      };
+      try {
+        console.log("payload", JSON.stringify(payload, null, 2));
+        const sendResponse = await axios.post(
+          `https://graph.facebook.com/v23.0/${config.phone_number_id}/messages`,
+          payload,
+          { headers: { Authorization: `Bearer ${config.api_key}` } }
+        );
+        console.log(`[Campanha ${campaignId}] ✅ Mensagem enviada para ${normalizedPhone}:`, sendResponse.data);
         await pool.query(
           'UPDATE campaign_status SET status = $1, message_id = $2, error_message = NULL WHERE campaign_id = $3 AND contact_id = $4',
-          ['sent', messageResponse.data.id || null, campaignId, contact.id || contact.phone]
+          ['sent', sendResponse.data.messages?.[0]?.id || null, campaignId, contact.id || contact.phone]
         );
-        console.log(`[Campanha ${campaignId}] ✅ Template ${campaign.template_name} enviado para ${normalizedPhone} (Conversa: ${conversation.id})`);
-        
       } catch (err) {
+        const errorMsg = typeof err.response?.data === 'object' ? JSON.stringify(err.response.data) : (err.response?.data?.error?.message || err.message);
+        console.error(`[Campanha ${campaignId}] ❌ Erro ao enviar mensagem para ${normalizedPhone}:`, errorMsg);
         await pool.query(
           'UPDATE campaign_status SET status = $1, error_message = $2 WHERE campaign_id = $3 AND contact_id = $4',
-          ['failed', err.message, campaignId, contact.id || contact.phone]
+          ['failed', errorMsg, campaignId, contact.id || contact.phone]
         );
-        console.error(`[Campanha ${campaignId}] ❌ Falha geral para ${normalizedPhone}:`, err);
       }
-      // Rate limit: 1 mensagem por segundo
-      await new Promise(r => setTimeout(r, 1000));
     }
-    // Finaliza campanha
+    
+    // Atualizar status geral da campanha após processar todos os contatos
+    console.log(`[Campanha ${campaignId}] 📊 Processamento concluído. Atualizando status da campanha...`);
     await pool.query('UPDATE campaigns SET status = $1, updated_at = NOW() WHERE id = $2', ['completed', campaignId]);
-    console.log(`[Campanha ${campaignId}] Envio concluído.`);
+    console.log(`[Campanha ${campaignId}] ✅ Status da campanha atualizado para 'completed'`);
+    
   } catch (error) {
-    await pool.query('UPDATE campaigns SET status = $1, updated_at = NOW() WHERE id = $2', ['error', campaignId]);
-    console.error(`[Campanha ${campaignId}] Erro geral:`, error);
+    console.error(`[Campanha ${campaignId}] ❌ Erro ao processar campanha:`, error);
+    
+    // Atualizar status da campanha para 'failed' em caso de erro
+    try {
+      await pool.query('UPDATE campaigns SET status = $1, updated_at = NOW() WHERE id = $2', ['failed', campaignId]);
+      console.log(`[Campanha ${campaignId}] ❌ Status da campanha atualizado para 'failed'`);
+    } catch (updateError) {
+      console.error(`[Campanha ${campaignId}] ❌ Erro ao atualizar status da campanha para 'failed':`, updateError);
+    }
   }
 }
 

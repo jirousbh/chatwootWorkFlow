@@ -197,7 +197,7 @@ class ChatwootWorkflowsApp {
 
     async loadWorkflowTemplates() {
         try {
-            this.workflowTemplates = await this.apiRequest('/api/workflow-templates');
+            this.workflowTemplates = await this.apiRequest('/api/whatsapp/templates');
             this.populateTemplateSelect();
         } catch (error) {
             console.error('Erro ao carregar templates:', error);
@@ -835,71 +835,38 @@ class ChatwootWorkflowsApp {
         }
     }
     
-    // Função para mostrar indicador de templates específicos da caixa
-showInboxTemplateIndicator(inboxName, templateCount) {
-    // Remover indicador anterior se existir
-    const existingIndicator = document.getElementById('inboxTemplateIndicator');
-    if (existingIndicator) {
-        existingIndicator.remove();
-    }
     
-    // Criar novo indicador
-    const indicator = document.createElement('div');
-    indicator.id = 'inboxTemplateIndicator';
-    indicator.className = 'alert alert-info alert-dismissible fade show mt-2';
-    indicator.innerHTML = `
-        <div class="d-flex align-items-center">
-            <i class="fas fa-info-circle me-2"></i>
-            <div>
-                <strong>🚀 Templates da API Oficial</strong><br>
-                <small>Carregados ${templateCount} templates da caixa de entrada: <strong>${inboxName}</strong></small>
-            </div>
-            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-        </div>
-    `;
-    
-    // Adicionar após o select de templates
-    const selectContainer = document.getElementById('modeloMensagem').parentElement;
-    selectContainer.appendChild(indicator);
-    
-    // Auto-remover após 8 segundos
-    setTimeout(() => {
-        if (indicator && indicator.parentNode) {
-            indicator.remove();
-        }
-    }, 8000);
-}
 
-// Função para mostrar confirmação detalhada
-showWorkflowSavedConfirmation(workflowName, accountId, inboxId) {
-        const confirmationHtml = `
-            <div class="alert alert-success alert-dismissible fade show" role="alert">
-                <div class="d-flex align-items-center">
-                    <i class="fas fa-check-circle fa-2x text-success me-3"></i>
-                    <div>
-                        <h6 class="alert-heading mb-1">✅ Workflow Salvo com Sucesso!</h6>
-                        <p class="mb-1"><strong>Nome:</strong> ${workflowName}</p>
-                        <p class="mb-1"><strong>Conta:</strong> ${accountId} | <strong>Inbox:</strong> ${inboxId}</p>
-                        <small class="text-muted">Salvo em: ${new Date().toLocaleString()}</small>
+    // Função para mostrar confirmação detalhada
+    showWorkflowSavedConfirmation(workflowName, accountId, inboxId) {
+            const confirmationHtml = `
+                <div class="alert alert-success alert-dismissible fade show" role="alert">
+                    <div class="d-flex align-items-center">
+                        <i class="fas fa-check-circle fa-2x text-success me-3"></i>
+                        <div>
+                            <h6 class="alert-heading mb-1">✅ Workflow Salvo com Sucesso!</h6>
+                            <p class="mb-1"><strong>Nome:</strong> ${workflowName}</p>
+                            <p class="mb-1"><strong>Conta:</strong> ${accountId} | <strong>Inbox:</strong> ${inboxId}</p>
+                            <small class="text-muted">Salvo em: ${new Date().toLocaleString()}</small>
+                        </div>
                     </div>
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
                 </div>
-                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-            </div>
-        `;
-        
-        // Adicionar no topo da página
-        const container = document.querySelector('.container-fluid');
-        const existingAlert = container.querySelector('.alert-success');
-        if (existingAlert) existingAlert.remove();
-        
-        container.insertAdjacentHTML('afterbegin', confirmationHtml);
-        
-        // Auto-remover após 10 segundos
-        setTimeout(() => {
-            const alert = container.querySelector('.alert-success');
-            if (alert) alert.remove();
-        }, 10000);
-    }
+            `;
+            
+            // Adicionar no topo da página
+            const container = document.querySelector('.container-fluid');
+            const existingAlert = container.querySelector('.alert-success');
+            if (existingAlert) existingAlert.remove();
+            
+            container.insertAdjacentHTML('afterbegin', confirmationHtml);
+            
+            // Auto-remover após 10 segundos
+            setTimeout(() => {
+                const alert = container.querySelector('.alert-success');
+                if (alert) alert.remove();
+            }, 10000);
+        }
 
     async deleteWorkflow(accountId, inboxId) {
         if (!confirm('Tem certeza que deseja desativar este fluxo?')) {
@@ -982,7 +949,7 @@ showWorkflowSavedConfirmation(workflowName, accountId, inboxId) {
             errorDiv.textContent = 'Erro de conexão';
             errorDiv.classList.remove('d-none');
         }
-}
+    }
 
     // Funções simples para gerenciar divs
     showDiv(divId) {
@@ -1196,7 +1163,19 @@ function initCampanhasEventListeners() {
                     const dataEnvio = formData.get('dataEnvio');
                     const horaEnvio = formData.get('horaEnvio');
                     if (dataEnvio && horaEnvio) {
-                        campanhaData.scheduled_at = `${dataEnvio}T${horaEnvio}:00`;
+                        // Criar timestamp no fuso horário do Brasil (UTC-3)
+                        const localDateTime = `${dataEnvio}T${horaEnvio}:00`;
+                        const brazilDate = new Date(localDateTime);
+                        
+                        // Ajustar para fuso horário do Brasil (São Paulo)
+                        const utcTime = brazilDate.getTime() + (brazilDate.getTimezoneOffset() * 60000);
+                        const brazilTimeOffset = -3 * 60 * 60 * 1000; // UTC-3 em millisegundos
+                        const brazilTime = new Date(utcTime + brazilTimeOffset);
+                        
+                        // Formato ISO com fuso horário do Brasil
+                        campanhaData.scheduled_at = brazilTime.toISOString().replace('Z', '-03:00');
+                        
+                        console.log(`Agendamento criado: ${localDateTime} (local) -> ${campanhaData.scheduled_at} (Brasil)`);
                     }
                 }
                 
@@ -1299,7 +1278,7 @@ async function loadModelos() {
         console.log(`📋 Usando Account ID: ${accountId}, Inbox ID: ${inboxId}`);
         
         // Construir URL com parâmetros se disponíveis
-        let url = '/api/chatwoot/templates';
+        let url = '/api/whatsapp/templates';
         const params = new URLSearchParams();
         if (accountId) params.append('accountId', accountId);
         if (inboxId) params.append('inboxId', inboxId);
@@ -1320,77 +1299,34 @@ async function loadModelos() {
         select.innerHTML = '<option value="">Selecione um modelo</option>';
         
         if (Array.isArray(templates) && templates.length > 0) {
-            // Agrupar por fonte
-            const officialApiTemplates = templates.filter(t => t.source?.includes('whatsapp_api'));
-            const chatwootTemplates = templates.filter(t => !t.source?.includes('whatsapp_api'));
-            
-            // Verificar se templates são específicos de uma caixa
+            // Mostrar templates da API oficial
             const inboxSpecificTemplates = templates.filter(t => t.inboxId);
-            
-            // Mostrar templates da API oficial primeiro
-            if (officialApiTemplates.length > 0) {
-                let label = `🚀 API Oficial WhatsApp (${officialApiTemplates.length})`;
-                
-                // Se há templates específicos de caixa, mostrar nome da caixa
-                if (inboxSpecificTemplates.length > 0) {
-                    const inboxName = inboxSpecificTemplates[0].inboxName;
-                    label = `🚀 ${inboxName} - API Oficial (${officialApiTemplates.length})`;
-                }
-                
-                const optgroup = document.createElement('optgroup');
-                optgroup.label = label;
-                
-                officialApiTemplates.forEach(template => {
-                    const option = document.createElement('option');
-                    option.value = template.name;
-                    option.textContent = template.displayName || template.name;
-                    const sourceText = template.inboxName ? `Caixa: ${template.inboxName}` : 'API Oficial';
-                    option.title = `Fonte: ${sourceText} | Status: ${template.status} | Categoria: ${template.category} | Idioma: ${template.language}`;
-                    optgroup.appendChild(option);
-                });
-                
-                select.appendChild(optgroup);
+            let label = `🚀 API Oficial WhatsApp (${templates.length})`;
+            if (inboxSpecificTemplates.length > 0) {
+                const inboxName = inboxSpecificTemplates[0].inboxName;
+                label = `🚀 ${inboxName} - API Oficial (${templates.length})`;
             }
-            
-            // Mostrar templates do Chatwoot depois
-            if (chatwootTemplates.length > 0) {
-                const optgroup = document.createElement('optgroup');
-                optgroup.label = `📱 Chatwoot (${chatwootTemplates.length})`;
-                
-                chatwootTemplates.forEach(template => {
-                    const option = document.createElement('option');
-                    option.value = template.name;
-                    option.textContent = template.displayName || template.name;
-                    option.title = `Fonte: Chatwoot | Status: ${template.status} | Categoria: ${template.category} | Idioma: ${template.language}`;
-                    optgroup.appendChild(option);
-                });
-                
-                select.appendChild(optgroup);
-            }
-            
-            // Se não há grupos, mostrar normalmente
-            if (officialApiTemplates.length === 0 && chatwootTemplates.length === 0) {
-                templates.forEach(template => {
-                    const option = document.createElement('option');
-                    option.value = template.name;
-                    option.textContent = template.displayName || template.name;
-                    option.title = `Status: ${template.status} | Categoria: ${template.category} | Idioma: ${template.language}`;
-                    select.appendChild(option);
-                });
-            }
-            
-            console.log(`✅ ${templates.length} templates carregados com sucesso`);
-            console.log(`📊 API Oficial: ${officialApiTemplates.length}, Chatwoot: ${chatwootTemplates.length}`);
-            
+            const optgroup = document.createElement('optgroup');
+            optgroup.label = label;
+            templates.forEach(template => {
+                const option = document.createElement('option');
+                option.value = template.name;
+                option.textContent = template.displayName || template.name;
+                const sourceText = template.inboxName ? `Caixa: ${template.inboxName}` : 'API Oficial';
+                option.title = `Fonte: ${sourceText} | Status: ${template.status} | Categoria: ${template.category} | Idioma: ${template.language}`;
+                optgroup.appendChild(option);
+            });
+            select.appendChild(optgroup);
             // Mostrar indicador se templates são específicos de uma caixa
             if (inboxSpecificTemplates.length > 0) {
-                showInboxTemplateIndicator(inboxSpecificTemplates[0].inboxName, officialApiTemplates.length);
+                showInboxTemplateIndicator(inboxSpecificTemplates[0].inboxName, templates.length);
             }
+            console.log(`✅ ${templates.length} templates carregados com sucesso`);
         } else {
             console.warn('⚠️ Nenhum template encontrado');
             const option = document.createElement('option');
             option.value = '';
-            option.textContent = 'Nenhum template disponível - Clique em Sincronizar';
+            option.textContent = 'Nenhum template disponível - Verifique as credenciais da API oficial e clique em Sincronizar';
             option.disabled = true;
             select.appendChild(option);
         }
@@ -1399,93 +1335,50 @@ async function loadModelos() {
         
         // Mostrar erro no select
         const select = document.getElementById('modeloMensagem');
-        select.innerHTML = '<option value="">Erro ao carregar templates - Clique em Sincronizar</option>';
+        select.innerHTML = '<option value="">Erro ao carregar templates - Verifique as credenciais da API oficial e clique em Sincronizar</option>';
         
         // Mostrar alerta se a função showAlert existir
         if (typeof window.app?.showAlert === 'function') {
-            window.app.showAlert('Erro ao carregar modelos de mensagem. Tente sincronizar os templates.', 'danger');
+            window.app.showAlert('Erro ao carregar modelos de mensagem. Verifique as credenciais da API oficial e tente sincronizar os templates.', 'danger');
         }
     }
 }
 
-// Sincronizar templates do WhatsApp
-async function syncTemplates() {
-    const syncButton = document.getElementById('syncTemplatesBtn');
-    const originalText = syncButton.innerHTML;
+
+// Função para mostrar indicador de templates específicos da caixa
+function showInboxTemplateIndicator(inboxName, templateCount) {
+    // Remover indicador anterior se existir
+    const existingIndicator = document.getElementById('inboxTemplateIndicator');
+    if (existingIndicator) {
+        existingIndicator.remove();
+    }
     
-    try {
-        // Atualizar botão para mostrar carregamento
-        syncButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Sincronizando...';
-        syncButton.disabled = true;
-        
-        console.log('🔄 Iniciando sincronização de templates...');
-        
-        // Obter conta e caixa selecionadas para sincronização específica
-        const accountId = selectedAccountId || document.getElementById('accountSelect')?.value;
-        const inboxId = selectedInboxId || document.getElementById('inboxSelect')?.value;
-        
-        let url = '/api/chatwoot/templates/sync';
-        const params = new URLSearchParams();
-        if (accountId) params.append('accountId', accountId);
-        if (inboxId) params.append('inboxId', inboxId);
-        if (params.toString()) url += `?${params.toString()}`;
-        
-        console.log(`🔄 Sincronizando para Account: ${accountId}, Inbox: ${inboxId}`);
-        
-        const response = await fetch(url, {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${getAuthToken()}` }
-        });
-        
-        const result = await response.json();
-        
-        if (result.success) {
-            console.log('✅ Sincronização bem-sucedida:', result);
-            
-            // Verificar se foi via API oficial
-            let alertMessage = result.message;
-            let alertType = 'success';
-            
-            if (result.source === 'whatsapp_official_api') {
-                alertMessage = `🚀 ${result.message} (API Oficial do WhatsApp)`;
-                alertType = 'success';
-            } else if (result.results?.some(r => r.method === 'whatsapp_official_api' && r.status === 'failed')) {
-                alertMessage = `⚠️ ${result.message} (Chatwoot - API oficial falhou)`;
-                alertType = 'warning';
-            }
-            
-            if (typeof window.app?.showAlert === 'function') {
-                window.app.showAlert(alertMessage, alertType);
-            }
-            
-            // Aguardar um pouco e recarregar templates
-            setTimeout(() => {
-                loadModelos();
-            }, 1500);
-            
-        } else {
-            console.warn('⚠️ Sincronização parcial:', result);
-            
-            if (typeof window.app?.showAlert === 'function') {
-                window.app.showAlert(result.message || 'Falha na sincronização', 'warning');
-            }
+    // Criar novo indicador
+    const indicator = document.createElement('div');
+    indicator.id = 'inboxTemplateIndicator';
+    indicator.className = 'alert alert-info alert-dismissible fade show mt-2';
+    indicator.innerHTML = `
+        <div class="d-flex align-items-center">
+            <i class="fas fa-info-circle me-2"></i>
+            <div>
+                <strong>🚀 Templates da API Oficial</strong><br>
+                <small>Carregados ${templateCount} templates da caixa de entrada: <strong>${inboxName}</strong></small>
+            </div>
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+    `;
+    
+    // Adicionar após o select de templates
+    const selectContainer = document.getElementById('modeloMensagem').parentElement;
+    selectContainer.appendChild(indicator);
+    
+    // Auto-remover após 8 segundos
+    setTimeout(() => {
+        if (indicator && indicator.parentNode) {
+            indicator.remove();
         }
-        
-    } catch (error) {
-        console.error('❌ Erro na sincronização:', error);
-        
-        if (typeof window.app?.showAlert === 'function') {
-            window.app.showAlert('Erro ao sincronizar templates. Verifique a conexão.', 'danger');
-        }
-    } finally {
-        // Restaurar botão
-        setTimeout(() => {
-            syncButton.innerHTML = originalText;
-            syncButton.disabled = false;
-        }, 1000);
-    }
+    }, 8000);
 }
-
 // Carregar tags disponíveis via API para autocomplete
 async function loadTags() {
     try {
@@ -1543,9 +1436,14 @@ function showCampanhasList(campanhas) {
                 <div class="col-12">
                     <div class="d-flex justify-content-between align-items-center mb-4">
                         <h3>Campanhas WhatsApp</h3>
-                        <button class="btn btn-secondary" onclick="fecharListaCampanhas()">
-                            <i class="fas fa-times"></i> Fechar
-                        </button>
+                        <div>
+                            <button class="btn btn-warning me-2" onclick="corrigirCampanhasPresas()" title="Corrigir campanhas presas no status 'running'">
+                                <i class="fas fa-wrench"></i> Corrigir Presas
+                            </button>
+                            <button class="btn btn-secondary" onclick="fecharListaCampanhas()">
+                                <i class="fas fa-times"></i> Fechar
+                            </button>
+                        </div>
                     </div>
                     <div class="row">
                         ${campanhas.map(campanha => {
@@ -1602,7 +1500,7 @@ function showCampanhasList(campanhas) {
                                                 <strong>Tipo:</strong> ${campanha.type}<br>
                                                 <strong>Template:</strong> ${campanha.template_name}<br>
                                                 <strong>Criada:</strong> ${new Date(campanha.created_at).toLocaleString()}
-                                                ${campanha.scheduled_at ? `<br><strong>Agendada:</strong> ${new Date(campanha.scheduled_at).toLocaleString()}` : ''}
+                                                ${campanha.scheduled_at ? `<br><strong>Agendada:</strong> ${new Date(campanha.scheduled_at).toLocaleString('pt-BR', {timeZone: 'America/Sao_Paulo'})}` : ''}
                                             </p>
                                             
                                             <div class="d-flex gap-2 flex-wrap">
@@ -1623,6 +1521,9 @@ function showCampanhasList(campanhas) {
                                                         <i class="fas fa-exclamation-triangle"></i> Ver Erros
                                                     </button>
                                                 ` : ''}
+                                                <button class="btn btn-sm btn-danger" onclick="deleteCampanha(${campanha.id})">
+                                                    <i class="fas fa-trash"></i> Excluir
+                                                </button>
                                             </div>
                                         </div>
                                     </div>
@@ -2875,5 +2776,66 @@ function showAlert(message, type = 'info') {
         window.app.showAlert(message, type);
     } else {
         console.log(`[${type.toUpperCase()}] ${message}`);
+    }
+}
+
+// ... após a definição da função showInboxTemplateIndicator ...
+window.showInboxTemplateIndicator = showInboxTemplateIndicator;
+// ...
+
+// Função para excluir campanha e todos os logs relacionados
+async function deleteCampanha(campanhaId) {
+    if (!confirm('Tem certeza que deseja excluir esta campanha e todos os registros relacionados?')) return;
+    try {
+        const response = await fetch(`/api/campaigns/${campanhaId}`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${getAuthToken()}` }
+        });
+        const result = await response.json();
+        if (result.success) {
+            window.app.showAlert('Campanha excluída com sucesso!', 'success');
+            loadCampanhasList();
+        } else {
+            window.app.showAlert('Erro ao excluir campanha: ' + (result.error || 'Erro desconhecido'), 'danger');
+        }
+    } catch (error) {
+        console.error('Erro ao excluir campanha:', error);
+        window.app.showAlert('Erro ao excluir campanha', 'danger');
+    }
+}
+
+// Função para corrigir campanhas presas no status "running"
+async function corrigirCampanhasPresas() {
+    if (!confirm('Verificar e corrigir campanhas que estão presas no status "running"?\n\nEsta ação irá:\n- Marcar como "completed" campanhas que já terminaram\n- Marcar como "failed" campanhas com muitos erros\n- Tentar reprocessar campanhas com contatos pendentes')) return;
+    
+    try {
+        window.app.showAlert('Verificando campanhas presas...', 'info');
+        
+        const response = await fetch('/api/campaigns/fix-stuck', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${getAuthToken()}` }
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            if (result.fixed === 0) {
+                window.app.showAlert('✅ Nenhuma campanha presa encontrada!', 'success');
+            } else {
+                let message = `✅ ${result.fixed} campanha(s) corrigida(s):\n\n`;
+                result.campaigns.forEach(campaign => {
+                    message += `• ${campaign.name} → ${campaign.status} (${campaign.reason})\n`;
+                });
+                window.app.showAlert(message, 'success');
+                
+                // Recarregar lista após correção
+                setTimeout(() => loadCampanhasList(), 1000);
+            }
+        } else {
+            window.app.showAlert('Erro ao corrigir campanhas: ' + (result.error || 'Erro desconhecido'), 'danger');
+        }
+    } catch (error) {
+        console.error('Erro ao corrigir campanhas presas:', error);
+        window.app.showAlert('Erro ao corrigir campanhas presas', 'danger');
     }
 }
