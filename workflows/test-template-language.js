@@ -160,6 +160,17 @@ async function testTemplateLanguage() {
 
     // 7. Limpeza - remover campanhas de teste
     console.log('\n7. Limpando campanhas de teste...');
+    // Primeiro, obter os IDs das campanhas de teste
+    const testCampaigns = await pool.query("SELECT id FROM campaigns WHERE name LIKE 'Teste Language%'");
+    
+    for (const campaign of testCampaigns.rows) {
+      // Excluir registros relacionados primeiro (devido às foreign keys)
+      await pool.query('DELETE FROM campaign_executions WHERE campaign_id = $1', [campaign.id]);
+      await pool.query('DELETE FROM campaign_status WHERE campaign_id = $1', [campaign.id]);
+      await pool.query('DELETE FROM campaign_contacts WHERE campaign_id = $1', [campaign.id]);
+    }
+    
+    // Agora excluir as campanhas
     await pool.query("DELETE FROM campaigns WHERE name LIKE 'Teste Language%'");
     console.log('✅ Campanhas de teste removidas');
 

@@ -10,9 +10,10 @@ O sistema de workflow agora suporta as seguintes funcionalidades de atribuição
 - **Formato**: `"assign_agent": 123` (onde 123 é o ID do agente)
 
 ### 2. Atribuição de Time (`assign_team`)
-- **Descrição**: Atribui a conversa a um time específico do Chatwoot
+- **Descrição**: Atribui a conversa a um time específico do Chatwoot (sem atribuir a agente específico)
 - **Uso**: Pode ser aplicado em blocos ou botões
 - **Formato**: `"assign_team": 456` (onde 456 é o ID do time)
+- **Comportamento**: A conversa fica disponível para qualquer membro do time, sem ser atribuída a um agente específico
 
 ### 3. Etiquetas na Conversa (`assign_labels`)
 - **Descrição**: Adiciona etiquetas/labels à conversa no Chatwoot
@@ -193,6 +194,20 @@ Se uma conversa não for encontrada, o sistema irá:
 ⚠️ Conversa 456 não existe, pulando adição de etiquetas
 ```
 
+## Funções de Atribuição de Time
+
+### `assignConversationToTeam(conversationId, teamId)`
+- **Comportamento**: Atribui a conversa ao time e remove automaticamente a atribuição de agente específico
+- **Processo**: 
+  1. Atribui ao time
+  2. Define `assignee_id` como `null` para remover atribuição de agente
+- **Resultado**: Conversa fica disponível para qualquer membro do time
+
+### `assignConversationToTeamOnly(conversationId, teamId)`
+- **Comportamento**: Atribui ao time e remove agente em uma única operação
+- **Processo**: Envia `team_id` e `assignee_id: null` simultaneamente
+- **Resultado**: Conversa fica disponível para qualquer membro do time
+
 ## Notas Importantes
 
 1. **IDs Válidos**: Certifique-se de usar IDs válidos de agentes e times do seu Chatwoot
@@ -205,6 +220,7 @@ Se uma conversa não for encontrada, o sistema irá:
    - Etiquetas na conversa
    - Etiquetas no contato
 5. **Cache de Performance**: Labels são cacheados por 5 minutos para reduzir chamadas à API
+6. **Atribuição de Time**: A função `assign_team` agora garante que a conversa não seja atribuída a um agente específico
 
 ## Casos de Uso Recomendados
 

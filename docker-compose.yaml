@@ -65,6 +65,7 @@ services:
       - POSTGRES_USER=postgres
       # Please provide your own password.
       - POSTGRES_PASSWORD=invoAI@76825
+      - TZ=America/Sao_Paulo
 
   redis:
     image: redis:alpine
@@ -86,6 +87,7 @@ services:
     environment:
       - CHATWOOT_BASE_URL=https://crm.inovaianalytics.com.br
       - PORT=3001
+      - TZ=America/Sao_Paulo
     volumes:
       - ./workflows/chatbot-workflow-system.js:/app/chatbot-workflow-system.js
       - ./data/workflows-logs:/app/logs

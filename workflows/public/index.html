@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Chatwoot Workflows - Gerenciador de Fluxos</title>
+    <title>InovAI Analytics - Gerenciador de Campanhas</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
     <link href="styles.css" rel="stylesheet">
@@ -14,7 +14,7 @@
         <div class="card shadow-lg" style="width: 400px;">
             <div class="card-header text-center bg-primary text-white">
                 <h5 class="mb-0">
-                    <i class="fas fa-lock me-2"></i>Login - Chatwoot Workflows
+                    <i class="fas fa-lock me-2"></i>Login - InovAI Analytics - Gerenciador de Campanhas WhatsApp
                 </h5>
             </div>
             <div class="card-body">
@@ -56,85 +56,7 @@
         </form>
     </div>
 
-    <!-- Campanhas Div -->
-    <div id="campanhasDiv" class="d-none position-fixed top-0 start-0 w-100 h-100 bg-white p-4 overflow-auto" style="z-index: 9999;">
-        <div class="container">
-            <div class="d-flex justify-content-between align-items-center mb-4">
-                <h2>Criar Campanha WhatsApp</h2>
-                <button class="btn btn-secondary" id="closeCampanha">
-                    <i class="fas fa-times"></i> Fechar
-                </button>
-            </div>
-            <form id="formCampanha">
-                <div class="row">
-                    <div class="col-md-6">
-                        <div class="mb-3">
-                            <label for="campanhaNome" class="form-label">Nome da Campanha</label>
-                            <input type="text" class="form-control" id="campanhaNome" name="campanhaNome" required>
-                        </div>
 
-                        <div class="mb-3">
-                            <label class="form-label">Método de Envio</label>
-                            <div class="d-flex gap-3">
-                                <div class="form-check">
-                                    <input type="radio" class="form-check-input" id="metodoTag" name="metodoEnvio" value="tag" checked>
-                                    <label class="form-check-label" for="metodoTag">Tag</label>
-                                </div>
-                                <div class="form-check">
-                                    <input type="radio" class="form-check-input" id="metodoLista" name="metodoEnvio" value="csv">
-                                    <label class="form-check-label" for="metodoLista">Lista (CSV)</label>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div id="detalhesTag" class="mb-3">
-                            <label for="tagNome" class="form-label">Nome da Tag</label>
-                            <input type="text" class="form-control" id="tagNome" name="tagNome" placeholder="Digite o nome da tag">
-                        </div>
-                        
-                        <div id="detalhesCSV" class="mb-3" style="display:none;">
-                            <label for="csvContatos" class="form-label">Arquivo CSV com Contatos</label>
-                            <input type="file" class="form-control" id="csvContatos" name="csvContatos" accept=".csv">
-                        </div>
-
-                        <div class="mb-3">
-                            <label for="modeloMensagem" class="form-label">Modelo de Mensagem</label>
-                            <div class="d-flex gap-2">
-                                <select id="modeloMensagem" name="modeloMensagem" required class="form-select">
-                                    <option value="">Selecione um modelo</option>
-                                </select>
-                                <button type="button" id="syncTemplatesBtn" class="btn btn-outline-primary" onclick="loadModelos()" title="Sincronizar templates via API oficial do WhatsApp">
-                                    <i class="fas fa-sync-alt"></i>
-                                    <small class="d-none d-md-inline ms-1">API</small>
-                                </button>
-                            </div>
-                        </div>
-
-                        <div class="mb-3">
-                            <div class="form-check">
-                                <input type="checkbox" class="form-check-input" id="agendarEnvio">
-                                <label class="form-check-label" for="agendarEnvio">Agendar envio</label>
-                            </div>
-                            <div id="agendamentoCampos" style="display:none;" class="mt-2">
-                                <div class="row">
-                                    <div class="col-md-6">
-                                        <label for="dataEnvio" class="form-label">Data de envio</label>
-                                        <input type="date" class="form-control" id="dataEnvio" name="dataEnvio">
-                                    </div>
-                                    <div class="col-md-6">
-                                        <label for="horaEnvio" class="form-label">Hora de envio</label>
-                                        <input type="time" class="form-control" id="horaEnvio" name="horaEnvio">
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <button type="submit" class="btn btn-success" id="btnEnviarCampanha">Enviar Agora</button>
-                    </div>
-                </div>
-            </form>
-        </div>
-    </div>
 
     <!-- Media Manager Div -->
     <div id="mediaManagerDiv" class="d-none position-fixed top-0 start-0 w-100 h-100 bg-white p-4 overflow-auto" style="z-index: 9999;">
@@ -210,7 +132,7 @@
         <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
             <div class="container-fluid">
                 <a class="navbar-brand" href="#">
-                    <i class="fas fa-robot me-2"></i>Chatwoot Workflows
+                    <i class="fas fa-robot me-2"></i>InovAI Analytics
                 </a>
                 <div class="navbar-nav ms-auto">
                     <span class="navbar-text me-3 dropdown">
@@ -220,8 +142,10 @@
                         </a>
                         <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="userDropdown">
                             <li><a class="dropdown-item text-dark" href="#" id="menuListarCampanhas"><i class="fas fa-bullhorn me-2"></i>Listar Campanhas</a></li>
+                            <li id="menuListarTodasCampanhasItem" class="d-none"><a class="dropdown-item text-dark" href="#" onclick="loadCampanhasList()"><i class="fas fa-list-alt me-2"></i>Listar Todas as Campanhas</a></li>
                             <li><hr class="dropdown-divider"></li>
                             <li><a class="dropdown-item text-dark" href="#" onclick="showChangePasswordDiv()"><i class="fas fa-key me-2"></i>Mudar senha</a></li>
+                            <li id="menuGerenciarUsuariosItem" class="d-none"><a class="dropdown-item text-dark" href="#" onclick="window.app.showUserManagement()"><i class="fas fa-users me-2"></i>Gerenciar Usuários</a></li>
                             <li><hr class="dropdown-divider"></li>
                             <li><a class="dropdown-item text-danger" href="#" onclick="logout()"><i class="fas fa-sign-out-alt me-2"></i>Sair</a></li>
                         </ul>
@@ -235,7 +159,8 @@
             <div class="row">
                 <!-- Sidebar -->
                 <div class="col-md-3">
-                    <div class="card">
+                    <!-- Card de Configuração (Admin apenas) -->
+                    <div class="card" id="configurationCard">
                         <div class="card-header">
                             <h6 class="mb-0">
                                 <i class="fas fa-cogs me-2"></i>Configuração
@@ -257,18 +182,23 @@
                             <button class="btn btn-success w-100" onclick="showWorkflowEditor()">
                                 <i class="fas fa-edit me-2"></i>Configurar Fluxo
                             </button>
-                            <!-- Botão Criar Campanha -->
+                            <!-- Botão Criar Campanha (Admin) -->
                             <button id="btnCriarCampanha" class="btn btn-primary w-100 mt-2">
                                 <i class="fas fa-bullhorn me-2"></i>Criar Campanha
                             </button>
-                            <!-- Botão Gerenciar Mídia -->
+                            <!-- Botão Gerenciar Mídia (Admin apenas) -->
                             <button id="btnGerenciarMidia" class="btn btn-info w-100 mt-2" onclick="showMediaManager()">
                                 <i class="fas fa-photo-video me-2"></i>Gerenciar Mídia
+                            </button>
+                            <!-- Botão Listar Todas as Campanhas (Admin apenas) -->
+                            <button id="btnListarTodasCampanhas" class="btn btn-warning w-100 mt-2" onclick="loadCampanhasList()">
+                                <i class="fas fa-list-alt me-2"></i>Listar Todas as Campanhas
                             </button>
                         </div>
                     </div>
 
-                    <div class="card mt-3">
+                    <!-- Card de Fluxos Ativos (Admin apenas) -->
+                    <div class="card mt-3" id="activeWorkflowsCard">
                         <div class="card-header">
                             <h6 class="mb-0">
                                 <i class="fas fa-list me-2"></i>Fluxos Ativos
@@ -278,11 +208,42 @@
                             <div id="activeWorkflows"></div>
                         </div>
                     </div>
+
+                    <!-- Card de Configuração para Usuários Comuns -->
+                    <div class="card" id="userConfigurationCard" style="display: none;">
+                        <div class="card-header">
+                            <h6 class="mb-0">
+                                <i class="fas fa-cogs me-2"></i>Configuração
+                            </h6>
+                        </div>
+                        <div class="card-body">
+                            <div class="mb-3">
+                                <label for="userAccountSelect" class="form-label">Conta</label>
+                                <select class="form-select" id="userAccountSelect" onchange="window.app.onAccountChange()">
+                                    <option value="">Selecione uma conta...</option>
+                                </select>
+                            </div>
+                            <div class="mb-3">
+                                <label for="userInboxSelect" class="form-label">Caixa de Entrada</label>
+                                <select class="form-select" id="userInboxSelect">
+                                    <option value="">Selecione uma caixa de entrada...</option>
+                                </select>
+                            </div>
+                            <!-- Botão Criar Campanha -->
+                            <button id="btnCriarCampanhaUser" class="btn btn-primary w-100">
+                                <i class="fas fa-bullhorn me-2"></i>Criar Campanha
+                            </button>
+                            <button class="btn btn-outline-primary w-100 mt-2" onclick="loadCampanhasList()">
+                                <i class="fas fa-list me-2"></i>Minhas Campanhas
+                            </button>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- Main Area -->
                 <div class="col-md-9">
-                    <div class="card">
+                    <!-- Área para Admins: Editor de Fluxos -->
+                    <div class="card" id="adminMainArea">
                         <div class="card-header">
                             <h5 class="mb-0">
                                 <i class="fas fa-robot me-2"></i>Editor de Fluxos
@@ -343,6 +304,294 @@
                             </div>
                         </div>
                     </div>
+
+                    <!-- Área para Usuários: Dashboard -->
+                    <div class="card" id="userMainArea" style="display: none;">
+                        <div class="card-header bg-primary text-white">
+                            <h5 class="mb-0">
+                                <i class="fas fa-chart-line me-2"></i>Dashboard de Campanhas
+                            </h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="row">
+                                <div class="col-md-12">
+                                    <div class="welcome-section mb-4">
+                                        <h4 class="text-primary mb-3">
+                                            <i class="fas fa-hand-wave me-2"></i>
+                                            Bem-vindo ao Sistema de Campanhas WhatsApp!
+                                        </h4>
+                                        <p class="text-muted">
+                                            Gerencie suas campanhas de WhatsApp de forma simples e eficiente. 
+                                            Crie, agende e monitore o desempenho de suas campanhas.
+                                        </p>
+                                    </div>
+                                    
+                                    <div class="row" id="userDashboardStats">
+                                        <!-- Estatísticas serão carregadas via JavaScript -->
+                                    </div>
+                                    
+                                    <div class="row mt-4">
+                                        <div class="col-md-6">
+                                            <div class="card border-0 shadow-sm">
+                                                <div class="card-body text-center">
+                                                    <i class="fas fa-plus-circle fa-3x text-success mb-3"></i>
+                                                    <h5>Nova Campanha</h5>
+                                                    <p class="text-muted">Crie uma nova campanha de WhatsApp para seus contatos</p>
+                                                    <button class="btn btn-success" id="dashboardCreateCampaign">
+                                                        <i class="fas fa-plus me-2"></i>Criar Campanha
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div class="card border-0 shadow-sm">
+                                                <div class="card-body text-center">
+                                                    <i class="fas fa-list fa-3x text-primary mb-3"></i>
+                                                    <h5>Minhas Campanhas</h5>
+                                                    <p class="text-muted">Visualize e gerencie todas as suas campanhas existentes</p>
+                                                    <button class="btn btn-primary" onclick="loadCampanhasList()">
+                                                        <i class="fas fa-list me-2"></i>Ver Campanhas
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Área do Formulário de Campanhas -->
+                    <div class="card" id="campaignFormArea" style="display: none;">
+                        <div class="card-header">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <h5 class="mb-0">
+                                    <i class="fas fa-bullhorn me-2"></i>Criar Campanha WhatsApp
+                                </h5>
+                                <button class="btn btn-secondary btn-sm" id="closeCampanha">
+                                    <i class="fas fa-arrow-left me-2"></i>Voltar ao Dashboard
+                                </button>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <!-- Informações da Conta e Caixa Selecionadas -->
+                            <div id="selectedAccountInfo" class="mb-4">
+                                <div class="card">
+                                    <div class="card-header">
+                                        <h6 class="mb-0">
+                                            <i class="fas fa-info-circle me-2"></i>Configuração Selecionada
+                                        </h6>
+                                    </div>
+                                    <div class="card-body">
+                                        <div class="row">
+                                            <div class="col-md-6">
+                                                <label class="form-label">
+                                                    <i class="fas fa-building me-1"></i>Conta Chatwoot
+                                                </label>
+                                                <div class="form-control-plaintext" id="selectedAccountDisplay">
+                                                    <i class="fas fa-spinner fa-spin me-2"></i>Carregando...
+                                                </div>
+                                            </div>
+                                            <div class="col-md-6">
+                                                <label class="form-label">
+                                                    <i class="fas fa-inbox me-1"></i>Caixa de Entrada
+                                                </label>
+                                                <div class="form-control-plaintext" id="selectedInboxDisplay">
+                                                    <i class="fas fa-spinner fa-spin me-2"></i>Carregando...
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <form id="unifiedCampaignForm">
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <div class="mb-3">
+                                            <label for="campaignName" class="form-label">
+                                                <i class="fas fa-tag me-1"></i>Nome da Campanha
+                                            </label>
+                                            <input type="text" class="form-control" id="campaignName" name="campaignName" required>
+                                        </div>
+
+                                        <!-- Seleção de Conta e Caixa (apenas para admin) -->
+                                        <div id="adminAccountSection" class="mb-3" style="display: none;">
+                                            <div class="row">
+                                                <div class="col-md-6">
+                                                    <label for="unifiedAccountSelect" class="form-label">
+                                                        <i class="fas fa-building me-1"></i>Conta Chatwoot
+                                                    </label>
+                                                    <select class="form-select" id="unifiedAccountSelect">
+                                                        <option value="">Selecione uma conta...</option>
+                                                    </select>
+                                                </div>
+                                                <div class="col-md-6">
+                                                    <label for="unifiedInboxSelect" class="form-label">
+                                                        <i class="fas fa-inbox me-1"></i>Caixa de Entrada
+                                                    </label>
+                                                    <select class="form-select" id="unifiedInboxSelect">
+                                                        <option value="">Selecione uma caixa...</option>
+                                                    </select>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div class="mb-3">
+                                            <label class="form-label">
+                                                <i class="fas fa-users me-1"></i>Método de Envio
+                                            </label>
+                                            <div class="d-flex gap-3">
+                                                <div class="form-check">
+                                                    <input type="radio" class="form-check-input" id="methodTag" name="methodType" value="tag">
+                                                    <label class="form-check-label" for="methodTag">Tag</label>
+                                                </div>
+                                                <div class="form-check">
+                                                    <input type="radio" class="form-check-input" id="methodCsv" name="methodType" value="csv" checked>
+                                                    <label class="form-check-label" for="methodCsv">Lista (CSV)</label>
+                                                </div>
+                                                <div class="form-check" id="methodAllOption" style="display: none;">
+                                                    <input type="radio" class="form-check-input" id="methodAll" name="methodType" value="all">
+                                                    <label class="form-check-label" for="methodAll">Todos os Contatos</label>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div id="tagDetails" class="mb-3">
+                                            <label for="tagName" class="form-label">
+                                                <i class="fas fa-tag me-1"></i>Nome da Tag
+                                            </label>
+                                            <input type="text" class="form-control" id="tagName" name="tagName" placeholder="Digite o nome da tag">
+                                        </div>
+                                        
+                                        <div id="csvDetails" class="mb-3" style="display:none;">
+                                            <label for="csvFile" class="form-label">
+                                                <i class="fas fa-file-csv me-1"></i>Arquivo CSV com Contatos
+                                            </label>
+                                            <input type="file" class="form-control" id="csvFile" name="csvFile" accept=".csv">
+                                        </div>
+
+                                        <div class="mb-3">
+                                            <label for="templateSelect" class="form-label">
+                                                <i class="fas fa-comment me-1"></i>Modelo de Mensagem
+                                            </label>
+                                            <div class="d-flex gap-2">
+                                                <select id="templateSelect" name="templateSelect" required class="form-select">
+                                                    <option value="">Selecione um modelo</option>
+                                                </select>
+                                                <button type="button" id="syncTemplatesBtn" class="btn btn-outline-primary" onclick="loadModelos()" title="Sincronizar templates via API oficial do WhatsApp">
+                                                    <i class="fas fa-sync-alt"></i>
+                                                    <small class="d-none d-md-inline ms-1">API</small>
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        <div class="mb-3">
+                                            <div class="form-check">
+                                                <input type="checkbox" class="form-check-input" id="scheduleCampaign">
+                                                <label class="form-check-label" for="scheduleCampaign">
+                                                    <i class="fas fa-clock me-1"></i>Agendar envio
+                                                </label>
+                                            </div>
+                                            <div id="scheduleFields" style="display:none;" class="mt-2">
+                                                <div class="alert alert-info py-2 mb-3">
+                                                    <i class="fas fa-info-circle me-2"></i>
+                                                    <strong>Fuso Horário:</strong> Todos os agendamentos são no horário de Brasília (UTC-3).
+                                                    A campanha será executada num intervalo de 5 minutos para mais ou para menos.
+                                                </div>
+                                                <div class="row">
+                                                    <div class="col-md-6">
+                                                        <label for="scheduleDate" class="form-label">
+                                                            <i class="fas fa-calendar me-1"></i>Data de envio
+                                                        </label>
+                                                        <input type="date" class="form-control" id="scheduleDate" name="scheduleDate">
+                                                        <small class="text-muted">Data do agendamento</small>
+                                                    </div>
+                                                    <div class="col-md-6">
+                                                        <label for="scheduleTime" class="form-label">
+                                                            <i class="fas fa-clock me-1"></i>Hora de envio (Brasília)
+                                                        </label>
+                                                        <input type="time" class="form-control" id="scheduleTime" name="scheduleTime">
+                                                        <small class="text-muted">Horário de Brasília (UTC-3)</small>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <button type="submit" class="btn btn-success" id="submitCampaignBtn">
+                                            <i class="fas fa-paper-plane me-2"></i>Enviar Agora
+                                        </button>
+                                    </div>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal de Confirmação de Campanha -->
+    <div class="modal fade" id="campaignConfirmationModal" tabindex="-1" aria-labelledby="campaignConfirmationModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header bg-warning text-dark">
+                    <h5 class="modal-title" id="campaignConfirmationModalLabel">
+                        <i class="fas fa-exclamation-triangle me-2"></i>Confirmação de Envio
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-warning">
+                        <i class="fas fa-info-circle me-2"></i>
+                        <strong>Atenção!</strong> Você está prestes a enviar uma campanha de WhatsApp. Revise os detalhes abaixo antes de confirmar.
+                    </div>
+                    
+                    <div class="row">
+                        <div class="col-md-6">
+                            <h6><i class="fas fa-info-circle me-2"></i>Detalhes da Campanha</h6>
+                            <div id="campaignDetails">
+                                <p><strong>Nome:</strong> <span id="confirmCampaignName"></span></p>
+                                <p><strong>Tipo:</strong> <span id="confirmCampaignType"></span></p>
+                                <p><strong>Template:</strong> <span id="confirmCampaignTemplate"></span></p>
+                                <p><strong>Conta:</strong> <span id="confirmCampaignAccount"></span></p>
+                                <p><strong>Caixa de Entrada:</strong> <span id="confirmCampaignInbox"></span></p>
+                                <p><strong>Agendamento:</strong> <span id="confirmCampaignSchedule"></span></p>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <h6><i class="fas fa-users me-2"></i>Informações de Destinatários</h6>
+                            <div id="recipientDetails">
+                                <p><strong>Método de Envio:</strong> <span id="confirmRecipientMethod"></span></p>
+                                <p><strong>Quantidade Estimada:</strong> <span id="confirmRecipientCount"></span></p>
+                                <div id="confirmRecipientDetails"></div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="mt-3">
+                        <h6><i class="fas fa-shield-alt me-2"></i>Termos e Condições</h6>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="confirmTermsCheck">
+                            <label class="form-check-label" for="confirmTermsCheck">
+                                Confirmo que li e aceito os termos de uso e que tenho autorização para enviar mensagens para os contatos listados.
+                            </label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="confirmDataCheck">
+                            <label class="form-check-label" for="confirmDataCheck">
+                                Confirmo que os dados da campanha estão corretos e que desejo prosseguir com o envio.
+                            </label>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+                        <i class="fas fa-times me-2"></i>Cancelar
+                    </button>
+                    <button type="button" class="btn btn-warning" id="confirmCampaignBtn" disabled>
+                        <i class="fas fa-paper-plane me-2"></i>Confirmar e Enviar
+                    </button>
                 </div>
             </div>
         </div>

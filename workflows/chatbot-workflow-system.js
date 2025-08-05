@@ -214,8 +214,72 @@ const POLLING_INTERVAL = 5000; // 5 segundos
 const workflowPath = path.join(__dirname, 'wizard-bh-buritis-workflow.json');
 const wizardWorkflow = JSON.parse(fs.readFileSync(workflowPath, 'utf8'));
 
+// Exemplo de workflow com atribuição inteligente de membros do time
+const teamAssignmentWorkflow = {
+  name: "Atendimento com Atribuição Inteligente",
+  description: "Workflow que demonstra atribuição automática para membros do time",
+  blocks: [
+    {
+      id: "welcome",
+      name: "Boas-vindas",
+      message: "Olá! Bem-vindo ao nosso atendimento. Como posso ajudá-lo hoje?",
+      buttons: [
+        {
+          text: "Suporte Técnico",
+          next_block: "technical_support",
+          assign_team: 1, // ID do time de suporte técnico
+          assign_team_member: true, // Ativar atribuição para membro específico
+          assignment_strategy: "round_robin" // Estratégia de distribuição
+        },
+        {
+          text: "Vendas",
+          next_block: "sales",
+          assign_team: 2, // ID do time de vendas
+          assign_team_member: true,
+          assignment_strategy: "least_busy" // Atribuir ao menos ocupado
+        },
+        {
+          text: "Financeiro",
+          next_block: "financial",
+          assign_team: 3, // ID do time financeiro
+          assign_team_member: true,
+          assignment_strategy: "random" // Atribuição aleatória
+        }
+      ]
+    },
+    {
+      id: "technical_support",
+      name: "Suporte Técnico",
+      message: "Você será direcionado para um especialista técnico. Por favor, aguarde um momento...",
+      assign_team: 1,
+      assign_team_member: true,
+      assignment_strategy: "round_robin",
+      pause_bot: true // Pausar bot após atribuição
+    },
+    {
+      id: "sales",
+      name: "Vendas",
+      message: "Você será direcionado para um consultor de vendas. Por favor, aguarde um momento...",
+      assign_team: 2,
+      assign_team_member: true,
+      assignment_strategy: "least_busy",
+      pause_bot: true
+    },
+    {
+      id: "financial",
+      name: "Financeiro",
+      message: "Você será direcionado para um especialista financeiro. Por favor, aguarde um momento...",
+      assign_team: 3,
+      assign_team_member: true,
+      assignment_strategy: "random",
+      pause_bot: true
+    }
+  ]
+};
+
 const defaultWorkflows = {
-  [wizardWorkflow.name]: wizardWorkflow.config
+  [wizardWorkflow.name]: wizardWorkflow.config,
+  [teamAssignmentWorkflow.name]: teamAssignmentWorkflow
 };
 
 // Inicializar tabelas do sistema de workflows
@@ -230,9 +294,16 @@ async function initializeDatabase() {
         username VARCHAR(255) UNIQUE NOT NULL,
         password_hash VARCHAR(255) NOT NULL,
         role VARCHAR(50) DEFAULT 'user',
+        assigned_accounts JSONB DEFAULT '[]',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
+    `);
+
+    // Atualizar tabela existente se necessário (adicionar coluna assigned_accounts)
+    await pool.query(`
+      ALTER TABLE system_users 
+      ADD COLUMN IF NOT EXISTS assigned_accounts JSONB DEFAULT '[]'
     `);
 
     // Criar tabela de configurações de workflow
@@ -329,9 +400,16 @@ async function initializeDatabase() {
         schedule_type VARCHAR(50) DEFAULT 'immediate',
         scheduled_time TIMESTAMP,
         status VARCHAR(50) DEFAULT 'draft',
+        created_by INTEGER REFERENCES system_users(id),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
+    `);
+
+    // Atualizar tabela de campanhas existente se necessário
+    await pool.query(`
+      ALTER TABLE campaigns 
+      ADD COLUMN IF NOT EXISTS created_by INTEGER REFERENCES system_users(id)
     `);
 
     // Criar tabela de execuções de campanhas
@@ -345,6 +423,18 @@ async function initializeDatabase() {
         executed_at TIMESTAMP,
         error_message TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Criar tabela para controle de round-robin de atribuição de agentes
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS team_round_robin (
+        id SERIAL PRIMARY KEY,
+        team_id INTEGER NOT NULL,
+        last_assigned_agent INTEGER NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(team_id)
       )
     `);
 
@@ -367,6 +457,51 @@ async function initializeDatabase() {
       )
     `);
 
+    // Criar tabela de status por contato (se não existir)
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS campaign_status (
+        id SERIAL PRIMARY KEY,
+        campaign_id INTEGER REFERENCES campaigns(id) ON DELETE CASCADE,
+        contact_id INTEGER NOT NULL,
+        status VARCHAR(50) DEFAULT 'pending',
+        message_id VARCHAR(255),
+        error_message TEXT,
+        sent_at TIMESTAMP,
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+
+    // Criar constraints únicas para evitar duplicatas (com verificação manual)
+    try {
+      await pool.query(`
+        ALTER TABLE campaign_status 
+        ADD CONSTRAINT unique_campaign_contact_status 
+        UNIQUE (campaign_id, contact_id);
+      `);
+      console.log('✅ Constraint única criada para campaign_status');
+    } catch (error) {
+      if (error.message.includes('already exists')) {
+        console.log('ℹ️ Constraint unique_campaign_contact_status já existe');
+      } else {
+        console.log('⚠️ Erro ao criar constraint para campaign_status:', error.message);
+      }
+    }
+
+    try {
+      await pool.query(`
+        ALTER TABLE campaign_executions 
+        ADD CONSTRAINT unique_campaign_contact_execution 
+        UNIQUE (campaign_id, contact_id);
+      `);
+      console.log('✅ Constraint única criada para campaign_executions');
+    } catch (error) {
+      if (error.message.includes('already exists')) {
+        console.log('ℹ️ Constraint unique_campaign_contact_execution já existe');
+      } else {
+        console.log('⚠️ Erro ao criar constraint para campaign_executions:', error.message);
+      }
+    }
+
     // Criar índices para performance
     await pool.query(`
       CREATE INDEX IF NOT EXISTS idx_bot_status_conversation 
@@ -376,6 +511,17 @@ async function initializeDatabase() {
     await pool.query(`
       CREATE INDEX IF NOT EXISTS idx_bot_status_contact 
       ON bot_conversation_status(contact_id);
+    `);
+
+    // Criar índices para campanhas
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_campaign_status_campaign_id 
+      ON campaign_status(campaign_id);
+    `);
+    
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_campaign_executions_campaign_id 
+      ON campaign_executions(campaign_id);
     `);
 
     console.log('✅ Banco de dados inicializado com sucesso');
@@ -414,6 +560,53 @@ function authenticateToken(req, res, next) {
 
   req.user = decoded;
   next();
+}
+
+// Middleware de autorização por conta
+async function authorizeAccount(req, res, next) {
+  try {
+    const userId = req.user.id;
+    const accountId = parseInt(req.params.accountId || req.body.chatwoot_account_id || req.query.accountId);
+    
+    // Admin tem acesso a todas as contas
+    if (req.user.role === 'admin') {
+      return next();
+    }
+    
+    // Buscar contas atribuídas ao usuário
+    const result = await pool.query('SELECT assigned_accounts FROM system_users WHERE id = $1', [userId]);
+    if (result.rows.length === 0) {
+      return res.status(403).json({ error: 'Usuário não encontrado' });
+    }
+    
+    const assignedAccounts = result.rows[0].assigned_accounts || [];
+    
+    // Verificar se o usuário tem acesso à conta
+    if (!assignedAccounts.includes(accountId)) {
+      return res.status(403).json({ error: 'Acesso negado para esta conta' });
+    }
+    
+    next();
+  } catch (error) {
+    console.error('Erro na autorização:', error);
+    res.status(500).json({ error: 'Erro interno na autorização' });
+  }
+}
+
+// Função para filtrar contas baseado no perfil do usuário
+async function getAuthorizedAccounts(userId, userRole) {
+  if (userRole === 'admin') {
+    // Admin pode ver todas as contas
+    return null; // null significa sem filtro
+  }
+  
+  // Usuário comum: apenas contas atribuídas
+  const result = await pool.query('SELECT assigned_accounts FROM system_users WHERE id = $1', [userId]);
+  if (result.rows.length === 0) {
+    return [];
+  }
+  
+  return result.rows[0].assigned_accounts || [];
 }
 
 // Função para criar usuário inicial
@@ -577,7 +770,7 @@ async function assignConversationToAgent(conversationId, agentId) {
   }
 }
 
-// Função para atribuir conversa a um time
+// Função para atribuir conversa a um time (sem atribuir a agente específico)
 async function assignConversationToTeam(conversationId, teamId) {
   try {
     // Validar parâmetros
@@ -591,7 +784,7 @@ async function assignConversationToTeam(conversationId, teamId) {
       return;
     }
     
-    console.log(`🔍 Tentando atribuir conversa ${conversationId} ao time ${teamId}`);
+    console.log(`🔍 Tentando atribuir conversa ${conversationId} ao time ${teamId} (sem agente específico)`);
     
     // Verificar se a conversa existe
     const exists = await conversationExists(conversationId);
@@ -600,14 +793,235 @@ async function assignConversationToTeam(conversationId, teamId) {
       return;
     }
     
+    // Primeiro, atribuir ao time
     await axios.post(
       `${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/conversations/${conversationId}/assignments`,
       { team_id: teamId },
       { headers: { 'api_access_token': CHATWOOT_API_TOKEN } }
     );
-    console.log(`✅ Conversa ${conversationId} atribuída ao time ${teamId}`);
+    
+    // Depois, remover a atribuição de agente específico (definir assignee_id como null)
+    await axios.post(
+      `${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/conversations/${conversationId}/assignments`,
+      { assignee_id: null },
+      { headers: { 'api_access_token': CHATWOOT_API_TOKEN } }
+    );
+    
+    console.log(`✅ Conversa ${conversationId} atribuída ao time ${teamId} (sem agente específico)`);
   } catch (error) {
     console.error(`❌ Erro ao atribuir conversa ${conversationId} ao time ${teamId}:`, error.response?.data || error.message);
+  }
+}
+
+// Função para atribuir conversa apenas ao time (sem agente específico) - versão alternativa
+async function assignConversationToTeamOnly(conversationId, teamId) {
+  try {
+    // Validar parâmetros
+    if (!conversationId) {
+      console.log('⚠️ ConversationId inválido, pulando atribuição de time');
+      return;
+    }
+    
+    if (!teamId) {
+      console.log('⚠️ TeamId inválido, pulando atribuição de time');
+      return;
+    }
+    
+    console.log(`🔍 Tentando atribuir conversa ${conversationId} apenas ao time ${teamId}`);
+    
+    // Verificar se a conversa existe
+    const exists = await conversationExists(conversationId);
+    if (!exists) {
+      console.log(`⚠️ Conversa ${conversationId} não existe, pulando atribuição de time`);
+      return;
+    }
+    
+    // Atribuir ao time e remover agente em uma única operação
+    await axios.post(
+      `${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/conversations/${conversationId}/assignments`,
+      { 
+        team_id: teamId,
+        assignee_id: null 
+      },
+      { headers: { 'api_access_token': CHATWOOT_API_TOKEN } }
+    );
+    
+    console.log(`✅ Conversa ${conversationId} atribuída apenas ao time ${teamId}`);
+  } catch (error) {
+    console.error(`❌ Erro ao atribuir conversa ${conversationId} ao time ${teamId}:`, error.response?.data || error.message);
+  }
+}
+
+// Função para atribuir conversa a um membro específico do time (não-administrador)
+async function assignConversationToTeamMember(conversationId, teamId, options = {}) {
+  try {
+    // Validar parâmetros
+    if (!conversationId) {
+      console.log('⚠️ ConversationId inválido, pulando atribuição de membro do time');
+      return;
+    }
+    
+    if (!teamId) {
+      console.log('⚠️ TeamId inválido, pulando atribuição de membro do time');
+      return;
+    }
+    
+    console.log(`🔍 Tentando atribuir conversa ${conversationId} a um membro do time ${teamId}`);
+    
+    // Verificar se a conversa existe
+    const exists = await conversationExists(conversationId);
+    if (!exists) {
+      console.log(`⚠️ Conversa ${conversationId} não existe, pulando atribuição de membro do time`);
+      return;
+    }
+
+    // Buscar todos os agentes
+    const allAgents = await getChatwootAgents();
+    
+    // Filtrar agentes que pertencem ao time especificado e não são administradores
+    const teamMembers = allAgents.filter(agent => {
+      // Verificar se o agente pertence ao time
+      const belongsToTeam = agent.teams && agent.teams.some(team => team.id === teamId);
+      
+      // Verificar se não é administrador (role !== 'administrator')
+      const isNotAdmin = agent.role !== 'administrator';
+      
+      // Verificar se está ativo
+      const isActive = agent.available_name !== 'offline' && agent.status !== 'offline';
+      
+      return belongsToTeam && isNotAdmin && isActive;
+    });
+
+    if (teamMembers.length === 0) {
+      console.log(`⚠️ Nenhum agente disponível encontrado no time ${teamId} (não-administradores e ativos)`);
+      
+      // Se não houver agentes disponíveis, atribuir ao time
+      console.log(`🔄 Atribuindo conversa ao time ${teamId} (sem agente específico)`);
+      await assignConversationToTeam(conversationId, teamId);
+      return;
+    }
+
+    let selectedAgent;
+
+    // Estratégia de seleção de agente
+    const strategy = options.strategy || 'round_robin'; // 'round_robin', 'least_busy', 'random'
+    
+    switch (strategy) {
+      case 'least_busy':
+        // Selecionar agente com menos conversas ativas
+        selectedAgent = await selectLeastBusyAgent(teamMembers);
+        break;
+        
+      case 'random':
+        // Seleção aleatória
+        selectedAgent = teamMembers[Math.floor(Math.random() * teamMembers.length)];
+        break;
+        
+      case 'round_robin':
+      default:
+        // Round-robin (rotação)
+        selectedAgent = await selectNextAgentInRoundRobin(teamMembers, teamId);
+        break;
+    }
+
+    if (!selectedAgent) {
+      console.log(`⚠️ Não foi possível selecionar um agente, atribuindo ao time ${teamId}`);
+      await assignConversationToTeam(conversationId, teamId);
+      return;
+    }
+
+    // Atribuir conversa ao agente selecionado
+    await assignConversationToAgent(conversationId, selectedAgent.id);
+    
+    console.log(`✅ Conversa ${conversationId} atribuída ao agente ${selectedAgent.name} (${selectedAgent.id}) do time ${teamId}`);
+    
+  } catch (error) {
+    console.error(`❌ Erro ao atribuir conversa ${conversationId} a membro do time ${teamId}:`, error.response?.data || error.message);
+    
+    // Em caso de erro, tentar atribuir ao time como fallback
+    try {
+      console.log(`🔄 Fallback: atribuindo conversa ao time ${teamId}`);
+      await assignConversationToTeam(conversationId, teamId);
+    } catch (fallbackError) {
+      console.error(`❌ Erro no fallback ao atribuir ao time:`, fallbackError.response?.data || fallbackError.message);
+    }
+  }
+}
+
+// Função para selecionar o próximo agente no round-robin
+async function selectNextAgentInRoundRobin(teamMembers, teamId) {
+  try {
+    // Buscar o último agente usado para este time no banco de dados
+    const result = await pool.query(
+      'SELECT last_assigned_agent FROM team_round_robin WHERE team_id = $1',
+      [teamId]
+    );
+    
+    let lastAgentIndex = -1;
+    
+    if (result.rows.length > 0) {
+      const lastAgentId = result.rows[0].last_assigned_agent;
+      lastAgentIndex = teamMembers.findIndex(agent => agent.id === lastAgentId);
+    }
+    
+    // Selecionar o próximo agente
+    const nextIndex = (lastAgentIndex + 1) % teamMembers.length;
+    const selectedAgent = teamMembers[nextIndex];
+    
+    // Atualizar o banco de dados com o agente selecionado
+    await pool.query(
+      `INSERT INTO team_round_robin (team_id, last_assigned_agent, updated_at) 
+       VALUES ($1, $2, CURRENT_TIMESTAMP) 
+       ON CONFLICT (team_id) 
+       DO UPDATE SET last_assigned_agent = $2, updated_at = CURRENT_TIMESTAMP`,
+      [teamId, selectedAgent.id]
+    );
+    
+    return selectedAgent;
+    
+  } catch (error) {
+    console.error('Erro ao selecionar agente no round-robin:', error);
+    // Em caso de erro, retornar o primeiro agente disponível
+    return teamMembers[0];
+  }
+}
+
+// Função para selecionar o agente menos ocupado
+async function selectLeastBusyAgent(teamMembers) {
+  try {
+    // Buscar conversas ativas de cada agente
+    const agentWorkloads = await Promise.all(
+      teamMembers.map(async (agent) => {
+        try {
+          const response = await axios.get(
+            `${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/conversations`,
+            {
+              params: { assignee_id: agent.id, status: 'open' },
+              headers: { 'api_access_token': CHATWOOT_API_TOKEN }
+            }
+          );
+          
+          const conversations = response.data.payload || [];
+          return {
+            agent,
+            activeConversations: conversations.length
+          };
+        } catch (error) {
+          console.error(`Erro ao buscar conversas do agente ${agent.id}:`, error);
+          return { agent, activeConversations: 999 }; // Penalizar em caso de erro
+        }
+      })
+    );
+    
+    // Ordenar por carga de trabalho (menos conversas primeiro)
+    agentWorkloads.sort((a, b) => a.activeConversations - b.activeConversations);
+    
+    // Retornar o agente com menos conversas ativas
+    return agentWorkloads[0]?.agent || teamMembers[0];
+    
+  } catch (error) {
+    console.error('Erro ao selecionar agente menos ocupado:', error);
+    return teamMembers[0]; // Fallback para o primeiro agente
   }
 }
 
@@ -1256,7 +1670,16 @@ class ConversationManager {
       // Atribuir time se especificado
       if (button.assign_team) {
         console.log(`🔧 Botão solicita atribuição de time: ${button.assign_team}`);
-        await assignConversationToTeam(conversationId, button.assign_team);
+        
+        // Verificar se deve atribuir a um membro específico do time
+        if (button.assign_team_member === true) {
+          const options = {
+            strategy: button.assignment_strategy || 'round_robin' // 'round_robin', 'least_busy', 'random'
+          };
+          await assignConversationToTeamMember(conversationId, button.assign_team, options);
+        } else {
+          await assignConversationToTeam(conversationId, button.assign_team);
+        }
       }
 
       // Adicionar etiquetas se especificadas
@@ -1295,7 +1718,16 @@ class ConversationManager {
       // Atribuir time se especificado
       if (block.assign_team) {
         console.log(`🔧 Bloco solicita atribuição de time: ${block.assign_team}`);
-        await assignConversationToTeam(conversationId, block.assign_team);
+        
+        // Verificar se deve atribuir a um membro específico do time
+        if (block.assign_team_member === true) {
+          const options = {
+            strategy: block.assignment_strategy || 'round_robin' // 'round_robin', 'least_busy', 'random'
+          };
+          await assignConversationToTeamMember(conversationId, block.assign_team, options);
+        } else {
+          await assignConversationToTeam(conversationId, block.assign_team);
+        }
       }
 
       // Adicionar etiquetas se especificadas
@@ -1497,7 +1929,7 @@ function startCampaignScheduler() {
     checkAndExecuteScheduledCampaigns();
   }, 30000);
   
-  // Executar verificação a cada 5 minutos
+  // Executar verificação a cada 2 minutos
   setInterval(async () => {
     try {
       await checkAndExecuteScheduledCampaigns();
@@ -1512,24 +1944,26 @@ function startCampaignScheduler() {
 // Verificar e executar campanhas agendadas
 async function checkAndExecuteScheduledCampaigns() {
   try {
-    // Usar timestamp atual direto (PostgreSQL irá comparar com o fuso horário correto)
+    // Usar timestamp atual em timezone do Brasil
     const now = new Date();
     
     console.log(`📅 Verificando campanhas agendadas... Horário atual (Brasil): ${getTimestamp()}`);
     
     // Buscar campanhas agendadas que devem ser executadas agora
-    // PostgreSQL irá interpretar o scheduled_at considerando o fuso horário
+    // Usar timezone do Brasil para comparação correta
     const scheduledCampaigns = await pool.query(`
       SELECT 
         c.id, 
         c.name, 
         c.scheduled_at,
         c.status,
-        c.scheduled_at AT TIME ZONE 'America/Sao_Paulo' as scheduled_at_local
+        c.scheduled_at AT TIME ZONE 'America/Sao_Paulo' as scheduled_at_brasil,
+        NOW() as current_time
       FROM campaigns c
       WHERE c.status = 'pending' 
         AND c.scheduled_at IS NOT NULL 
-        AND c.scheduled_at <= NOW()
+        AND c.scheduled_at AT TIME ZONE 'America/Sao_Paulo' >= (NOW()) - INTERVAL '5 minutes'
+        AND c.scheduled_at AT TIME ZONE 'America/Sao_Paulo' <= (NOW()) + INTERVAL '5 minutes'
       ORDER BY c.scheduled_at ASC
     `);
     
@@ -1541,10 +1975,11 @@ async function checkAndExecuteScheduledCampaigns() {
     console.log(`🚀 Encontradas ${scheduledCampaigns.rows.length} campanha(s) agendada(s) para execução:`);
     
     for (const campaign of scheduledCampaigns.rows) {
-      const { id, name, scheduled_at, scheduled_at_local } = campaign;
+      const { id, name, scheduled_at, scheduled_at_brasil, current_time_brasil } = campaign;
       
       console.log(`📤 Executando campanha agendada: ${name} (ID: ${id})`);
-      console.log(`   📅 Agendada para: ${scheduled_at_local || scheduled_at} (Brasil)`);
+      console.log(`   📅 Agendada para: ${scheduled_at_brasil} (Brasil)`);
+      console.log(`   📅 Horário atual: ${current_time_brasil} (Brasil)`);
       
       try {
         // Atualizar status para 'running'
@@ -1629,7 +2064,7 @@ async function processChatwootConversation(conversation) {
       return;
     }
     
-    console.log(`🔍 Processando conversa - ID: ${conversationId}, Inbox: ${inboxId}, Contato: ${contactId}`);
+    //console.log(`🔍 Processando conversa - ID: ${conversationId}, Inbox: ${inboxId}, Contato: ${contactId}`);
     
     // Verificar se já existe uma conversa de workflow ativa
     let workflowConversation = await conversationManager.getConversation(contactId);
@@ -3067,7 +3502,7 @@ app.post('/api/auth/change-password', authenticateToken, [
 // Obter contas do Chatwoot
 app.get('/api/accounts', authenticateToken, async (req, res) => {
   try {
-    console.log('🔍 Buscando todas as contas disponíveis para o token...');
+    console.log(`🔍 Buscando contas para usuário ${req.user.username} (${req.user.role})...`);
     
     // Buscar perfil do usuário para obter todas as contas que ele tem acesso
     const response = await axios.get(`${CHATWOOT_BASE_URL}/api/v1/profile`, {
@@ -3076,8 +3511,10 @@ app.get('/api/accounts', authenticateToken, async (req, res) => {
       }
     });
     
+    let allAccounts = [];
+    
     if (response.data && response.data.accounts && Array.isArray(response.data.accounts)) {
-      const accounts = response.data.accounts.map(account => ({
+      allAccounts = response.data.accounts.map(account => ({
         id: account.id,
         name: account.name,
         domain: CHATWOOT_BASE_URL.replace(/^https?:\/\//, ''),
@@ -3085,9 +3522,6 @@ app.get('/api/accounts', authenticateToken, async (req, res) => {
         role: account.role,
         permissions: account.permissions
       }));
-      
-      console.log(`✅ Encontradas ${accounts.length} conta(s):`, accounts.map(a => `${a.name} (ID: ${a.id})`).join(', '));
-      res.json(accounts);
     } else {
       console.warn('⚠️ Nenhuma conta encontrada no perfil, usando conta padrão...');
       
@@ -3108,15 +3542,26 @@ app.get('/api/accounts', authenticateToken, async (req, res) => {
         console.warn('Não foi possível buscar o nome real da conta, usando nome padrão.');
       }
       
-      const accounts = [{
+      allAccounts = [{
         id: parseInt(accountId),
         name: accountName,
         domain: CHATWOOT_BASE_URL.replace(/^https?:\/\//, ''),
         status: 'active'
       }];
-      
-      res.json(accounts);
     }
+    
+    // Filtrar contas baseado no perfil do usuário
+    const authorizedAccounts = await getAuthorizedAccounts(req.user.id, req.user.role);
+    
+    let filteredAccounts = allAccounts;
+    if (authorizedAccounts !== null) {
+      // Usuário comum: filtrar apenas contas atribuídas
+      filteredAccounts = allAccounts.filter(account => authorizedAccounts.includes(account.id));
+    }
+    
+    console.log(`✅ Usuário ${req.user.username} (${req.user.role}) tem acesso a ${filteredAccounts.length} conta(s)`);
+    res.json(filteredAccounts);
+    
   } catch (error) {
     console.error('❌ Erro ao obter contas:', error.message);
     console.error('❌ Detalhes do erro:', error.response?.data || error);
@@ -3189,9 +3634,14 @@ app.post('/api/inbox-workflows', authenticateToken, [
   }
 });
 
-// Listar todos os fluxos de caixas de entrada
+// Listar todos os fluxos de caixas de entrada (somente admin)
 app.get('/api/inbox-workflows', authenticateToken, async (req, res) => {
   try {
+    // Apenas admins podem ver a lista de workflows ativos
+    if (req.user.role !== 'admin') {
+      return res.json([]); // Usuários comuns veem lista vazia
+    }
+    
     const workflows = await inboxWorkflowManager.getAllInboxWorkflows();
     res.json(workflows);
   } catch (error) {
@@ -3369,14 +3819,480 @@ app.post('/api/workflow/conversation/:contactId/reset', authenticateToken, async
   }
 });
 
+// ===== ROTAS DE GERENCIAMENTO DE USUÁRIOS (ADMIN ONLY) =====
+
+// Listar usuários
+app.get('/api/users', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Acesso restrito a administradores' });
+    }
+    
+    const result = await pool.query(`
+      SELECT id, username, role, assigned_accounts, created_at, updated_at 
+      FROM system_users 
+      ORDER BY created_at DESC
+    `);
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Erro ao listar usuários:', error);
+    res.status(500).json({ error: 'Erro ao listar usuários' });
+  }
+});
+
+// Criar usuário
+app.post('/api/users', authenticateToken, [
+  body('username').notEmpty().withMessage('Username é obrigatório'),
+  body('password').isLength({ min: 6 }).withMessage('Senha deve ter pelo menos 6 caracteres'),
+  body('role').isIn(['admin', 'user']).withMessage('Perfil deve ser admin ou user'),
+  body('assigned_accounts').isArray().withMessage('Contas atribuídas deve ser um array')
+], async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Acesso restrito a administradores' });
+    }
+    
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+    
+    const { username, password, role, assigned_accounts } = req.body;
+    
+    // Verificar se username já existe
+    const existingUser = await pool.query('SELECT id FROM system_users WHERE username = $1', [username]);
+    if (existingUser.rows.length > 0) {
+      return res.status(400).json({ error: 'Usuário já existe' });
+    }
+    
+    // Criar hash da senha
+    const passwordHash = await bcrypt.hash(password, 10);
+    
+    const result = await pool.query(
+      'INSERT INTO system_users (username, password_hash, role, assigned_accounts) VALUES ($1, $2, $3, $4) RETURNING id, username, role, assigned_accounts, created_at',
+      [username, passwordHash, role, JSON.stringify(assigned_accounts)]
+    );
+    
+    res.json({ success: true, user: result.rows[0] });
+  } catch (error) {
+    console.error('Erro ao criar usuário:', error);
+    res.status(500).json({ error: 'Erro ao criar usuário' });
+  }
+});
+
+// Atualizar usuário
+app.put('/api/users/:id', authenticateToken, [
+  body('username').optional().notEmpty().withMessage('Username não pode ser vazio'),
+  body('password').optional().isLength({ min: 6 }).withMessage('Senha deve ter pelo menos 6 caracteres'),
+  body('role').optional().isIn(['admin', 'user']).withMessage('Perfil deve ser admin ou user'),
+  body('assigned_accounts').optional().isArray().withMessage('Contas atribuídas deve ser um array')
+], async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Acesso restrito a administradores' });
+    }
+    
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+    
+    const { id } = req.params;
+    const { username, password, role, assigned_accounts } = req.body;
+    
+    // Verificar se usuário existe
+    const existingUser = await pool.query('SELECT id FROM system_users WHERE id = $1', [id]);
+    if (existingUser.rows.length === 0) {
+      return res.status(404).json({ error: 'Usuário não encontrado' });
+    }
+    
+    // Construir query dinâmica
+    let updateFields = [];
+    let updateValues = [];
+    let paramCount = 1;
+    
+    if (username) {
+      updateFields.push(`username = $${paramCount++}`);
+      updateValues.push(username);
+    }
+    
+    if (password) {
+      const passwordHash = await bcrypt.hash(password, 10);
+      updateFields.push(`password_hash = $${paramCount++}`);
+      updateValues.push(passwordHash);
+    }
+    
+    if (role) {
+      updateFields.push(`role = $${paramCount++}`);
+      updateValues.push(role);
+    }
+    
+    if (assigned_accounts !== undefined) {
+      updateFields.push(`assigned_accounts = $${paramCount++}`);
+      updateValues.push(JSON.stringify(assigned_accounts));
+    }
+    
+    updateFields.push(`updated_at = CURRENT_TIMESTAMP`);
+    updateValues.push(id);
+    
+    const query = `UPDATE system_users SET ${updateFields.join(', ')} WHERE id = $${paramCount} RETURNING id, username, role, assigned_accounts, updated_at`;
+    
+    const result = await pool.query(query, updateValues);
+    
+    res.json({ success: true, user: result.rows[0] });
+  } catch (error) {
+    console.error('Erro ao atualizar usuário:', error);
+    res.status(500).json({ error: 'Erro ao atualizar usuário' });
+  }
+});
+
+// Excluir usuário
+app.delete('/api/users/:id', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Acesso restrito a administradores' });
+    }
+    
+    const { id } = req.params;
+    
+    // Não permitir que admin exclua a si mesmo
+    if (parseInt(id) === req.user.id) {
+      return res.status(400).json({ error: 'Não é possível excluir seu próprio usuário' });
+    }
+    
+    const result = await pool.query('DELETE FROM system_users WHERE id = $1 RETURNING username', [id]);
+    
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Usuário não encontrado' });
+    }
+    
+    res.json({ success: true, message: `Usuário ${result.rows[0].username} excluído com sucesso` });
+  } catch (error) {
+    console.error('Erro ao excluir usuário:', error);
+    res.status(500).json({ error: 'Erro ao excluir usuário' });
+  }
+});
+
 // ===== ROTAS DE CAMPANHAS DE WHATSAPP =====
 
+// Função para processar uma campanha (enviar mensagens via API do WhatsApp)
+async function processCampaign(campaignId) {
+  console.log(`🚀 Iniciando processamento da campanha ${campaignId}...`);
+  
+  try {
+    // Busca dados da campanha
+    const { rows } = await pool.query('SELECT * FROM campaigns WHERE id = $1', [campaignId]);
+    if (rows.length === 0) {
+      console.error(`❌ Campanha ${campaignId} não encontrada`);
+      return;
+    }
+    
+    const campaign = rows[0];
+    console.log(`📋 Processando campanha: ${campaign.name} (Tipo: ${campaign.type})`);
+    
+    let contacts = [];
+    
+    // Busca contatos conforme tipo da campanha
+    if (campaign.type === 'csv') {
+      const result = await pool.query('SELECT * FROM campaign_contacts WHERE campaign_id = $1', [campaignId]);
+      contacts = result.rows;
+      console.log(`📞 Carregados ${contacts.length} contatos do CSV`);
+    } else if (campaign.type === 'tag') {
+      // Busca contatos via API do Chatwoot pela tag
+      const response = await axios.get(`${CHATWOOT_BASE_URL}/api/v1/accounts/${campaign.chatwoot_account_id}/contacts`, {
+        headers: { 'api_access_token': CHATWOOT_API_TOKEN },
+        params: { label: campaign.tag_name }
+      });
+      
+      const chatwootContacts = (response.data.payload || []).map(c => ({ 
+        name: c.name, 
+        phone: c.phone_number 
+      }));
+      
+      // Inserir contatos na tabela campaign_contacts
+      console.log(`📝 Inserindo ${chatwootContacts.length} contatos da tag '${campaign.tag_name}' na tabela...`);
+      contacts = [];
+      for (const contact of chatwootContacts) {
+        if (contact.phone) {
+          try {
+            const insertResult = await pool.query(
+              'INSERT INTO campaign_contacts (campaign_id, name, phone) VALUES ($1, $2, $3) RETURNING *',
+              [campaignId, contact.name || 'Cliente', contact.phone]
+            );
+            contacts.push(insertResult.rows[0]);
+          } catch (insertError) {
+            console.error(`❌ Erro ao inserir contato ${contact.phone}:`, insertError.message);
+          }
+        }
+      }
+      console.log(`✅ ${contacts.length} contatos inseridos na tabela campaign_contacts`);
+    }
+    
+    if (contacts.length === 0) {
+      console.log(`⚠️ Nenhum contato encontrado para a campanha ${campaignId}`);
+      await pool.query('UPDATE campaigns SET status = $1, updated_at = NOW() WHERE id = $2', ['completed', campaignId]);
+      return;
+    }
+    
+    // Buscar credenciais da caixa de entrada
+    const inboxDetailsResponse = await axios.get(`${CHATWOOT_BASE_URL}/api/v1/accounts/${campaign.chatwoot_account_id}/inboxes/${campaign.chatwoot_inbox_id}`, {
+      headers: { 'api_access_token': CHATWOOT_API_TOKEN }
+    });
+    
+    let inboxDetails = inboxDetailsResponse.data.payload;
+    if (!inboxDetails && inboxDetailsResponse.data && inboxDetailsResponse.data.id) {
+      inboxDetails = inboxDetailsResponse.data;
+    }
+    
+    if (!inboxDetails) {
+      throw new Error('Caixa de entrada não encontrada');
+    }
+    
+    const config = inboxDetails.provider_config;
+    if (!config?.business_account_id || !config?.api_key || !config?.phone_number_id) {
+      throw new Error('Credenciais da API oficial do WhatsApp não configuradas para esta caixa');
+    }
+    
+    // Buscar template na API oficial do WhatsApp
+    let templateLanguage = campaign.template_language || 'pt_BR';
+    const whatsappTemplatesResponse = await axios.get(
+      `https://graph.facebook.com/v23.0/${config.business_account_id}/message_templates`,
+      {
+        headers: { 'Authorization': `Bearer ${config.api_key}` },
+        params: { fields: 'name,status,category,language,components', limit: 100 }
+      }
+    );
+    
+    const templates = (whatsappTemplatesResponse.data.data || []).filter(t => t.status === 'APPROVED');
+    const selectedTemplate = templates.find(t => t.name === campaign.template_name);
+    
+    if (!selectedTemplate) {
+      throw new Error(`Template '${campaign.template_name}' não encontrado ou não aprovado`);
+    }
+    
+    templateLanguage = selectedTemplate.language || templateLanguage;
+    console.log(`📋 Template encontrado: ${campaign.template_name} (${templateLanguage})`);
+    
+    // Inserir registros iniciais nas tabelas de controle
+    console.log(`📝 Criando registros de controle para ${contacts.length} contatos...`);
+    
+    for (const contact of contacts) {
+      try {
+        // Verificar se já existe em campaign_status antes de inserir
+        const existingStatus = await pool.query(
+          'SELECT id FROM campaign_status WHERE campaign_id = $1 AND contact_id = $2',
+          [campaignId, contact.id]
+        );
+        
+        if (existingStatus.rows.length === 0) {
+          await pool.query(
+            'INSERT INTO campaign_status (campaign_id, contact_id, status, created_at) VALUES ($1, $2, $3, NOW())',
+            [campaignId, contact.id, 'pending']
+          );
+        }
+        
+        // Verificar se já existe em campaign_executions antes de inserir
+        const existingExecution = await pool.query(
+          'SELECT id FROM campaign_executions WHERE campaign_id = $1 AND contact_id = $2',
+          [campaignId, contact.phone]
+        );
+        
+        if (existingExecution.rows.length === 0) {
+          await pool.query(
+            'INSERT INTO campaign_executions (campaign_id, contact_id, status, created_at) VALUES ($1, $2, $3, NOW())',
+            [campaignId, contact.phone, 'pending']
+          );
+        }
+      } catch (insertError) {
+        console.error(`❌ Erro ao inserir registros de controle para ${contact.phone}:`, insertError.message);
+      }
+    }
+    
+    console.log(`✅ Registros de controle criados`);
+    
+    // Processar envio para cada contato
+    let successCount = 0;
+    let errorCount = 0;
+    
+    for (const contact of contacts) {
+      try {
+        // Normalizar telefone para formato E.164
+        let normalizedPhone = contact.phone.replace(/[^\d+]/g, '');
+        if (!normalizedPhone.startsWith('+')) {
+          normalizedPhone = '+' + normalizedPhone;
+        }
+        
+        // Buscar conversa existente no Chatwoot (opcional)
+        let conversationId = null;
+        try {
+          const conversationsResponse = await axios.get(`${CHATWOOT_BASE_URL}/api/v1/accounts/${campaign.chatwoot_account_id}/conversations`, {
+            headers: { 'api_access_token': CHATWOOT_API_TOKEN },
+            params: { 
+              status: 'open',
+              inbox_id: campaign.chatwoot_inbox_id 
+            }
+          });
+          
+          if (conversationsResponse.data?.data?.payload) {
+            const existingConversation = conversationsResponse.data.data.payload.find(conv => {
+              const senderPhone = conv.meta?.sender?.phone_number;
+              return senderPhone && senderPhone.replace(/\D/g, '') === normalizedPhone.replace(/\D/g, '');
+            });
+            
+            if (existingConversation) {
+              conversationId = existingConversation.id;
+            }
+          }
+        } catch (convError) {
+          // Ignorar erro de busca de conversa, não é crítico
+        }
+        
+        // Montar payload para API oficial do WhatsApp
+        const bodyComponent = selectedTemplate.components?.find(c => c.type === 'BODY');
+        
+        console.log(`[INFO] Template text: ${bodyComponent?.text}`);
+        console.log(`[INFO] Template example:`, JSON.stringify(bodyComponent?.example, null, 2));
+        
+        const paramValues = [contact.name || 'Cliente', contact.phone || '', campaign.name || '', new Date().toLocaleDateString(templateLanguage === 'pt_BR' ? 'pt-BR' : 'en-US')];
+        const parameters = [];
+        
+        // Verificar se template tem parâmetros nomeados ou numerados
+        if (bodyComponent && bodyComponent.text) {
+          // Primeiro verificar se há parâmetros nomeados na estrutura example
+          if (bodyComponent.example && bodyComponent.example.body_text_named_params) {
+            // Template com parâmetros nomeados - usar estrutura com parameter_name
+            bodyComponent.example.body_text_named_params.forEach((namedParam, index) => {
+              parameters.push({
+                type: 'text',
+                parameter_name: namedParam.param_name,
+                text: paramValues[index] || ''
+              });
+            });
+            console.log(`[INFO] Using named parameters structure, count: ${parameters.length}`);
+          } else {
+            // Template com parâmetros numerados ou sem exemplo específico
+            const numberedParams = bodyComponent.text.match(/\{\{\d+\}\}/g) || [];
+            const namedParams = bodyComponent.text.match(/\{\{[a-zA-Z_][a-zA-Z0-9_]*\}\}/g) || [];
+            const totalParams = Math.max(numberedParams.length, namedParams.length);
+            
+            for (let i = 0; i < totalParams; i++) {
+              parameters.push({ 
+                type: 'text', 
+                text: paramValues[i] || '' 
+              });
+            }
+            console.log(`[INFO] Using positional parameters, count: ${totalParams}`);
+          }
+        }
+        
+        //console.log(`[INFO] Final parameters:`, JSON.stringify(parameters, null, 2));
+        
+        const bodyComponentObj = { type: 'body' };
+        if (parameters.length > 0) {
+          bodyComponentObj.parameters = parameters;
+        }
+        
+        const payload = {
+          messaging_product: 'whatsapp',
+          to: normalizedPhone,
+          type: 'template',
+          template: {
+            name: campaign.template_name,
+            language: { code: templateLanguage },
+            components: [bodyComponentObj]
+          }
+        };
+        
+        // Enviar mensagem via API oficial do WhatsApp
+        const sendResponse = await axios.post(
+          `https://graph.facebook.com/v23.0/${config.phone_number_id}/messages`,
+          payload,
+          { headers: { Authorization: `Bearer ${config.api_key}` } }
+        );
+        
+        console.log(`✅ Mensagem enviada para ${normalizedPhone} (${contact.name})`);
+        console.log("Resposta da api do whatsapp: ",JSON.stringify(sendResponse.data, null, 2));
+        successCount++;
+        
+        // Atualizar status de sucesso
+        await pool.query(
+          'UPDATE campaign_status SET status = $1, message_id = $2, error_message = NULL, sent_at = NOW() WHERE campaign_id = $3 AND contact_id = $4',
+          ['sent', sendResponse.data.messages?.[0]?.id || null, campaignId, contact.id]
+        );
+        
+        await pool.query(
+          'UPDATE campaign_executions SET status = $1, conversation_id = $2, executed_at = NOW(), error_message = NULL WHERE campaign_id = $3 AND contact_id = $4',
+          ['sent', conversationId, campaignId, contact.phone]
+        );
+        
+      } catch (sendError) {
+        const errorMsg = typeof sendError.response?.data === 'object' 
+          ? JSON.stringify(sendError.response.data) 
+          : (sendError.response?.data?.error?.message || sendError.message);
+          
+        console.error(`❌ Erro ao enviar para ${contact.phone} (${contact.name}): ${errorMsg}`);
+        errorCount++;
+        
+        // Atualizar status de erro
+        await pool.query(
+          'UPDATE campaign_status SET status = $1, error_message = $2 WHERE campaign_id = $3 AND contact_id = $4',
+          ['failed', errorMsg, campaignId, contact.id]
+        );
+        
+        await pool.query(
+          'UPDATE campaign_executions SET status = $1, executed_at = NOW(), error_message = $2 WHERE campaign_id = $3 AND contact_id = $4',
+          ['failed', errorMsg, campaignId, contact.phone]
+        );
+      }
+      
+      // Pequena pausa entre envios para evitar rate limiting
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+    
+    // Atualizar status final da campanha
+    console.log(`📊 Processamento concluído da campanha ${campaignId}:`);
+    console.log(`   ✅ Sucessos: ${successCount}`);
+    console.log(`   ❌ Erros: ${errorCount}`);
+    console.log(`   📞 Total: ${contacts.length}`);
+    
+    await pool.query('UPDATE campaigns SET status = $1, updated_at = NOW() WHERE id = $2', ['completed', campaignId]);
+    console.log(`✅ Campanha ${campaignId} marcada como concluída`);
+    
+  } catch (error) {
+    console.error(`❌ Erro geral no processamento da campanha ${campaignId}:`, error);
+    
+    // Marcar campanha como failed
+    try {
+      await pool.query('UPDATE campaigns SET status = $1, updated_at = NOW() WHERE id = $2', ['failed', campaignId]);
+      console.log(`❌ Campanha ${campaignId} marcada como falha devido ao erro`);
+    } catch (updateError) {
+      console.error(`❌ Erro ao atualizar status da campanha para failed:`, updateError);
+    }
+  }
+}
+
 // Criar campanha (por tag ou CSV)
-app.post('/api/campaigns', authenticateToken, async (req, res) => {
+app.post('/api/campaigns', authenticateToken, authorizeAccount, async (req, res) => {
   try {
     const { name, type, tag_name, template_name, scheduled_at, chatwoot_account_id, chatwoot_inbox_id } = req.body;
     if (!name || !type || !template_name || !chatwoot_account_id || !chatwoot_inbox_id) {
       return res.status(400).json({ error: 'Campos obrigatórios ausentes' });
+    }
+    
+    // Log para debug do scheduled_at
+    if (scheduled_at) {
+      console.log(`📅 Backend recebeu scheduled_at: ${scheduled_at} (tipo: ${typeof scheduled_at})`);
+    }
+    
+    // Processar scheduled_at para timezone do Brasil
+    let scheduledAtProcessed = scheduled_at;
+    if (scheduled_at) {
+      // Se o scheduled_at não tem timezone, assumir que está em horário do Brasil
+      if (!scheduled_at.includes('+') && !scheduled_at.includes('-') && !scheduled_at.includes('Z')) {
+        // Adicionar timezone do Brasil para garantir interpretação correta
+        scheduledAtProcessed = scheduled_at + '-03:00';
+        console.log(`📅 Adicionando timezone Brasil ao scheduled_at: ${scheduled_at} -> ${scheduledAtProcessed}`);
+      }
     }
     
     // Buscar informações do template selecionado
@@ -3451,12 +4367,18 @@ app.post('/api/campaigns', authenticateToken, async (req, res) => {
     
     // Inserir campanha no banco incluindo informações do template
     const result = await pool.query(
-      `INSERT INTO campaigns (name, type, tag_name, template_name, template_language, template_category, scheduled_at, chatwoot_account_id, chatwoot_inbox_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
-      [name, type, tag_name || null, template_name, templateLanguage, templateCategory, scheduled_at, chatwoot_account_id, chatwoot_inbox_id]
+      `INSERT INTO campaigns (name, type, tag_name, template_name, template_language, template_category, scheduled_at, chatwoot_account_id, chatwoot_inbox_id, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
+      [name, type, tag_name || null, template_name, templateLanguage, templateCategory, scheduledAtProcessed, chatwoot_account_id, chatwoot_inbox_id, req.user.id]
     );
     
     console.log(`🎯 Campanha criada com template: ${template_name} (${templateLanguage}, ${templateCategory})`);
+    
+    // Log para verificar como o scheduled_at foi salvo
+    if (result.rows[0].scheduled_at) {
+      console.log(`📅 Campanha salva com scheduled_at: ${result.rows[0].scheduled_at}`);
+    }
+    
     res.json({ success: true, campaign: result.rows[0] });
   } catch (error) {
     console.error('Erro ao criar campanha:', error);
@@ -3467,19 +4389,73 @@ app.post('/api/campaigns', authenticateToken, async (req, res) => {
 // Listar campanhas com estatísticas detalhadas
 app.get('/api/campaigns', authenticateToken, async (req, res) => {
   try {
-    const result = await pool.query(`
+    let query = `
       SELECT 
         c.*,
-        COUNT(cs.id) as total_contacts,
-        COUNT(CASE WHEN cs.status = 'sent' THEN 1 END) as sent_count,
-        COUNT(CASE WHEN cs.status = 'delivered' THEN 1 END) as delivered_count,
-        COUNT(CASE WHEN cs.status = 'failed' THEN 1 END) as failed_count,
-        COUNT(CASE WHEN cs.status = 'pending' THEN 1 END) as pending_count
+        c.created_at - INTERVAL '3 hours' as created_at_brasil,
+        u.username as username,
+        COALESCE(cc.total_contacts, 0) as total_contacts,
+        COALESCE(cs.total_sends, 0) as total_sends,
+        COALESCE(cs.sent_count, 0) as sent_count,
+        COALESCE(cs.delivered_count, 0) as delivered_count,
+        COALESCE(cs.failed_count, 0) as failed_count,
+        COALESCE(cs.pending_count, 0) as pending_count
       FROM campaigns c
-      LEFT JOIN campaign_status cs ON c.id = cs.campaign_id
-      GROUP BY c.id
+      LEFT JOIN system_users u ON c.created_by = u.id
+      LEFT JOIN (
+        SELECT campaign_id, COUNT(*) as total_contacts
+        FROM campaign_contacts
+        GROUP BY campaign_id
+      ) cc ON c.id = cc.campaign_id
+      LEFT JOIN (
+        SELECT 
+          campaign_id,
+          COUNT(*) as total_sends,
+          COUNT(CASE WHEN status IN ('sent', 'delivered', 'read') THEN 1 END) as sent_count,
+          COUNT(CASE WHEN status = 'delivered' THEN 1 END) as delivered_count,
+          COUNT(CASE WHEN status IN ('failed', 'error') THEN 1 END) as failed_count,
+          COUNT(CASE WHEN status IN ('pending', 'queued') THEN 1 END) as pending_count
+        FROM campaign_status
+        GROUP BY campaign_id
+      ) cs ON c.id = cs.campaign_id
+    `;
+    
+    let queryParams = [];
+    
+    // Se não for admin, filtrar apenas campanhas do próprio usuário
+    if (req.user.role !== 'admin') {
+      query += ` WHERE c.created_by = $1`;
+      queryParams.push(req.user.id);
+    }
+    
+    query += `
       ORDER BY c.created_at DESC
-    `);
+    `;
+    
+    console.log('📊 Executando query de campanhas com contadores corrigidos...');
+    const result = await pool.query(query, queryParams);
+    
+    // Log para debug
+    if (result.rows.length > 0) {
+      const sampleCampaign = result.rows.find(row => row.id == 35) || result.rows[0];
+      console.log(`📊 Exemplo de campanha (${sampleCampaign.id}):`, {
+        name: sampleCampaign.name,
+        total_contacts: sampleCampaign.total_contacts,
+        total_sends: sampleCampaign.total_sends,
+        status: sampleCampaign.status
+      });
+      
+      // DEBUG: Log específico para campanhas com agendamento
+      const campanhaComAgendamento = result.rows.find(row => row.scheduled_at);
+      // if (campanhaComAgendamento) {
+      //   console.log('🔍 DEBUG BACKEND - Campanha com agendamento:');
+      //   console.log('   📅 scheduled_at (valor do PG):', campanhaComAgendamento.scheduled_at);
+      //   console.log('   📅 tipo:', typeof campanhaComAgendamento.scheduled_at);
+      //   console.log('   📅 instanceof Date:', campanhaComAgendamento.scheduled_at instanceof Date);
+      //   console.log('   📅 toString():', campanhaComAgendamento.scheduled_at.toString());
+      // }
+    }
+    
     res.json(result.rows);
   } catch (error) {
     console.error('Erro ao listar campanhas:', error);
@@ -3487,26 +4463,187 @@ app.get('/api/campaigns', authenticateToken, async (req, res) => {
   }
 });
 
-// Detalhes de uma campanha
+// Detalhes de uma campanha com contadores calculados
 app.get('/api/campaigns/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
-    const result = await pool.query('SELECT * FROM campaigns WHERE id = $1', [id]);
-    if (result.rows.length === 0) return res.status(404).json({ error: 'Campanha não encontrada' });
-    res.json(result.rows[0]);
+    
+    // Buscar dados básicos da campanha
+    const campaignResult = await pool.query('SELECT * FROM campaigns WHERE id = $1', [id]);
+    if (campaignResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Campanha não encontrada' });
+    }
+    
+    const campaign = campaignResult.rows[0];
+    
+    // Calcular total de contatos
+    const contactsResult = await pool.query(
+      'SELECT COUNT(*) as total_contacts FROM campaign_contacts WHERE campaign_id = $1',
+      [id]
+    );
+    
+    // Calcular estatísticas de envio
+    const statsResult = await pool.query(`
+      SELECT 
+        COUNT(*) as total_sends,
+        COUNT(CASE WHEN status = 'sent' OR status = 'delivered' OR status = 'read' THEN 1 END) as sent_count,
+        COUNT(CASE WHEN status = 'failed' OR status = 'error' THEN 1 END) as failed_count,
+        COUNT(CASE WHEN status = 'pending' OR status = 'queued' THEN 1 END) as pending_count
+      FROM campaign_status 
+      WHERE campaign_id = $1
+    `, [id]);
+    
+    // Combinar dados
+    const campaignDetails = {
+      ...campaign,
+      total_contacts: parseInt(contactsResult.rows[0].total_contacts) || 0,
+      total_sends: parseInt(statsResult.rows[0].total_sends) || 0,
+      sent_count: parseInt(statsResult.rows[0].sent_count) || 0,
+      failed_count: parseInt(statsResult.rows[0].failed_count) || 0,
+      pending_count: parseInt(statsResult.rows[0].pending_count) || 0
+    };
+    
+    console.log(`📊 Detalhes da campanha ${id}:`, {
+      total_contacts: campaignDetails.total_contacts,
+      total_sends: campaignDetails.total_sends,
+      sent_count: campaignDetails.sent_count,
+      failed_count: campaignDetails.failed_count,
+      pending_count: campaignDetails.pending_count,
+      status: campaign.status
+    });
+    
+    res.json(campaignDetails);
   } catch (error) {
     console.error('Erro ao obter campanha:', error);
     res.status(500).json({ error: 'Erro ao obter campanha' });
   }
 });
 
-app.delete('/api/campaigns/:id', authenticateToken, async (req, res) => {
+// Listar contatos de uma campanha
+app.get('/api/campaigns/:id/contacts', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
+    
+    // Verificar se a campanha existe
+    const campaignCheck = await pool.query('SELECT id FROM campaigns WHERE id = $1', [id]);
+    if (campaignCheck.rows.length === 0) {
+      return res.status(404).json({ error: 'Campanha não encontrada' });
+    }
+    
+    // Buscar contatos da campanha
+    const result = await pool.query(
+      'SELECT * FROM campaign_contacts WHERE campaign_id = $1 ORDER BY created_at',
+      [id]
+    );
+    
+    console.log(`📞 Contatos da campanha ${id}: ${result.rows.length} encontrados`);
+    
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Erro ao listar contatos da campanha:', error);
+    res.status(500).json({ error: 'Erro ao listar contatos da campanha' });
+  }
+});
+
+// Endpoint para verificar status do banco de dados da campanha
+app.post('/api/campaigns/check-database', authenticateToken, async (req, res) => {
+  try {
+    const { campaignId } = req.body;
+    
+    console.log(`🔍 Verificando banco de dados para campanha ${campaignId}...`);
+    
+    const checks = {
+      timestamp: new Date().toISOString(),
+      campaignId: campaignId,
+      database: process.env.DATABASE_URL ? 'Configurado' : 'Não configurado',
+      tables: {},
+      campaign: null,
+      contacts: null,
+      status: null
+    };
+    
+    // Verificar se as tabelas existem
+    const tablesCheck = await pool.query(`
+      SELECT table_name 
+      FROM information_schema.tables 
+      WHERE table_schema = 'public' 
+      AND table_name IN ('campaigns', 'campaign_contacts', 'campaign_status')
+      ORDER BY table_name
+    `);
+    
+    checks.tables.existing = tablesCheck.rows.map(row => row.table_name);
+    checks.tables.missing = ['campaigns', 'campaign_contacts', 'campaign_status']
+      .filter(table => !checks.tables.existing.includes(table));
+    
+    if (campaignId) {
+      // Verificar dados específicos da campanha
+      try {
+        const campaignCheck = await pool.query('SELECT * FROM campaigns WHERE id = $1', [campaignId]);
+        checks.campaign = {
+          exists: campaignCheck.rows.length > 0,
+          data: campaignCheck.rows[0] || null
+        };
+        
+        if (checks.campaign.exists) {
+          // Verificar contatos
+          const contactsCheck = await pool.query(
+            'SELECT COUNT(*) as total, json_agg(json_build_object(\'name\', name, \'phone\', phone)) as sample FROM campaign_contacts WHERE campaign_id = $1',
+            [campaignId]
+          );
+          checks.contacts = {
+            total: parseInt(contactsCheck.rows[0].total) || 0,
+            sample: contactsCheck.rows[0].sample || []
+          };
+          
+          // Verificar status de envio
+          const statusCheck = await pool.query(
+            'SELECT COUNT(*) as total, status, COUNT(*) as count FROM campaign_status WHERE campaign_id = $1 GROUP BY status',
+            [campaignId]
+          );
+          checks.status = {
+            total_records: statusCheck.rows.reduce((sum, row) => sum + parseInt(row.count), 0),
+            by_status: statusCheck.rows.reduce((acc, row) => {
+              acc[row.status] = parseInt(row.count);
+              return acc;
+            }, {})
+          };
+        }
+      } catch (dbError) {
+        checks.error = `Erro ao verificar dados da campanha: ${dbError.message}`;
+      }
+    }
+    
+    console.log('📊 Resultado da verificação do banco:', checks);
+    
+    res.json({ success: true, checks });
+  } catch (error) {
+    console.error('Erro na verificação do banco:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message,
+      hint: 'Execute o script create-campaign-tables.sql no PostgreSQL'
+    });
+  }
+});
+
+app.delete('/api/campaigns/:id', authenticateToken, async (req, res) => {
+  try {
+    // Apenas admins podem excluir campanhas
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Apenas administradores podem excluir campanhas' });
+    }
+    
+    const { id } = req.params;
+    
+    // Excluir execuções de campanhas primeiro (devido à foreign key constraint)
+    await pool.query('DELETE FROM campaign_executions WHERE campaign_id = $1', [id]);
+    
     // Excluir status/envios
     await pool.query('DELETE FROM campaign_status WHERE campaign_id = $1', [id]);
+    
     // Excluir contatos da campanha
     await pool.query('DELETE FROM campaign_contacts WHERE campaign_id = $1', [id]);
+    
     // Excluir a campanha
     const result = await pool.query('DELETE FROM campaigns WHERE id = $1 RETURNING *', [id]);
     if (result.rowCount === 0) {
@@ -3515,7 +4652,7 @@ app.delete('/api/campaigns/:id', authenticateToken, async (req, res) => {
     res.json({ success: true, message: 'Campanha e registros relacionados excluídos com sucesso!' });
   } catch (error) {
     console.error('Erro ao excluir campanha:', error);
-    res.status(500).json({ error: 'Erro ao excluir campanha' });
+    res.status(500).json({ error: 'Erro ao excluir campanha: ' + error.message });
   }
 });
 
@@ -3571,6 +4708,225 @@ app.post('/api/campaigns/:id/cancel', authenticateToken, async (req, res) => {
   } catch (error) {
     console.error('Erro ao cancelar campanha:', error);
     res.status(500).json({ error: 'Erro ao cancelar campanha' });
+  }
+});
+
+// Iniciar/executar campanha manualmente
+app.post('/api/campaigns/:id/start', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    console.log(`🚀 Solicitação para iniciar campanha ${id} manualmente...`);
+    
+    // Verifica se a campanha existe e pode ser iniciada
+    const result = await pool.query('SELECT * FROM campaigns WHERE id = $1', [id]);
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Campanha não encontrada' });
+    }
+    
+    const campaign = result.rows[0];
+    
+    // Verificar se a campanha pode ser iniciada
+    if (['running', 'completed'].includes(campaign.status)) {
+      return res.status(400).json({ 
+        error: 'Campanha já foi iniciada ou finalizada',
+        current_status: campaign.status 
+      });
+    }
+    
+    // Verificar se é uma campanha cancelada
+    if (campaign.status === 'cancelled') {
+      return res.status(400).json({ 
+        error: 'Campanha foi cancelada e não pode ser iniciada',
+        current_status: campaign.status 
+      });
+    }
+    
+    console.log(`📋 Iniciando campanha: ${campaign.name} (Status atual: ${campaign.status})`);
+    
+    // Atualiza status para 'running'
+    await pool.query('UPDATE campaigns SET status = $1, updated_at = NOW() WHERE id = $2', ['running', id]);
+    
+    // Inicia processamento em background
+    processCampaign(id).catch(err => {
+      console.error(`❌ Erro no processamento da campanha ${id}:`, err);
+      // Marcar como falha em caso de erro crítico
+      pool.query('UPDATE campaigns SET status = $1, updated_at = NOW() WHERE id = $2', ['failed', id])
+        .catch(updateErr => console.error(`❌ Erro ao atualizar status para failed:`, updateErr));
+    });
+    
+    console.log(`✅ Campanha ${id} (${campaign.name}) iniciada com sucesso`);
+    
+    res.json({ 
+      success: true, 
+      message: 'Campanha iniciada com sucesso',
+      campaign: {
+        id: campaign.id,
+        name: campaign.name,
+        status: 'running',
+        type: campaign.type,
+        template_name: campaign.template_name
+      }
+    });
+    
+  } catch (error) {
+    console.error(`❌ Erro ao iniciar campanha ${req.params.id}:`, error);
+    res.status(500).json({ 
+      error: 'Erro interno ao iniciar campanha',
+      details: error.message 
+    });
+  }
+});
+
+// Reenviar campanhas com erro
+app.post('/api/campaigns/:id/retry', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Buscar campanha
+    const campaignResult = await pool.query('SELECT * FROM campaigns WHERE id = $1', [id]);
+    if (campaignResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Campanha não encontrada' });
+    }
+    
+    const campaign = campaignResult.rows[0];
+    
+    // Resetar status dos contatos com falha para 'pending'
+    const retryResult = await pool.query(
+      'UPDATE campaign_status SET status = $1, error_message = NULL WHERE campaign_id = $2 AND status = $3',
+      ['pending', id, 'failed']
+    );
+    
+    // Resetar também executions com falha
+    await pool.query(
+      'UPDATE campaign_executions SET status = $1, error_message = NULL WHERE campaign_id = $2 AND status = $3',
+      ['pending', id, 'failed']
+    );
+    
+    const retryCount = retryResult.rowCount;
+    
+    if (retryCount === 0) {
+      return res.json({ success: false, message: 'Nenhum contato com erro encontrado para reenvio' });
+    }
+    
+    // Atualizar status da campanha para 'running'
+    await pool.query('UPDATE campaigns SET status = $1, updated_at = NOW() WHERE id = $2', ['running', id]);
+    
+    // Processar campanha em background (apenas os pendentes)
+    processCampaign(id).catch(err => console.error('Erro no reenvio da campanha:', err));
+    
+    res.json({ 
+      success: true, 
+      message: `Reenvio iniciado para ${retryCount} contato(s) com erro`,
+      retryCount: retryCount
+    });
+  } catch (error) {
+    console.error('Erro ao reenviar campanha:', error);
+    res.status(500).json({ error: 'Erro ao reenviar campanha' });
+  }
+});
+
+// Obter detalhes de erros de uma campanha
+app.get('/api/campaigns/:id/errors', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const result = await pool.query(`
+      SELECT 
+        cs.contact_id,
+        cs.status,
+        cs.error_message,
+        cs.created_at,
+        cc.name,
+        cc.phone,
+        ce.error_message as execution_error
+      FROM campaign_status cs
+      LEFT JOIN campaign_contacts cc ON cs.contact_id = cc.id AND cs.campaign_id = cc.campaign_id
+      LEFT JOIN campaign_executions ce ON cs.campaign_id = ce.campaign_id AND cc.phone = ce.contact_id
+      WHERE cs.campaign_id = $1 AND cs.status = 'failed'
+      ORDER BY cs.created_at DESC
+    `, [id]);
+    
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Erro ao buscar erros da campanha:', error);
+    res.status(500).json({ error: 'Erro ao buscar erros da campanha' });
+  }
+});
+
+// Verificar e corrigir campanhas presas no status "running"
+app.post('/api/campaigns/fix-stuck', authenticateToken, async (req, res) => {
+  try {
+    console.log('🔧 Verificando campanhas presas no status "running"...');
+    
+    // Buscar campanhas que estão "running" há mais de 30 minutos
+    const stuckCampaigns = await pool.query(`
+      SELECT 
+        c.id,
+        c.name,
+        c.status,
+        c.updated_at,
+        COUNT(cs.id) as total_contacts,
+        COUNT(CASE WHEN cs.status = 'sent' THEN 1 END) as sent_count,
+        COUNT(CASE WHEN cs.status = 'failed' THEN 1 END) as failed_count,
+        COUNT(CASE WHEN cs.status = 'pending' THEN 1 END) as pending_count
+      FROM campaigns c
+      LEFT JOIN campaign_status cs ON c.id = cs.campaign_id
+      WHERE c.status = 'running' 
+        AND c.updated_at < NOW() - INTERVAL '30 minutes'
+      GROUP BY c.id, c.name, c.status, c.updated_at
+      ORDER BY c.updated_at ASC
+    `);
+    
+    if (stuckCampaigns.rows.length === 0) {
+      return res.json({ 
+        success: true, 
+        message: 'Nenhuma campanha presa encontrada',
+        fixed: 0
+      });
+    }
+    
+    let fixedCount = 0;
+    const fixedCampaigns = [];
+    
+    for (const campaign of stuckCampaigns.rows) {
+      const { id, name, total_contacts, sent_count, failed_count, pending_count } = campaign;
+      
+      console.log(`🔍 Analisando campanha ${id} (${name}): ${sent_count}/${total_contacts} enviadas, ${pending_count} pendentes`);
+      
+      // Se não há contatos pendentes, marcar como completed
+      if (pending_count === 0) {
+        await pool.query('UPDATE campaigns SET status = $1, updated_at = NOW() WHERE id = $2', ['completed', id]);
+        console.log(`✅ Campanha ${id} marcada como 'completed'`);
+        fixedCampaigns.push({ id, name, status: 'completed', reason: 'Todos os contatos foram processados' });
+        fixedCount++;
+      }
+      // Se há muitos erros e poucos enviados, marcar como failed
+      else if (failed_count > sent_count && failed_count > total_contacts * 0.5) {
+        await pool.query('UPDATE campaigns SET status = $1, updated_at = NOW() WHERE id = $2', ['failed', id]);
+        console.log(`❌ Campanha ${id} marcada como 'failed' devido a muitos erros`);
+        fixedCampaigns.push({ id, name, status: 'failed', reason: 'Muitos erros de envio detectados' });
+        fixedCount++;
+      }
+      // Se ainda há pendentes, tentar reprocessar
+      else if (pending_count > 0) {
+        console.log(`🔄 Reprocessando campanha ${id} com ${pending_count} contatos pendentes...`);
+        processCampaign(id).catch(err => console.error(`Erro ao reprocessar campanha ${id}:`, err));
+        fixedCampaigns.push({ id, name, status: 'reprocessing', reason: `Reprocessando ${pending_count} contatos pendentes` });
+        fixedCount++;
+      }
+    }
+    
+    res.json({
+      success: true,
+      message: `${fixedCount} campanha(s) corrigida(s)`,
+      fixed: fixedCount,
+      campaigns: fixedCampaigns
+    });
+    
+  } catch (error) {
+    console.error('Erro ao corrigir campanhas presas:', error);
+    res.status(500).json({ error: 'Erro ao corrigir campanhas presas' });
   }
 });
 
@@ -3836,7 +5192,29 @@ app.get('/api/whatsapp/templates', authenticateToken, async (req, res) => {
 app.get('/api/campaigns/:id/status', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
-    const result = await pool.query('SELECT * FROM campaign_status WHERE campaign_id = $1', [id]);
+    
+    console.log(`📊 Buscando status detalhado da campanha ${id}...`);
+    
+    const result = await pool.query(`
+      SELECT 
+        cs.id,
+        cs.campaign_id,
+        cs.contact_id,
+        cs.status,
+        cs.message_id,
+        cs.error_message,
+        cs.sent_at,
+        cs.created_at,
+        cc.name as contact_name,
+        cc.phone as contact_phone
+      FROM campaign_status cs
+      LEFT JOIN campaign_contacts cc ON cs.contact_id = cc.id AND cs.campaign_id = cc.campaign_id
+      WHERE cs.campaign_id = $1
+      ORDER BY cs.created_at DESC
+    `, [id]);
+    
+    console.log(`📊 Encontrados ${result.rows.length} registros de status para campanha ${id}`);
+    
     res.json(result.rows);
   } catch (error) {
     console.error('Erro ao listar status da campanha:', error);
@@ -3844,618 +5222,165 @@ app.get('/api/campaigns/:id/status', authenticateToken, async (req, res) => {
   }
 });
 
-// Observação: No processo de envio de mensagens, checar status da campanha antes de cada envio:
-// const status = await pool.query('SELECT status FROM campaigns WHERE id = $1', [campaignId]);
-// if (status.rows[0].status === 'cancelled') { interromper envio }
-
-// Forçar sincronização de templates WhatsApp
-app.post('/api/whatsapp/templates/sync', authenticateToken, async (req, res) => {
-  try {
-    console.log('🔄 Iniciando sincronização forçada de templates WhatsApp...');
-    
-    // Obter parâmetros da requisição (conta e caixa selecionadas)
-    const { accountId, inboxId } = req.query;
-    console.log(`📋 Sincronização para Account ID: ${accountId}, Inbox ID: ${inboxId}`);
-    
-    let syncResults = [];
-    let found = false;
-    
-    // Primeira prioridade: Usar credenciais da caixa de entrada selecionada
-    if (accountId && inboxId) {
-      try {
-        console.log(`🔍 Buscando configurações da caixa de entrada para sincronização (Account: ${accountId}, Inbox: ${inboxId})`);
-        
-        const inboxDetailsResponse = await axios.get(`${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/inboxes/${inboxId}`, {
-          headers: { 'api_access_token': CHATWOOT_API_TOKEN }
-        });
-        
-        const inboxDetails = inboxDetailsResponse.data.payload;
-        const config = inboxDetails?.provider_config;
-        
-        console.log(`📱 Sincronizando caixa: ${inboxDetails.name}`);
-        
-        if (config?.business_account_id && config?.api_key) {
-          try {
-            console.log('🚀 Sincronizando via API oficial usando credenciais da caixa...');
-            
-            const whatsappResponse = await axios.get(
-              `https://graph.facebook.com/v23.0/${config.business_account_id}/message_templates`,
-              {
-                headers: { 'Authorization': `Bearer ${config.api_key}` },
-                params: { 
-                  fields: 'name,status,category,language,components',
-                  limit: 1000
-                }
-              }
-            );
-            
-            if (whatsappResponse.data?.data) {
-              const allTemplates = whatsappResponse.data.data;
-              const approvedTemplates = allTemplates.filter(t => t.status === 'APPROVED');
-              
-              console.log(`📊 Caixa '${inboxDetails.name}': ${allTemplates.length} templates total, ${approvedTemplates.length} aprovados`);
-              
-              syncResults.push({
-                method: `whatsapp_official_api_inbox_${inboxId}`,
-                inboxId: inboxId,
-                inboxName: inboxDetails.name,
-                status: 'success',
-                templatesCount: allTemplates.length,
-                approvedCount: approvedTemplates.length,
-                message: `Templates verificados via API oficial para caixa '${inboxDetails.name}'`
-              });
-              found = true;
-              // Se funcionou, retornar sucesso
-              return res.json({
-                success: true,
-                message: `✅ Sincronização via API oficial: ${approvedTemplates.length} templates aprovados na caixa '${inboxDetails.name}'`,
-                results: syncResults,
-                source: 'whatsapp_official_api_inbox',
-                nextStep: 'Templates atualizados! Recarregue a lista de templates'
-              });
-            }
-          } catch (whatsappError) {
-            console.error(`❌ Erro na API oficial para caixa '${inboxDetails.name}':`, whatsappError.response?.data || whatsappError.message);
-            syncResults.push({
-              method: `whatsapp_official_api_inbox_${inboxId}`,
-              inboxId: inboxId,
-              inboxName: inboxDetails.name,
-              status: 'failed',
-              error: whatsappError.response?.data?.error?.message || whatsappError.message
-            });
-          }
-        } else {
-          console.log(`⚠️ Caixa '${inboxDetails.name}' não possui credenciais completas da API do WhatsApp`);
-          syncResults.push({
-            method: `whatsapp_official_api_inbox_${inboxId}`,
-            inboxId: inboxId,
-            inboxName: inboxDetails.name,
-            status: 'skipped',
-            message: 'Credenciais da API oficial não configuradas para esta caixa'
-          });
-        }
-      } catch (inboxError) {
-        console.error(`❌ Erro ao buscar detalhes da caixa de entrada:`, inboxError.response?.data || inboxError.message);
-        syncResults.push({
-          method: 'inbox_details',
-          status: 'failed',
-          error: inboxError.message
-        });
-      }
-    }
-    
-    // Segunda prioridade: Verificar se a API oficial global está configurada
-    if (!found && WHATSAPP_BUSINESS_ACCOUNT_ID && WHATSAPP_API_TOKEN) {
-      try {
-        console.log('🚀 Verificando templates via API oficial do WhatsApp...');
-        
-        const whatsappResponse = await axios.get(
-          `https://graph.facebook.com/v23.0/${WHATSAPP_BUSINESS_ACCOUNT_ID}/message_templates`,
-          {
-            headers: { 'Authorization': `Bearer ${WHATSAPP_API_TOKEN}` },
-            params: { 
-              fields: 'name,status,category,language,components',
-              limit: 1000 // Aumentar limite para sincronização
-            }
-          }
-        );
-        
-        if (whatsappResponse.data?.data) {
-          const allTemplates = whatsappResponse.data.data;
-          const approvedTemplates = allTemplates.filter(t => t.status === 'APPROVED');
-          
-          console.log(`📊 API oficial: ${allTemplates.length} templates total, ${approvedTemplates.length} aprovados`);
-          
-          syncResults.push({
-            method: 'whatsapp_official_api',
-            status: 'success',
-            templatesCount: allTemplates.length,
-            approvedCount: approvedTemplates.length,
-            message: `Templates verificados via API oficial do WhatsApp`
-          });
-          found = true;
-          // Se a API oficial funcionou, retornar sucesso
-          return res.json({
-            success: true,
-            message: `✅ Sincronização via API oficial: ${approvedTemplates.length} templates aprovados encontrados`,
-            results: syncResults,
-            source: 'whatsapp_official_api',
-            nextStep: 'Templates atualizados! Recarregue a lista de templates'
-          });
-        }
-      } catch (whatsappError) {
-        console.error('❌ Erro na API oficial do WhatsApp:', whatsappError.response?.data || whatsappError.message);
-        syncResults.push({
-          method: 'whatsapp_official_api',
-          status: 'failed',
-          error: whatsappError.response?.data?.error?.message || whatsappError.message
-        });
-      }
-    }
-    
-    // Se não encontrou credenciais válidas
-    if (!found) {
-      return res.status(400).json({
-        success: false,
-        message: 'Nenhuma credencial válida da API oficial do WhatsApp encontrada para sincronização.',
-        results: syncResults
-      });
-    }
-  } catch (error) {
-    console.error('❌ Erro na sincronização forçada:', error.response?.data || error.message);
-    res.status(500).json({ 
-      error: 'Erro ao sincronizar templates',
-      details: error.message
-    });
-  }
-});
-
-// Iniciar/agendar envio de campanha
-app.post('/api/campaigns/:id/start', authenticateToken, async (req, res) => {
-  try {
-    const { id } = req.params;
-    // Verifica se a campanha existe e pode ser iniciada
-    const result = await pool.query('SELECT * FROM campaigns WHERE id = $1', [id]);
-    if (result.rows.length === 0) return res.status(404).json({ error: 'Campanha não encontrada' });
-    const campaign = result.rows[0];
-    if (['running', 'completed'].includes(campaign.status)) {
-      return res.status(400).json({ error: 'Campanha já foi iniciada ou finalizada' });
-    }
-    // Atualiza status para 'running'
-    await pool.query('UPDATE campaigns SET status = $1, updated_at = NOW() WHERE id = $2', ['running', id]);
-    // Inicia processamento em background
-    processCampaign(id).catch(err => console.error('Erro no processamento da campanha:', err));
-    res.json({ success: true, message: 'Envio iniciado' });
-  } catch (error) {
-    console.error('Erro ao iniciar campanha:', error);
-    res.status(500).json({ error: 'Erro ao iniciar campanha' });
-  }
-});
-
-// Reenviar campanhas com erro
-app.post('/api/campaigns/:id/retry', authenticateToken, async (req, res) => {
+// 🆕 NOVO: Listar execuções por campanha
+app.get('/api/campaigns/:id/executions', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     
-    // Buscar campanha
-    const campaignResult = await pool.query('SELECT * FROM campaigns WHERE id = $1', [id]);
-    if (campaignResult.rows.length === 0) {
-      return res.status(404).json({ error: 'Campanha não encontrada' });
-    }
-    
-    const campaign = campaignResult.rows[0];
-    
-    // Resetar status dos contatos com falha para 'pending'
-    const retryResult = await pool.query(
-      'UPDATE campaign_status SET status = $1, error_message = NULL WHERE campaign_id = $2 AND status = $3',
-      ['pending', id, 'failed']
-    );
-    
-    const retryCount = retryResult.rowCount;
-    
-    if (retryCount === 0) {
-      return res.json({ success: false, message: 'Nenhum contato com erro encontrado para reenvio' });
-    }
-    
-    // Atualizar status da campanha para 'running'
-    await pool.query('UPDATE campaigns SET status = $1, updated_at = NOW() WHERE id = $2', ['running', id]);
-    
-    // Processar campanha em background (apenas os pendentes)
-    processCampaign(id).catch(err => console.error('Erro no reenvio da campanha:', err));
-    
-    res.json({ 
-      success: true, 
-      message: `Reenvio iniciado para ${retryCount} contato(s) com erro`,
-      retryCount: retryCount
-    });
-  } catch (error) {
-    console.error('Erro ao reenviar campanha:', error);
-    res.status(500).json({ error: 'Erro ao reenviar campanha' });
-  }
-});
-
-// Obter detalhes de erros de uma campanha
-app.get('/api/campaigns/:id/errors', authenticateToken, async (req, res) => {
-  try {
-    const { id } = req.params;
+    console.log(`📊 Buscando execuções detalhadas da campanha ${id}...`);
     
     const result = await pool.query(`
       SELECT 
-        cs.contact_id,
-        cs.status,
-        cs.error_message,
-        cs.created_at,
-        cc.name,
-        cc.phone
-      FROM campaign_status cs
-      LEFT JOIN campaign_contacts cc ON cs.contact_id = cc.phone AND cs.campaign_id = cc.campaign_id
-      WHERE cs.campaign_id = $1 AND cs.status = 'failed'
-      ORDER BY cs.created_at DESC
+        ce.id,
+        ce.campaign_id,
+        ce.contact_id,
+        ce.conversation_id,
+        ce.status,
+        ce.executed_at,
+        ce.error_message,
+        ce.created_at,
+        cc.name as contact_name,
+        cc.phone as contact_phone
+      FROM campaign_executions ce
+      LEFT JOIN campaign_contacts cc ON ce.contact_id = cc.phone AND ce.campaign_id = cc.campaign_id
+      WHERE ce.campaign_id = $1
+      ORDER BY ce.created_at DESC
     `, [id]);
     
+    console.log(`📊 Encontradas ${result.rows.length} execuções para campanha ${id}`);
+    
     res.json(result.rows);
   } catch (error) {
-    console.error('Erro ao buscar erros da campanha:', error);
-    res.status(500).json({ error: 'Erro ao buscar erros da campanha' });
+    console.error('Erro ao listar execuções da campanha:', error);
+    res.status(500).json({ error: 'Erro ao listar execuções da campanha' });
   }
 });
 
-// Listar campanhas agendadas
-app.get('/api/campaigns/scheduled', authenticateToken, async (req, res) => {
+// 🆕 NOVO: Estatísticas detalhadas de execuções por campanha
+app.get('/api/campaigns/:id/execution-stats', authenticateToken, async (req, res) => {
   try {
+    const { id } = req.params;
+    
+    console.log(`📊 Calculando estatísticas de execução da campanha ${id}...`);
+    
     const result = await pool.query(`
       SELECT 
-        c.id,
-        c.name,
-        c.scheduled_at,
-        c.status,
-        c.created_at,
-        COUNT(cs.id) as total_contacts
-      FROM campaigns c
-      LEFT JOIN campaign_status cs ON c.id = cs.campaign_id
-      WHERE c.scheduled_at IS NOT NULL 
-        AND c.status = 'pending'
-      GROUP BY c.id, c.name, c.scheduled_at, c.status, c.created_at
-      ORDER BY c.scheduled_at ASC
-    `);
+        COUNT(*) as total_executions,
+        COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending_count,
+        COUNT(CASE WHEN status = 'sent' THEN 1 END) as sent_count,
+        COUNT(CASE WHEN status = 'failed' THEN 1 END) as failed_count,
+        COUNT(CASE WHEN conversation_id IS NOT NULL THEN 1 END) as with_conversation_count,
+        COUNT(CASE WHEN executed_at IS NOT NULL THEN 1 END) as executed_count,
+        MIN(executed_at) as first_execution,
+        MAX(executed_at) as last_execution,
+        AVG(EXTRACT(EPOCH FROM (executed_at - created_at))) as avg_execution_time_seconds
+      FROM campaign_executions
+      WHERE campaign_id = $1
+    `, [id]);
     
-    res.json(result.rows);
+    const stats = result.rows[0];
+    
+    // Calcular porcentagens
+    const totalExecutions = parseInt(stats.total_executions) || 0;
+    const enrichedStats = {
+      ...stats,
+      total_executions: totalExecutions,
+      pending_count: parseInt(stats.pending_count) || 0,
+      sent_count: parseInt(stats.sent_count) || 0,
+      failed_count: parseInt(stats.failed_count) || 0,
+      with_conversation_count: parseInt(stats.with_conversation_count) || 0,
+      executed_count: parseInt(stats.executed_count) || 0,
+      avg_execution_time_seconds: parseFloat(stats.avg_execution_time_seconds) || 0,
+      // Porcentagens
+      pending_percentage: totalExecutions > 0 ? ((parseInt(stats.pending_count) || 0) / totalExecutions * 100).toFixed(1) : '0.0',
+      sent_percentage: totalExecutions > 0 ? ((parseInt(stats.sent_count) || 0) / totalExecutions * 100).toFixed(1) : '0.0',
+      failed_percentage: totalExecutions > 0 ? ((parseInt(stats.failed_count) || 0) / totalExecutions * 100).toFixed(1) : '0.0',
+      with_conversation_percentage: totalExecutions > 0 ? ((parseInt(stats.with_conversation_count) || 0) / totalExecutions * 100).toFixed(1) : '0.0'
+    };
+    
+    console.log(`📊 Estatísticas de execução da campanha ${id}:`, {
+      total: enrichedStats.total_executions,
+      sent: enrichedStats.sent_count,
+      failed: enrichedStats.failed_count,
+      with_conversation: enrichedStats.with_conversation_count
+    });
+    
+    res.json(enrichedStats);
   } catch (error) {
-    console.error('Erro ao listar campanhas agendadas:', error);
-    res.status(500).json({ error: 'Erro ao listar campanhas agendadas' });
+    console.error('Erro ao calcular estatísticas de execução:', error);
+    res.status(500).json({ error: 'Erro ao calcular estatísticas de execução' });
   }
 });
 
-// Verificar e corrigir campanhas presas no status "running"
-app.post('/api/campaigns/fix-stuck', authenticateToken, async (req, res) => {
+// 🆕 NOVO: Comparar dados entre campaign_status e campaign_executions
+app.get('/api/campaigns/:id/data-comparison', authenticateToken, async (req, res) => {
   try {
-    console.log('🔧 Verificando campanhas presas no status "running"...');
+    const { id } = req.params;
     
-    // Buscar campanhas que estão "running" há mais de 30 minutos
-    const stuckCampaigns = await pool.query(`
+    console.log(`🔍 Comparando dados entre tabelas para campanha ${id}...`);
+    
+    // Buscar dados das duas tabelas
+    const statusResult = await pool.query(`
       SELECT 
-        c.id,
-        c.name,
-        c.status,
-        c.updated_at,
-        COUNT(cs.id) as total_contacts,
-        COUNT(CASE WHEN cs.status = 'sent' THEN 1 END) as sent_count,
-        COUNT(CASE WHEN cs.status = 'failed' THEN 1 END) as failed_count,
-        COUNT(CASE WHEN cs.status = 'pending' THEN 1 END) as pending_count
-      FROM campaigns c
-      LEFT JOIN campaign_status cs ON c.id = cs.campaign_id
-      WHERE c.status = 'running' 
-        AND c.updated_at < NOW() - INTERVAL '30 minutes'
-      GROUP BY c.id, c.name, c.status, c.updated_at
-      ORDER BY c.updated_at ASC
-    `);
+        COUNT(*) as total_status,
+        COUNT(CASE WHEN status = 'pending' THEN 1 END) as status_pending,
+        COUNT(CASE WHEN status = 'sent' THEN 1 END) as status_sent,
+        COUNT(CASE WHEN status = 'failed' THEN 1 END) as status_failed
+      FROM campaign_status 
+      WHERE campaign_id = $1
+    `, [id]);
     
-    if (stuckCampaigns.rows.length === 0) {
-      return res.json({ 
-        success: true, 
-        message: 'Nenhuma campanha presa encontrada',
-        fixed: 0
-      });
-    }
+    const executionResult = await pool.query(`
+      SELECT 
+        COUNT(*) as total_executions,
+        COUNT(CASE WHEN status = 'pending' THEN 1 END) as exec_pending,
+        COUNT(CASE WHEN status = 'sent' THEN 1 END) as exec_sent,
+        COUNT(CASE WHEN status = 'failed' THEN 1 END) as exec_failed,
+        COUNT(CASE WHEN conversation_id IS NOT NULL THEN 1 END) as exec_with_conversation
+      FROM campaign_executions 
+      WHERE campaign_id = $1
+    `, [id]);
     
-    let fixedCount = 0;
-    const fixedCampaigns = [];
+    const contactsResult = await pool.query(`
+      SELECT COUNT(*) as total_contacts 
+      FROM campaign_contacts 
+      WHERE campaign_id = $1
+    `, [id]);
     
-    for (const campaign of stuckCampaigns.rows) {
-      const { id, name, total_contacts, sent_count, failed_count, pending_count } = campaign;
-      
-      console.log(`🔍 Analisando campanha ${id} (${name}): ${sent_count}/${total_contacts} enviadas, ${pending_count} pendentes`);
-      
-      // Se não há contatos pendentes, marcar como completed
-      if (pending_count === 0) {
-        await pool.query('UPDATE campaigns SET status = $1, updated_at = NOW() WHERE id = $2', ['completed', id]);
-        console.log(`✅ Campanha ${id} marcada como 'completed'`);
-        fixedCampaigns.push({ id, name, status: 'completed', reason: 'Todos os contatos foram processados' });
-        fixedCount++;
+    const comparison = {
+      campaign_id: parseInt(id),
+      contacts: {
+        total: parseInt(contactsResult.rows[0]?.total_contacts) || 0
+      },
+      campaign_status: {
+        total: parseInt(statusResult.rows[0]?.total_status) || 0,
+        pending: parseInt(statusResult.rows[0]?.status_pending) || 0,
+        sent: parseInt(statusResult.rows[0]?.status_sent) || 0,
+        failed: parseInt(statusResult.rows[0]?.status_failed) || 0
+      },
+      campaign_executions: {
+        total: parseInt(executionResult.rows[0]?.total_executions) || 0,
+        pending: parseInt(executionResult.rows[0]?.exec_pending) || 0,
+        sent: parseInt(executionResult.rows[0]?.exec_sent) || 0,
+        failed: parseInt(executionResult.rows[0]?.exec_failed) || 0,
+        with_conversation: parseInt(executionResult.rows[0]?.exec_with_conversation) || 0
+      },
+      // Verificações de consistência
+      consistency_checks: {
+        contacts_vs_status: (contactsResult.rows[0]?.total_contacts || 0) === (statusResult.rows[0]?.total_status || 0),
+        contacts_vs_executions: (contactsResult.rows[0]?.total_contacts || 0) === (executionResult.rows[0]?.total_executions || 0),
+        status_vs_executions: (statusResult.rows[0]?.total_status || 0) === (executionResult.rows[0]?.total_executions || 0)
       }
-      // Se há muitos erros e poucos enviados, marcar como failed
-      else if (failed_count > sent_count && failed_count > total_contacts * 0.5) {
-        await pool.query('UPDATE campaigns SET status = $1, updated_at = NOW() WHERE id = $2', ['failed', id]);
-        console.log(`❌ Campanha ${id} marcada como 'failed' devido a muitos erros`);
-        fixedCampaigns.push({ id, name, status: 'failed', reason: 'Muitos erros de envio detectados' });
-        fixedCount++;
-      }
-      // Se ainda há pendentes, tentar reprocessar
-      else if (pending_count > 0) {
-        console.log(`🔄 Reprocessando campanha ${id} com ${pending_count} contatos pendentes...`);
-        processCampaign(id).catch(err => console.error(`Erro ao reprocessar campanha ${id}:`, err));
-        fixedCampaigns.push({ id, name, status: 'reprocessing', reason: `Reprocessando ${pending_count} contatos pendentes` });
-        fixedCount++;
-      }
-    }
+    };
     
-    res.json({
-      success: true,
-      message: `${fixedCount} campanha(s) corrigida(s)`,
-      fixed: fixedCount,
-      campaigns: fixedCampaigns
-    });
+    console.log(`🔍 Comparação de dados da campanha ${id}:`, comparison);
     
+    res.json(comparison);
   } catch (error) {
-    console.error('Erro ao corrigir campanhas presas:', error);
-    res.status(500).json({ error: 'Erro ao corrigir campanhas presas' });
+    console.error('Erro ao comparar dados da campanha:', error);
+    res.status(500).json({ error: 'Erro ao comparar dados da campanha' });
   }
 });
-
-// Backup da função antiga
-async function processCampaign_legacy(campaignId) {
-  // ... (copiar todo o conteúdo da função processCampaign atual aqui) ...
-   // Busca dados da campanha
-   const { rows } = await pool.query('SELECT * FROM campaigns WHERE id = $1', [campaignId]);
-   if (rows.length === 0) return;
-   const campaign = rows[0];
-   let contacts = [];
-   try {
-     // Busca contatos conforme tipo
-     if (campaign.type === 'csv') {
-       const result = await pool.query('SELECT * FROM campaign_contacts WHERE campaign_id = $1', [campaignId]);
-       contacts = result.rows;
-     } else if (campaign.type === 'tag') {
-       // Busca contatos via API do Chatwoot pela tag
-       const response = await axios.get(`${CHATWOOT_BASE_URL}/api/v1/accounts/${campaign.chatwoot_account_id}/contacts`, {
-         headers: { 'api_access_token': CHATWOOT_API_TOKEN },
-         params: { label: campaign.tag_name }
-       });
-       contacts = (response.data.payload || []).map(c => ({ name: c.name, phone: c.phone_number }));
-     }
-     // Buscar credenciais da caixa de entrada
-     const inboxDetailsResponse = await axios.get(`${CHATWOOT_BASE_URL}/api/v1/accounts/${campaign.chatwoot_account_id}/inboxes/${campaign.chatwoot_inbox_id}`, {
-       headers: { 'api_access_token': CHATWOOT_API_TOKEN }
-     });
-     let inboxDetails = inboxDetailsResponse.data.payload;
-     if (!inboxDetails && inboxDetailsResponse.data && inboxDetailsResponse.data.id && inboxDetailsResponse.data.name) {
-       inboxDetails = inboxDetailsResponse.data;
-     }
-     if (!inboxDetails) {
-       throw new Error('Caixa de entrada não encontrada ou resposta inválida da API');
-     }
-     const config = inboxDetails.provider_config;
-     if (!config?.business_account_id || !config?.api_key || !config?.phone_number_id) {
-       throw new Error('Credenciais da API oficial do WhatsApp não configuradas para esta caixa');
-     }
-     // Buscar informações do template
-     let templateLanguage = campaign.template_language || 'pt_BR';
-     let templateCategory = campaign.template_category || 'UTILITY';
-     // Buscar template na API oficial para garantir que existe
-     const whatsappTemplatesResponse = await axios.get(
-       `https://graph.facebook.com/v17.0/${config.business_account_id}/message_templates`,
-       {
-         headers: { 'Authorization': `Bearer ${config.api_key}` },
-         params: { fields: 'name,status,category,language,components', limit: 100 }
-       }
-     );
-     const templates = (whatsappTemplatesResponse.data.data || []).filter(t => t.status === 'APPROVED');
-     const selectedTemplate = templates.find(t => t.name === campaign.template_name);
-     if (!selectedTemplate) {
-       throw new Error('Template não encontrado ou não aprovado na API oficial do WhatsApp');
-     }
-     templateLanguage = selectedTemplate.language || templateLanguage;
-     templateCategory = selectedTemplate.category || templateCategory;
-     // Enviar mensagem para cada contato
-     for (const contact of contacts) {
-       const normalizedPhone = contact.phone.replace(/[^\d]/g, '');
-       // Montar payload para API oficial do WhatsApp
-       const payload = {
-         messaging_product: 'whatsapp',
-         to: normalizedPhone,
-         type: 'template',
-         template: {
-           name: campaign.template_name,
-           language: { code: templateLanguage },
-           components: [
-             {
-               type: 'body',
-               parameters: [
-                 { type: 'text', text: contact.name || 'Cliente' }
-                 // Adicione mais parâmetros conforme o template
-               ]
-             }
-           ]
-         }
-       };
-       try {
-         const sendResponse = await axios.post(
-           `https://graph.facebook.com/v17.0/${config.phone_number_id}/messages`,
-           payload,
-           { headers: { Authorization: `Bearer ${config.api_key}` } }
-         );
-         console.log(`[Campanha ${campaignId}] ✅ Mensagem enviada para ${normalizedPhone}:`, sendResponse.data);
-         await pool.query(
-           'UPDATE campaign_status SET status = $1, message_id = $2, error_message = NULL WHERE campaign_id = $3 AND contact_id = $4',
-           ['sent', sendResponse.data.messages?.[0]?.id || null, campaignId, contact.id || contact.phone]
-         );
-       } catch (err) {
-         console.error(`[Campanha ${campaignId}] ❌ Erro ao enviar mensagem para ${normalizedPhone}:`, err.response?.data || err.message);
-         await pool.query(
-           'UPDATE campaign_status SET status = $1, error_message = $2 WHERE campaign_id = $3 AND contact_id = $4',
-           ['failed', err.response?.data?.error?.message || err.message, campaignId, contact.id || contact.phone]
-         );
-       }
-     }
-   } catch (error) {
-     console.error('Erro ao processar campanha:', error);
-   }
-}
-
-// Nova função usando API oficial do WhatsApp
-async function processCampaign(campaignId) {
-  // Busca dados da campanha
-  const { rows } = await pool.query('SELECT * FROM campaigns WHERE id = $1', [campaignId]);
-  if (rows.length === 0) return;
-  const campaign = rows[0];
-  let contacts = [];
-  try {
-    // Busca contatos conforme tipo
-    if (campaign.type === 'csv') {
-      const result = await pool.query('SELECT * FROM campaign_contacts WHERE campaign_id = $1', [campaignId]);
-      contacts = result.rows;
-    } else if (campaign.type === 'tag') {
-      // Busca contatos via API do Chatwoot pela tag
-      const response = await axios.get(`${CHATWOOT_BASE_URL}/api/v1/accounts/${campaign.chatwoot_account_id}/contacts`, {
-        headers: { 'api_access_token': CHATWOOT_API_TOKEN },
-        params: { label: campaign.tag_name }
-      });
-      contacts = (response.data.payload || []).map(c => ({ name: c.name, phone: c.phone_number }));
-    }
-    // Buscar credenciais da caixa de entrada
-    const inboxDetailsResponse = await axios.get(`${CHATWOOT_BASE_URL}/api/v1/accounts/${campaign.chatwoot_account_id}/inboxes/${campaign.chatwoot_inbox_id}`, {
-      headers: { 'api_access_token': CHATWOOT_API_TOKEN }
-    });
-    let inboxDetails = inboxDetailsResponse.data.payload;
-    if (!inboxDetails && inboxDetailsResponse.data && inboxDetailsResponse.data.id && inboxDetailsResponse.data.name) {
-      inboxDetails = inboxDetailsResponse.data;
-    }
-    if (!inboxDetails) {
-      throw new Error('Caixa de entrada não encontrada ou resposta inválida da API');
-    }
-    const config = inboxDetails.provider_config;
-    if (!config?.business_account_id || !config?.api_key || !config?.phone_number_id) {
-      throw new Error('Credenciais da API oficial do WhatsApp não configuradas para esta caixa');
-    }
-    // Buscar informações do template
-    let templateLanguage = campaign.template_language || 'pt_BR';
-    let templateCategory = campaign.template_category || 'UTILITY';
-    // Buscar template na API oficial para garantir que existe
-    const whatsappTemplatesResponse = await axios.get(
-      `https://graph.facebook.com/v17.0/${config.business_account_id}/message_templates`,
-      {
-        headers: { 'Authorization': `Bearer ${config.api_key}` },
-        params: { fields: 'name,status,category,language,components', limit: 100 }
-      }
-    );
-    const templates = (whatsappTemplatesResponse.data.data || []).filter(t => t.status === 'APPROVED');
-    const selectedTemplate = templates.find(t => t.name === campaign.template_name);
-    if (!selectedTemplate) {
-      throw new Error('Template não encontrado ou não aprovado na API oficial do WhatsApp');
-    }
-    console.log("selectedTemplate", JSON.stringify(selectedTemplate, null, 2));
-    templateLanguage = selectedTemplate.language || templateLanguage;
-    templateCategory = selectedTemplate.category || templateCategory;
-    // Enviar mensagem para cada contato
-    for (const contact of contacts) {
-      // Garantir formato E.164 com +
-      let normalizedPhone = contact.phone.replace(/[^\d+]/g, '');
-      if (!normalizedPhone.startsWith('+')) {
-        normalizedPhone = '+' + normalizedPhone;
-      }
-      // Montar payload para API oficial do WhatsApp
-      const bodyComponent = selectedTemplate.components?.find(c => c.type === 'BODY');
-      
-      console.log(`[INFO] Template text: ${bodyComponent?.text}`);
-      console.log(`[INFO] Template example:`, JSON.stringify(bodyComponent?.example, null, 2));
-      
-      const paramValues = [contact.name || 'Cliente', contact.phone || '', campaign.name || '', new Date().toLocaleDateString(templateLanguage === 'pt_BR' ? 'pt-BR' : 'en-US')];
-      const parameters = [];
-      
-      // Verificar se template tem parâmetros nomeados ou numerados
-      if (bodyComponent && bodyComponent.text) {
-        // Primeiro verificar se há parâmetros nomeados na estrutura example
-        if (bodyComponent.example && bodyComponent.example.body_text_named_params) {
-          // Template com parâmetros nomeados - usar estrutura com parameter_name
-          bodyComponent.example.body_text_named_params.forEach((namedParam, index) => {
-            parameters.push({
-              type: 'text',
-              parameter_name: namedParam.param_name,
-              text: paramValues[index] || ''
-            });
-          });
-          console.log(`[INFO] Using named parameters structure, count: ${parameters.length}`);
-        } else {
-          // Template com parâmetros numerados ou sem exemplo específico
-          const numberedParams = bodyComponent.text.match(/\{\{\d+\}\}/g) || [];
-          const namedParams = bodyComponent.text.match(/\{\{[a-zA-Z_][a-zA-Z0-9_]*\}\}/g) || [];
-          const totalParams = Math.max(numberedParams.length, namedParams.length);
-          
-          for (let i = 0; i < totalParams; i++) {
-            parameters.push({ 
-              type: 'text', 
-              text: paramValues[i] || '' 
-            });
-          }
-          console.log(`[INFO] Using positional parameters, count: ${totalParams}`);
-        }
-      }
-      
-      console.log(`[INFO] Final parameters:`, JSON.stringify(parameters, null, 2));
-      
-      const bodyComponentObj = { type: 'body' };
-      if (parameters.length > 0) {
-        bodyComponentObj.parameters = parameters;
-      }
-      const payload = {
-        messaging_product: 'whatsapp',
-        to: normalizedPhone,
-        type: 'template',
-        template: {
-          name: campaign.template_name,
-          language: { code: templateLanguage },
-          components: [bodyComponentObj]
-        }
-      };
-      try {
-        console.log("payload", JSON.stringify(payload, null, 2));
-        const sendResponse = await axios.post(
-          `https://graph.facebook.com/v23.0/${config.phone_number_id}/messages`,
-          payload,
-          { headers: { Authorization: `Bearer ${config.api_key}` } }
-        );
-        console.log(`[Campanha ${campaignId}] ✅ Mensagem enviada para ${normalizedPhone}:`, sendResponse.data);
-        await pool.query(
-          'UPDATE campaign_status SET status = $1, message_id = $2, error_message = NULL WHERE campaign_id = $3 AND contact_id = $4',
-          ['sent', sendResponse.data.messages?.[0]?.id || null, campaignId, contact.id || contact.phone]
-        );
-      } catch (err) {
-        const errorMsg = typeof err.response?.data === 'object' ? JSON.stringify(err.response.data) : (err.response?.data?.error?.message || err.message);
-        console.error(`[Campanha ${campaignId}] ❌ Erro ao enviar mensagem para ${normalizedPhone}:`, errorMsg);
-        await pool.query(
-          'UPDATE campaign_status SET status = $1, error_message = $2 WHERE campaign_id = $3 AND contact_id = $4',
-          ['failed', errorMsg, campaignId, contact.id || contact.phone]
-        );
-      }
-    }
-    
-    // Atualizar status geral da campanha após processar todos os contatos
-    console.log(`[Campanha ${campaignId}] 📊 Processamento concluído. Atualizando status da campanha...`);
-    await pool.query('UPDATE campaigns SET status = $1, updated_at = NOW() WHERE id = $2', ['completed', campaignId]);
-    console.log(`[Campanha ${campaignId}] ✅ Status da campanha atualizado para 'completed'`);
-    
-  } catch (error) {
-    console.error(`[Campanha ${campaignId}] ❌ Erro ao processar campanha:`, error);
-    
-    // Atualizar status da campanha para 'failed' em caso de erro
-    try {
-      await pool.query('UPDATE campaigns SET status = $1, updated_at = NOW() WHERE id = $2', ['failed', campaignId]);
-      console.log(`[Campanha ${campaignId}] ❌ Status da campanha atualizado para 'failed'`);
-    } catch (updateError) {
-      console.error(`[Campanha ${campaignId}] ❌ Erro ao atualizar status da campanha para 'failed':`, updateError);
-    }
-  }
-}
 
 // ===== ROTAS DE ANEXOS E MÍDIA =====
 
@@ -4798,6 +5723,298 @@ app.post('/apiworkflow/conversation/:contactId/reset', async (req, res) => {
     console.error('Erro ao executar reset via API:', error);
     res.status(500).json({ error: 'Erro ao zerar fluxo.' });
   }
+});
+
+// Endpoint para atribuir conversa a membro do time
+app.post('/apiworkflow/conversations/:conversationId/assign-team-member', async (req, res) => {
+  try {
+    const { conversationId } = req.params;
+    const { teamId, strategy = 'round_robin' } = req.body;
+    
+    if (!teamId) {
+      return res.status(400).json({ success: false, error: 'TeamId é obrigatório' });
+    }
+    
+    const options = { strategy };
+    await assignConversationToTeamMember(conversationId, teamId, options);
+    
+    res.json({ success: true, message: 'Conversa atribuída com sucesso' });
+  } catch (error) {
+    console.error('Erro ao atribuir conversa a membro do time:', error);
+    res.status(500).json({ success: false, error: 'Erro interno do servidor' });
+  }
+});
+
+// Endpoint para obter agentes de um time
+app.get('/apiworkflow/teams/:teamId/agents', async (req, res) => {
+  try {
+    const { teamId } = req.params;
+    const allAgents = await getChatwootAgents();
+    
+    // Filtrar agentes que pertencem ao time e não são administradores
+    const teamMembers = allAgents.filter(agent => {
+      const belongsToTeam = agent.teams && agent.teams.some(team => team.id === parseInt(teamId));
+      const isNotAdmin = agent.role !== 'administrator';
+      const isActive = agent.available_name !== 'offline' && agent.status !== 'offline';
+      
+      return belongsToTeam && isNotAdmin && isActive;
+    });
+    
+    res.json({ success: true, data: teamMembers });
+  } catch (error) {
+    console.error('Erro ao obter agentes do time:', error);
+    res.status(500).json({ success: false, error: 'Erro interno do servidor' });
+  }
+});
+
+// Health check
+app.get('/health', (req, res) => {
+  res.json({ 
+    status: 'OK', 
+    timestamp: new Date().toISOString(),
+    polling_active: isPolling,
+    last_message_id: lastMessageId
+  });
+});
+
+
+// Endpoint para testar webhook do WhatsApp +553133700909
+// Endpoint para webhook do WhatsApp +553133700909 (compatível com Meta)
+app.get('/test-webhook', async (req, res) => {
+  try {
+    const hub_mode = req.query['hub.mode'];
+    const hub_challenge = req.query['hub.challenge'];
+    const hub_verify_token = req.query['hub.verify_token'];
+    const timestamp = getTimestamp();
+    
+    console.log(`🔔 [WEBHOOK VERIFICATION] Recebida requisição de verificação`);
+    console.log(`📅 Timestamp: ${timestamp}`);
+    console.log(`🔍 Query params:`, { 
+      'hub.mode': hub_mode, 
+      'hub.challenge': hub_challenge, 
+      'hub.verify_token': hub_verify_token 
+    });
+    
+    // Verificar se é um desafio de verificação da Meta
+    if (hub_mode === 'subscribe' && hub_challenge && hub_verify_token) {
+      const expectedToken = 'd37e425f60d78187e521de0bc7e070c3';
+      
+      if (hub_verify_token === expectedToken) {
+        console.log(`✅ [VERIFICATION] Token válido, respondendo com challenge: ${hub_challenge}`);
+        res.status(200).send(hub_challenge);
+      } else {
+        console.log(`❌ [VERIFICATION] Token inválido. Esperado: ${expectedToken}, Recebido: ${hub_verify_token}`);
+        res.status(403).json({ error: 'Forbidden' });
+      }
+    } else {
+      console.log(`⚠️ [VERIFICATION] Parâmetros de verificação inválidos`);
+      console.log(`   hub_mode: ${hub_mode}`);
+      console.log(`   hub_challenge: ${hub_challenge}`);
+      console.log(`   hub_verify_token: ${hub_verify_token}`);
+      res.status(400).json({ error: 'Bad Request' });
+    }
+    
+  } catch (error) {
+    console.error(`❌ [VERIFICATION] Erro na verificação:`, error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+app.post('/test-webhook', async (req, res) => {
+  try {
+    const timestamp = getTimestamp();
+    const payload = req.body;
+    
+    console.log(`🔔 [WEBHOOK PAYLOAD] Recebido webhook para +553133700909`);
+    console.log(`📅 Timestamp: ${timestamp}`);
+    console.log(`📦 Payload recebido:`, JSON.stringify(payload, null, 2));
+    
+    // Log detalhado do payload
+    if (payload.entry && payload.entry.length > 0) {
+      const entry = payload.entry[0];
+      console.log(`📋 Entry ID: ${entry.id}`);
+      
+      if (entry.changes && entry.changes.length > 0) {
+        const change = entry.changes[0];
+        console.log(`🔄 Field: ${change.field}`);
+        
+        if (change.value) {
+          const value = change.value;
+          console.log(`📱 Messaging Product: ${value.messaging_product}`);
+          
+          if (value.metadata) {
+            console.log(`📞 Display Phone Number: ${value.metadata.display_phone_number}`);
+            console.log(`🆔 Phone Number ID: ${value.metadata.phone_number_id}`);
+          }
+          
+          if (value.messages && value.messages.length > 0) {
+            const message = value.messages[0];
+            console.log(`💬 Message ID: ${message.id}`);
+            console.log(`👤 From: ${message.from}`);
+            console.log(`📝 Type: ${message.type}`);
+            console.log(`⏰ Timestamp: ${message.timestamp}`);
+            
+            if (message.text) {
+              console.log(`📄 Text: ${message.text.body}`);
+            }
+          }
+          
+          if (value.contacts && value.contacts.length > 0) {
+            const contact = value.contacts[0];
+            console.log(`👤 Contact WA ID: ${contact.wa_id}`);
+            if (contact.profile) {
+              console.log(`👤 Contact Name: ${contact.profile.name}`);
+            }
+          }
+        }
+      }
+    }
+    
+    // Verificar se é um teste da Meta
+    const isMetaTest = payload.entry && 
+                      payload.entry[0] && 
+                      payload.entry[0].changes && 
+                      payload.entry[0].changes[0] && 
+                      payload.entry[0].changes[0].value &&
+                      payload.entry[0].changes[0].value.metadata &&
+                      payload.entry[0].changes[0].value.metadata.display_phone_number === "16505551111";
+    
+    if (isMetaTest) {
+      console.log(`⚠️ [TESTE META] Este é um teste da Meta com dados fictícios`);
+    } else {
+      console.log(`✅ [MENSAGEM REAL] Este parece ser um webhook de mensagem real`);
+      
+      // Se for uma mensagem real, encaminhar para o Chatwoot
+      try {
+        const chatwootWebhookUrl = 'https://crm.inovaianalytics.com.br/webhooks/whatsapp/+553133700909';
+        console.log(`🔄 [FORWARD] Encaminhando para Chatwoot: ${chatwootWebhookUrl}`);
+        
+        const chatwootResponse = await axios.post(chatwootWebhookUrl, payload, {
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          timeout: 10000
+        });
+        
+        console.log(`✅ [FORWARD] Chatwoot respondeu com status: ${chatwootResponse.status}`);
+      } catch (forwardError) {
+        console.error(`❌ [FORWARD] Erro ao encaminhar para Chatwoot:`, forwardError.message);
+      }
+    }
+    
+    console.log(`🎯 [WEBHOOK] Processamento concluído com sucesso`);
+    
+    // Responder com status 200 para a Meta
+    res.status(200).json({ 
+      success: true, 
+      message: 'Webhook processado com sucesso',
+      timestamp: timestamp,
+      is_meta_test: isMetaTest
+    });
+    
+  } catch (error) {
+    console.error(`❌ [WEBHOOK] Erro ao processar webhook:`, error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Erro interno ao processar webhook',
+      message: error.message
+    });
+  }
+});
+
+// Endpoint para simular webhook do WhatsApp (para testes)
+app.post('/simulate-webhook-553133700909', async (req, res) => {
+  try {
+    const timestamp = getTimestamp();
+    
+    // Payload de simulação
+    const simulatedPayload = {
+      object: "whatsapp_business_account",
+      entry: [{
+        id: "1087815663310028",
+        changes: [{
+          value: {
+            messaging_product: "whatsapp",
+            metadata: {
+              display_phone_number: "+553133700909",
+              phone_number_id: "755748160947577"
+            },
+            contacts: [{
+              profile: {
+                name: "Usuário Teste"
+              },
+              wa_id: "5511999999999"
+            }],
+            messages: [{
+              from: "5511999999999",
+              id: `test_${Date.now()}`,
+              timestamp: Math.floor(Date.now() / 1000).toString(),
+              type: "text",
+              text: {
+                body: "Mensagem de teste simulada"
+              }
+            }]
+          },
+          field: "messages"
+        }]
+      }]
+    };
+    
+    console.log(`🎭 [SIMULAÇÃO] Enviando webhook simulado para +553133700909`);
+    console.log(`📅 Timestamp: ${timestamp}`);
+    console.log(`📦 Payload simulado:`, JSON.stringify(simulatedPayload, null, 2));
+    
+    // Fazer requisição para o webhook real
+    const webhookUrl = 'https://crm.inovaianalytics.com.br/webhooks/whatsapp/+553133700909';
+    
+    const response = await axios.post(webhookUrl, simulatedPayload, {
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      timeout: 10000
+    });
+    
+    console.log(`✅ [SIMULAÇÃO] Webhook simulado enviado com sucesso`);
+    console.log(`📊 Status Code: ${response.status}`);
+    console.log(`📄 Response:`, response.data);
+    
+    res.status(200).json({
+      success: true,
+      message: 'Webhook simulado enviado com sucesso',
+      timestamp: timestamp,
+      webhook_url: webhookUrl,
+      response_status: response.status,
+      response_data: response.data
+    });
+    
+  } catch (error) {
+    console.error(`❌ [SIMULAÇÃO] Erro ao enviar webhook simulado:`, error);
+    
+    let errorDetails = {
+      message: error.message
+    };
+    
+    if (error.response) {
+      errorDetails.status = error.response.status;
+      errorDetails.data = error.response.data;
+    }
+    
+    res.status(500).json({
+      success: false,
+      error: 'Erro ao enviar webhook simulado',
+      details: errorDetails
+    });
+  }
+});
+
+// Health check
+app.get('/health', (req, res) => {
+  res.json({ 
+    status: 'OK', 
+    timestamp: new Date().toISOString(),
+    polling_active: isPolling,
+    last_message_id: lastMessageId
+  });
 });
 
 // Health check

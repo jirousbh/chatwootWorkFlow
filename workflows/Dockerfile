@@ -2,6 +2,12 @@ FROM node:18-alpine
 
 WORKDIR /app
 
+# Configurar timezone para Brasil
+ENV TZ=America/Sao_Paulo
+RUN apk add --no-cache tzdata && \
+    cp /usr/share/zoneinfo/$TZ /etc/localtime && \
+    echo $TZ > /etc/timezone
+
 # Copiar arquivos de dependências
 COPY package*.json ./
 

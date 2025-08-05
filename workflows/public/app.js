@@ -1,3 +1,72 @@
+// Função utilitária para corrigir interpretação de datas do backend
+function parseDateFromBackend(dateString) {
+    if (!dateString) return null;
+    
+    // Se a data já contém informação de timezone, usar diretamente
+    if (dateString.includes('+') || dateString.includes('Z')) {
+        return new Date(dateString);
+    }
+    
+    // Para datas do PostgreSQL que vêm no formato "YYYY-MM-DD HH:MM:SS" 
+    // assumir que são no horário UTC e converter para Brasil
+    if (typeof dateString === 'string' && /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}/.test(dateString)) {
+        // Interpretar como UTC e converter para horário do Brasil
+        const utcDate = new Date(dateString + 'Z'); // Forçar UTC
+        return utcDate;
+    }
+    
+    // Para outros formatos, tentar interpretação normal
+    return new Date(dateString);
+}
+
+// Função para formatar data no timezone do Brasil
+function formatDateBrazil(date, options = {}) {
+    if (!date) return '';
+    
+    const originalValue = date;
+    const parsedDate = typeof date === 'string' ? parseDateFromBackend(date) : date;
+    if (!parsedDate || isNaN(parsedDate.getTime())) return 'Data inválida';
+    
+    // Configurações padrão para exibir data e hora no Brasil
+    const defaultOptions = {
+        timeZone: 'America/Sao_Paulo',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        ...options
+    };
+    
+    const result = parsedDate.toLocaleString('pt-BR', defaultOptions);
+    
+    return result;
+}
+
+// Função para formatar data de agendamento no timezone do Brasil
+function formatDateScheduled(date, options = {}) {
+    if (!date) return '';
+    
+    const parsedDate = typeof date === 'string' ? parseDateFromBackend(date) : date;
+    if (!parsedDate || isNaN(parsedDate.getTime())) return 'Data inválida';
+    
+    // Configurações específicas para agendamento (sem segundos)
+    const defaultOptions = {
+        timeZone: 'America/Sao_Paulo',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        ...options
+    };
+    
+    const result = parsedDate.toLocaleString('pt-BR', defaultOptions);
+    
+    return result;
+}
+
 // Chatwoot Workflows Frontend Application
 class ChatwootWorkflowsApp {
     constructor() {
@@ -63,6 +132,9 @@ class ChatwootWorkflowsApp {
             document.getElementById('app').classList.remove('d-none');
             document.getElementById('currentUser').textContent = this.user.username;
             
+        // Configurar interface baseada no perfil do usuário
+        this.configureUIByRole();
+            
         // Adiciona listener para o formulário de senha (evitar duplicados)
             const form = document.getElementById('changePasswordForm');
             if (form && !form.hasAttribute('data-listener-added')) {
@@ -76,6 +148,1148 @@ class ChatwootWorkflowsApp {
             // Inicializar event listeners de campanhas após login
             initCampanhasAfterLogin();
     }
+
+    configureUIByRole() {
+        const isAdmin = this.user.role === 'admin';
+        
+        // Controlar visibilidade dos cards e áreas baseado no perfil
+        const configurationCard = document.getElementById('configurationCard');
+        const activeWorkflowsCard = document.getElementById('activeWorkflowsCard');
+        const userConfigurationCard = document.getElementById('userConfigurationCard');
+        const adminMainArea = document.getElementById('adminMainArea');
+        const userMainArea = document.getElementById('userMainArea');
+        
+        if (isAdmin) {
+            // Admin: mostrar interface administrativa + dashboard de campanhas
+            if (configurationCard) configurationCard.style.display = 'block';
+            if (activeWorkflowsCard) activeWorkflowsCard.style.display = 'block';
+            if (userConfigurationCard) userConfigurationCard.style.display = 'none';
+            if (adminMainArea) adminMainArea.style.display = 'block';
+            if (userMainArea) userMainArea.style.display = 'block'; // Admin vê dashboard de campanhas também
+            
+            // Configurar dashboard para admin (todas as campanhas)
+            this.setupAdminInterface();
+        } else {
+            // Usuário comum: mostrar interface simplificada
+            if (configurationCard) configurationCard.style.display = 'none';
+            if (activeWorkflowsCard) activeWorkflowsCard.style.display = 'none';
+            if (userConfigurationCard) userConfigurationCard.style.display = 'block';
+            if (adminMainArea) adminMainArea.style.display = 'none';
+            if (userMainArea) userMainArea.style.display = 'block';
+            
+            // Configurar eventos e dashboard para usuário
+            this.setupUserInterface();
+        }
+        
+        // Mostrar/ocultar menu de gerenciamento de usuários
+        const userManagementItem = document.getElementById('menuGerenciarUsuariosItem');
+        const listarTodasCampanhasItem = document.getElementById('menuListarTodasCampanhasItem');
+        
+        if (userManagementItem) {
+            if (isAdmin) {
+                userManagementItem.classList.remove('d-none');
+            } else {
+                userManagementItem.classList.add('d-none');
+            }
+        }
+        
+        if (listarTodasCampanhasItem) {
+            if (isAdmin) {
+                listarTodasCampanhasItem.classList.remove('d-none');
+            } else {
+                listarTodasCampanhasItem.classList.add('d-none');
+            }
+        }
+        
+        // Configurar interface está completo
+    }
+
+    setupUserInterface() {
+        // Configurar botões de criar campanha para usuários
+        this.setupCreateCampaignButtons();
+        
+        // Carregar dados nos selects do dashboard para usuários
+        this.loadDashboardSelects();
+        
+        // Carregar estatísticas do dashboard (apenas campanhas do usuário)
+        this.loadUserDashboardStats();
+    }
+
+    setupAdminInterface() {
+        // Configurar botões de criar campanha para admin
+        this.setupCreateCampaignButtons();
+        
+        // Carregar dados nos selects do dashboard para admin
+        this.loadDashboardSelects();
+        
+        // Carregar estatísticas do dashboard (todas as campanhas)
+        this.loadAdminDashboardStats();
+    }
+
+    // Carregar dados nos selects do dashboard (conta e caixa)
+    async loadDashboardSelects() {
+        try {
+            console.log('🔄 Carregando selects do dashboard...');
+            
+            // Carregar contas
+            const accounts = await this.apiRequest('/api/accounts');
+            if (Array.isArray(accounts) && accounts.length > 0) {
+                this.populateDashboardAccountSelects(accounts);
+            }
+        } catch (error) {
+            console.error('❌ Erro ao carregar selects do dashboard:', error);
+        }
+    }
+
+    // Popular selects de conta no dashboard
+    populateDashboardAccountSelects(accounts) {
+        console.log(`🔄 Populando selects do dashboard para role: ${this.user.role}`);
+        
+        // Usar IDs diferentes baseado no role
+        const selectId = this.user.role === 'admin' ? 'accountSelect' : 'userAccountSelect';
+        
+        console.log(`📋 ID do select a popular: ${selectId}`);
+        
+        const select = document.getElementById(selectId);
+        console.log(`🔍 Procurando elemento: ${selectId}`, select ? '✅ Encontrado' : '❌ Não encontrado');
+        
+        if (select) {
+            select.innerHTML = '<option value="">Selecione uma conta...</option>';
+            accounts.forEach(account => {
+                const option = document.createElement('option');
+                option.value = account.id;
+                option.textContent = account.name;
+                select.appendChild(option);
+                console.log(`📋 Adicionada conta: ${account.name} (ID: ${account.id})`);
+            });
+            console.log(`✅ Select ${selectId} populado com ${accounts.length} contas`);
+        } else {
+            console.error(`❌ Elemento ${selectId} não encontrado no DOM!`);
+        }
+    }
+
+    // Validar se conta e caixa foram selecionadas
+    validateAccountAndInboxSelection() {
+        console.log(`🔍 Validando seleção para role: ${this.user.role}`);
+        
+        // Usar IDs diferentes baseado no role
+        const accountSelectId = this.user.role === 'admin' ? 'accountSelect' : 'userAccountSelect';
+        const inboxSelectId = this.user.role === 'admin' ? 'inboxSelect' : 'userInboxSelect';
+        
+        console.log(`📋 Procurando elementos: ${accountSelectId}, ${inboxSelectId}`);
+        
+        const accountSelect = document.getElementById(accountSelectId);
+        const inboxSelect = document.getElementById(inboxSelectId);
+        
+        console.log(`🔍 Elementos encontrados:`, {
+            accountSelect: accountSelect ? '✅' : '❌',
+            inboxSelect: inboxSelect ? '✅' : '❌'
+        });
+        
+        if (!accountSelect || !inboxSelect) {
+            console.error('❌ Elementos de seleção não encontrados');
+            this.showAlert('Erro: elementos de seleção não encontrados', 'danger');
+            return false;
+        }
+        
+        const selectedAccount = accountSelect.value;
+        const selectedInbox = inboxSelect.value;
+        
+        console.log(`📋 Valores selecionados:`, {
+            account: selectedAccount,
+            inbox: selectedInbox
+        });
+        
+        if (!selectedAccount) {
+            console.warn('⚠️ Conta não selecionada');
+            this.showAlert('Por favor, selecione uma conta antes de criar uma campanha', 'warning');
+            accountSelect.focus();
+            return false;
+        }
+        
+        if (!selectedInbox) {
+            console.warn('⚠️ Caixa de entrada não selecionada');
+            this.showAlert('Por favor, selecione uma caixa de entrada antes de criar uma campanha', 'warning');
+            inboxSelect.focus();
+            return false;
+        }
+        
+        console.log(`✅ Validação aprovada: Conta ${selectedAccount}, Caixa ${selectedInbox}`);
+        return true;
+    }
+
+    setupCreateCampaignButtons() {
+        const buttons = [
+            document.getElementById('btnCriarCampanhaUser'),
+            document.getElementById('dashboardCreateCampaign'),
+            document.getElementById('btnCriarCampanha')
+        ];
+        
+        buttons.forEach(button => {
+            if (button && !button.hasAttribute('data-listener-added')) {
+                button.addEventListener('click', async () => {
+                    // Validar se conta e caixa foram selecionadas
+                    if (!this.validateAccountAndInboxSelection()) {
+                        return;
+                    }
+                    
+                    // Mostrar indicador de carregamento
+                    const originalText = button.innerHTML;
+                    button.disabled = true;
+                    button.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Carregando...';
+                    
+                    try {
+                        this.showUnifiedCampaignForm();
+                    } catch (error) {
+                        console.error('❌ Erro ao criar campanha:', error);
+                        this.showAlert('Erro ao abrir interface de campanha', 'danger');
+                    } finally {
+                        // Restaurar botão
+                        button.disabled = false;
+                        button.innerHTML = originalText;
+                    }
+                });
+                button.setAttribute('data-listener-added', 'true');
+            }
+        });
+    }
+
+
+
+    createUserCampaignArea() {
+        // Verificar se já existe
+        let campanhaArea = document.getElementById('userCampaignArea');
+        if (campanhaArea) {
+            campanhaArea.style.display = 'block';
+            return campanhaArea;
+        }
+
+        campanhaArea = document.createElement('div');
+        campanhaArea.id = 'userCampaignArea';
+        campanhaArea.className = 'card';
+        campanhaArea.style.display = 'block';
+
+        campanhaArea.innerHTML = `
+            <div class="card-header bg-success text-white">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">
+                        <i class="fas fa-plus me-2"></i>Nova Campanha WhatsApp
+                    </h5>
+                    <button class="btn btn-sm btn-light" onclick="window.app.hideUserCampaignInterface()">
+                        <i class="fas fa-arrow-left me-2"></i>Voltar ao Dashboard
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                <form id="userCampaignForm">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="userAccountSelect" class="form-label">
+                                    <i class="fas fa-building me-1"></i>Conta Chatwoot
+                                </label>
+                                <select class="form-select" id="userAccountSelect" required>
+                                    <option value="">Selecione uma conta...</option>
+                                </select>
+                                <small class="text-muted">Escolha a conta para enviar a campanha</small>
+                            </div>
+
+                            <div class="mb-3">
+                                <label for="userInboxSelect" class="form-label">
+                                    <i class="fas fa-inbox me-1"></i>Caixa de Entrada
+                                </label>
+                                <select class="form-select" id="userInboxSelect" required disabled>
+                                    <option value="">Primeiro selecione uma conta</option>
+                                </select>
+                                <small class="text-muted">Caixa de entrada do WhatsApp para envio</small>
+                            </div>
+
+                            <div class="mb-3">
+                                <label for="userCampanhaNome" class="form-label">
+                                    <i class="fas fa-tag me-1"></i>Nome da Campanha
+                                </label>
+                                <input type="text" class="form-control" id="userCampanhaNome" required>
+                                <small class="text-muted">Nome para identificar sua campanha</small>
+                            </div>
+
+                            <div class="mb-3">
+                                <label class="form-label">
+                                    <i class="fas fa-users me-1"></i>Método de Envio
+                                </label>
+                                <div class="card">
+                                    <div class="card-body">
+                                        <div class="row">
+                                            <div class="col-md-6">
+                                                <div class="form-check">
+                                                    <input type="radio" class="form-check-input" id="userMetodoTag" name="userMetodoEnvio" value="tag" checked>
+                                                    <label class="form-check-label" for="userMetodoTag">
+                                                        <strong>Por Tag</strong><br>
+                                                        <small class="text-muted">Enviar para contatos com tag específica</small>
+                                                    </label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-6">
+                                                <div class="form-check">
+                                                    <input type="radio" class="form-check-input" id="userMetodoLista" name="userMetodoEnvio" value="csv">
+                                                    <label class="form-check-label" for="userMetodoLista">
+                                                        <strong>Lista CSV</strong><br>
+                                                        <small class="text-muted">Upload de arquivo com contatos</small>
+                                                    </label>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="mb-3" id="userTagSection">
+                                <label for="userTagNome" class="form-label">
+                                    <i class="fas fa-tags me-1"></i>Nome da Tag
+                                </label>
+                                <select class="form-select" id="userTagNome">
+                                    <option value="">Carregando tags...</option>
+                                </select>
+                            </div>
+
+                            <div class="mb-3 d-none" id="userCsvSection">
+                                <label for="userCsvContatos" class="form-label">
+                                    <i class="fas fa-file-csv me-1"></i>Arquivo CSV
+                                </label>
+                                <input type="file" class="form-control" id="userCsvContatos" accept=".csv">
+                                <small class="text-muted">Formato: nome,telefone (sem cabeçalho)</small>
+                            </div>
+                        </div>
+
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="userModeloMensagem" class="form-label">
+                                    <i class="fas fa-comment-dots me-1"></i>Template da Mensagem
+                                </label>
+                                <select class="form-select" id="userModeloMensagem" required>
+                                    <option value="">Carregando templates...</option>
+                                </select>
+                                <small class="text-muted">Templates aprovados pelo WhatsApp</small>
+                            </div>
+
+                            <div class="mb-3">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="userAgendarEnvio">
+                                    <label class="form-check-label" for="userAgendarEnvio">
+                                        <i class="fas fa-clock me-1"></i>Agendar Envio
+                                    </label>
+                                </div>
+                            </div>
+
+                            <div class="row d-none" id="userAgendamentoSection">
+                                <div class="col-12 mb-2">
+                                    <div class="alert alert-info py-2 mb-3">
+                                        <i class="fas fa-info-circle me-2"></i>
+                                        <strong>Fuso Horário:</strong> Todos os agendamentos são no horário de Brasília (UTC-3).
+                                        A campanha será executada no horário exato informado.
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label for="userDataEnvio" class="form-label">
+                                            <i class="fas fa-calendar me-1"></i>Data
+                                        </label>
+                                        <input type="date" class="form-control" id="userDataEnvio">
+                                        <small class="text-muted">Data do agendamento</small>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label for="userHoraEnvio" class="form-label">
+                                            <i class="fas fa-clock me-1"></i>Hora (Brasília)
+                                        </label>
+                                        <input type="time" class="form-control" id="userHoraEnvio">
+                                        <small class="text-muted">Horário de Brasília (UTC-3)</small>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="d-flex gap-2 justify-content-end">
+                        <button type="button" class="btn btn-secondary" onclick="window.app.hideUserCampaignInterface()">
+                            <i class="fas fa-times me-2"></i>Cancelar
+                        </button>
+                        <button type="submit" class="btn btn-success">
+                            <i class="fas fa-paper-plane me-2"></i>Criar Campanha
+                        </button>
+                    </div>
+                </form>
+            </div>
+        `;
+
+        // Configurar event listeners
+        this.setupUserCampaignForm(campanhaArea);
+
+        // Garantir que o select seja populado após a criação completa
+        setTimeout(() => {
+            console.log('🔄 Verificação final: populando select de contas...');
+            this.populateUserAccountSelect();
+            
+            // Se o checkbox de agendamento já estiver marcado, pré-preencher os campos
+            const agendarCheckboxFinal = campanhaArea.querySelector('#userAgendarEnvio');
+            const dataInputFinal = campanhaArea.querySelector('#userDataEnvio');
+            const horaInputFinal = campanhaArea.querySelector('#userHoraEnvio');
+            
+            if (agendarCheckboxFinal && agendarCheckboxFinal.checked) {
+                setTimeout(() => {
+                    console.log('🔄 Pré-preenchendo data e hora atual (checkbox já marcado)...');
+                    
+                    if (dataInputFinal) {
+                        const today = new Date().toISOString().split('T')[0];
+                        dataInputFinal.value = today;
+                        console.log('✅ Data preenchida (final):', today);
+                    }
+                    
+                    if (horaInputFinal) {
+                        const now = new Date();
+                        const brazilTime = new Date(now.toLocaleString("en-US", {timeZone: "America/Sao_Paulo"}));
+                        const hours = brazilTime.getHours().toString().padStart(2, '0');
+                        const minutes = brazilTime.getMinutes().toString().padStart(2, '0');
+                        const horaValue = `${hours}:${minutes}`;
+                        horaInputFinal.value = horaValue;
+                        console.log('✅ Hora preenchida (final):', horaValue);
+                    }
+                }, 200);
+            }
+        }, 300);
+
+        return campanhaArea;
+    }
+
+    hideUserCampaignInterface() {
+        const campanhaArea = document.getElementById('userCampaignArea');
+        if (campanhaArea) campanhaArea.style.display = 'none';
+        
+        const userMainArea = document.getElementById('userMainArea');
+        if (userMainArea) userMainArea.style.display = 'block';
+    }
+
+    setupUserCampaignForm(campanhaArea) {
+        // Configurar mudança de método
+        const metodoInputs = campanhaArea.querySelectorAll('input[name="userMetodoEnvio"]');
+        metodoInputs.forEach(input => {
+            input.addEventListener('change', () => {
+                const tagSection = campanhaArea.querySelector('#userTagSection');
+                const csvSection = campanhaArea.querySelector('#userCsvSection');
+                
+                if (input.value === 'tag') {
+                    tagSection.classList.remove('d-none');
+                    csvSection.classList.add('d-none');
+                } else {
+                    tagSection.classList.add('d-none');
+                    csvSection.classList.remove('d-none');
+                }
+            });
+        });
+
+        // Configurar agendamento
+        const agendarCheckbox = campanhaArea.querySelector('#userAgendarEnvio');
+        const agendamentoSection = campanhaArea.querySelector('#userAgendamentoSection');
+        const dataInput = campanhaArea.querySelector('#userDataEnvio');
+        const horaInput = campanhaArea.querySelector('#userHoraEnvio');
+        
+        console.log('🔍 Debug - Elementos encontrados:', {
+            agendarCheckbox: !!agendarCheckbox,
+            agendamentoSection: !!agendamentoSection,
+            dataInput: !!dataInput,
+            horaInput: !!horaInput
+        });
+        
+        // Função para pré-preencher data e hora atual
+        const preencherDataHoraAtual = () => {
+            console.log('🔄 Executando preencherDataHoraAtual...');
+            
+            if (dataInput) {
+                const today = new Date().toISOString().split('T')[0];
+                dataInput.value = today;
+                console.log('✅ Data preenchida:', today);
+            } else {
+                console.log('❌ dataInput não encontrado');
+            }
+            
+            if (horaInput) {
+                const now = new Date();
+                const brazilTime = new Date(now.toLocaleString("en-US", {timeZone: "America/Sao_Paulo"}));
+                const hours = brazilTime.getHours().toString().padStart(2, '0');
+                const minutes = brazilTime.getMinutes().toString().padStart(2, '0');
+                const horaValue = `${hours}:${minutes}`;
+                horaInput.value = horaValue;
+                console.log('✅ Hora preenchida:', horaValue);
+            } else {
+                console.log('❌ horaInput não encontrado');
+            }
+        };
+        
+        // Definir data mínima como hoje
+        if (dataInput) {
+            const today = new Date().toISOString().split('T')[0];
+            dataInput.min = today;
+        }
+        
+        agendarCheckbox.addEventListener('change', () => {
+            console.log('🔄 Checkbox de agendamento alterado:', agendarCheckbox.checked);
+            
+            if (agendarCheckbox.checked) {
+                agendamentoSection.classList.remove('d-none');
+                console.log('✅ Seção de agendamento exibida');
+                
+                // Pré-preencher com data e hora atual quando ativado
+                setTimeout(() => {
+                    console.log('⏰ Executando preenchimento após timeout...');
+                    preencherDataHoraAtual();
+                    
+                    // Foco no campo de data
+                    if (dataInput) {
+                        dataInput.focus();
+                        console.log('✅ Foco definido no campo de data');
+                    }
+                }, 100);
+            } else {
+                agendamentoSection.classList.add('d-none');
+                console.log('✅ Seção de agendamento ocultada');
+            }
+        });
+        
+        // Validação em tempo real da data/hora
+        // if (dataInput && horaInput) {
+        //     const validateDateTime = () => {
+        //         if (dataInput.value && horaInput.value) {
+        //             const selectedDateTime = new Date(`${dataInput.value}T${horaInput.value}:00`);
+        //             const now = new Date();
+                    
+        //             if (selectedDateTime <= now) {
+        //                 horaInput.setCustomValidity('O horário deve ser no futuro');
+        //                 horaInput.reportValidity();
+        //             } else {
+        //                 horaInput.setCustomValidity('');
+        //             }
+        //         }
+        //     };
+            
+        //     dataInput.addEventListener('change', validateDateTime);
+        //     horaInput.addEventListener('change', validateDateTime);
+        // }
+
+        // Configurar mudança de conta
+        const accountSelect = campanhaArea.querySelector('#userAccountSelect');
+        if (accountSelect) {
+            accountSelect.addEventListener('change', async (e) => {
+                console.log('🔄 Mudança de conta detectada via event listener');
+                try {
+                    await this.onUserAccountChange();
+                } catch (error) {
+                    console.error('❌ Erro ao processar mudança de conta:', error);
+                    this.showAlert('Erro ao carregar caixas de entrada', 'danger');
+                }
+            });
+        }
+
+        // Configurar submit do formulário
+        const form = campanhaArea.querySelector('#userCampaignForm');
+        form.addEventListener('submit', (e) => {
+            e.preventDefault();
+            this.submitUserCampaign();
+        });
+
+        // Carregar dados iniciais
+        this.loadUserCampaignData();
+        
+        // Aguardar um pouco para garantir que o DOM seja renderizado
+        setTimeout(() => {
+            // Garantir que as contas estejam carregadas antes de popular o select
+            if (!this.accounts || this.accounts.length === 0) {
+                console.log('🔄 Contas não carregadas, carregando agora...');
+                this.loadAccounts().then(() => {
+                    // Aguardar mais um pouco antes de popular o select
+                    setTimeout(() => {
+                        this.populateUserAccountSelect();
+                    }, 100);
+                });
+            } else {
+        this.populateUserAccountSelect();
+            }
+        }, 200);
+    }
+
+    async loadUserCampaignData() {
+        // Carregar tags
+        try {
+            const response = await fetch('/api/chatwoot/tags', {
+                headers: { 'Authorization': `Bearer ${this.token}` }
+            });
+            
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+            
+            const tags = await response.json();
+            
+            const tagSelect = document.getElementById('userTagNome');
+            if (tagSelect) {
+                if (Array.isArray(tags) && tags.length > 0) {
+                tagSelect.innerHTML = '<option value="">Selecione uma tag</option>' + 
+                        tags.map(tag => `<option value="${tag.title || tag.name}">${tag.title || tag.name}</option>`).join('');
+                    console.log(`✅ ${tags.length} tags carregadas para usuário`);
+                } else {
+                    tagSelect.innerHTML = '<option value="">Nenhuma tag disponível</option>';
+                    console.log('ℹ️ Nenhuma tag encontrada');
+                }
+            }
+        } catch (error) {
+            console.error('❌ Erro ao carregar tags:', error);
+            
+            // Mostrar erro no select de tags
+            const tagSelect = document.getElementById('userTagNome');
+            if (tagSelect) {
+                tagSelect.innerHTML = '<option value="">Erro ao carregar tags</option>';
+            }
+            
+            // Mostrar alerta para o usuário
+            this.showAlert('Erro ao carregar tags. Verifique sua conexão.', 'warning');
+        }
+    }
+
+    populateUserAccountSelect() {
+        const accountSelect = document.getElementById('userAccountSelect');
+        if (!accountSelect) {
+            console.warn('❌ Elemento userAccountSelect não encontrado');
+            return;
+        }
+
+        // Debug completo das informações do usuário
+        console.log('🔍 DEBUG - Informações do usuário:', {
+            username: this.user.username,
+            role: this.user.role,
+            assigned_accounts: this.user.assigned_accounts,
+            total_accounts: this.accounts ? this.accounts.length : 0,
+            accounts: this.accounts
+        });
+
+        console.log(`🔍 Populando select de contas para usuário (${this.user.role}):`, this.accounts);
+
+        accountSelect.innerHTML = '<option value="">Selecione uma conta...</option>';
+        
+        if (this.accounts && this.accounts.length > 0) {
+            console.log(`✅ Carregando ${this.accounts.length} contas no select`);
+            this.accounts.forEach(account => {
+                const option = document.createElement('option');
+                option.value = account.id;
+                option.textContent = account.name;
+                accountSelect.appendChild(option);
+                console.log(`📋 Conta adicionada: ${account.name} (ID: ${account.id})`);
+            });
+            
+            // Se houver apenas uma conta, selecionar automaticamente e carregar inboxes
+            if (this.accounts.length === 1) {
+                console.log('🎯 Apenas uma conta disponível, selecionando automaticamente...');
+                accountSelect.value = this.accounts[0].id;
+                // Aguardar um pouco e depois carregar inboxes
+                setTimeout(async () => {
+                    await this.onUserAccountChange();
+                    // Remover botões de debug após seleção automática
+                    setTimeout(() => this.removeDebugButtons(), 1000);
+                }, 100);
+            }
+        } else {
+            console.warn('⚠️ Nenhuma conta encontrada para o usuário');
+            // Adicionar opção informativa com botão para recarregar
+            const option = document.createElement('option');
+            option.value = '';
+            option.textContent = 'Nenhuma conta disponível - Clique em "Recarregar Contas" abaixo';
+            option.disabled = true;
+            accountSelect.appendChild(option);
+            
+            // Adicionar botão de debug/recarregar (temporário)
+            this.addReloadAccountsButton();
+        }
+    }
+
+    addReloadAccountsButton() {
+        // Verificar se o botão já existe
+        const existingButton = document.getElementById('reloadAccountsBtn');
+        if (existingButton) return;
+        
+        // Encontrar container adequado
+        const accountContainer = document.getElementById('userAccountSelect').parentElement;
+        
+        // Criar botão de recarregar
+        const reloadButton = document.createElement('button');
+        reloadButton.id = 'reloadAccountsBtn';
+        reloadButton.type = 'button';
+        reloadButton.className = 'btn btn-sm btn-warning mt-2';
+        reloadButton.innerHTML = '<i class="fas fa-sync-alt me-1"></i>Recarregar Contas';
+        reloadButton.onclick = async () => {
+            reloadButton.disabled = true;
+            reloadButton.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Carregando...';
+            
+            try {
+                console.log('🔄 Forçando reload das contas...');
+                await this.loadAccounts();
+                this.populateUserAccountSelect();
+                
+                // Remover o botão se deu certo
+                if (this.accounts && this.accounts.length > 0) {
+                    reloadButton.remove();
+                }
+            } catch (error) {
+                console.error('❌ Erro ao recarregar contas:', error);
+            } finally {
+                reloadButton.disabled = false;
+                reloadButton.innerHTML = '<i class="fas fa-sync-alt me-1"></i>Recarregar Contas';
+            }
+        };
+        
+        accountContainer.appendChild(reloadButton);
+        console.log('🔧 Botão de recarregar contas adicionado');
+    }
+
+    async loadInboxesForAccount(accountId) {
+        try {
+            console.log(`🔄 Carregando inboxes para conta ${accountId}`);
+            const inboxes = await this.apiRequest(`/api/accounts/${accountId}/inboxes`);
+            
+            if (Array.isArray(inboxes) && inboxes.length > 0) {
+                // Adicionar/atualizar inboxes desta conta no array global
+                this.inboxes = this.inboxes || [];
+                
+                // Remover inboxes antigas desta conta
+                this.inboxes = this.inboxes.filter(inbox => String(inbox.account_id) !== String(accountId));
+                
+                // Adicionar novas inboxes
+                this.inboxes = this.inboxes.concat(inboxes);
+                
+                console.log(`✅ ${inboxes.length} inboxes carregadas para conta ${accountId}`);
+                return inboxes;
+            } else {
+                console.warn(`⚠️ Nenhuma inbox encontrada para conta ${accountId}`);
+                return [];
+            }
+        } catch (error) {
+            console.error(`❌ Erro ao carregar inboxes para conta ${accountId}:`, error);
+            throw error;
+        }
+    }
+
+    async loadInboxesDirectlyForAccount(selectedAccountId) {
+        try {
+            const inboxes = await this.loadInboxesForAccount(selectedAccountId);
+            const inboxSelect = document.getElementById('userInboxSelect');
+            
+            if (inboxes.length > 0) {
+                inboxSelect.innerHTML = '<option value="">Selecione uma caixa de entrada...</option>';
+                inboxes.forEach(inbox => {
+                    const option = document.createElement('option');
+                    option.value = inbox.id;
+                    option.textContent = inbox.name;
+                    inboxSelect.appendChild(option);
+                    console.log(`📋 Caixa adicionada diretamente: ${inbox.name} (ID: ${inbox.id})`);
+                });
+                inboxSelect.disabled = false;
+                console.log(`✅ ${inboxes.length} caixas carregadas diretamente no select`);
+                
+                // Remover botões de debug se tudo estiver funcionando
+                setTimeout(() => this.removeDebugButtons(), 500);
+            } else {
+                inboxSelect.innerHTML = '<option value="">Nenhuma caixa de entrada encontrada</option>';
+                inboxSelect.disabled = true;
+                this.addReloadInboxesButton(selectedAccountId);
+            }
+        } catch (error) {
+            console.error('❌ Erro ao carregar inboxes diretamente:', error);
+            const inboxSelect = document.getElementById('userInboxSelect');
+            inboxSelect.innerHTML = '<option value="">Erro ao carregar caixas</option>';
+            inboxSelect.disabled = true;
+            this.addReloadInboxesButton(selectedAccountId);
+        }
+    }
+
+    addReloadInboxesButton(accountId) {
+        // Verificar se o botão já existe
+        const existingButton = document.getElementById('reloadInboxesBtn');
+        if (existingButton) return;
+        
+        // Encontrar container adequado
+        const inboxContainer = document.getElementById('userInboxSelect').parentElement;
+        
+        // Criar botão de recarregar
+        const reloadButton = document.createElement('button');
+        reloadButton.id = 'reloadInboxesBtn';
+        reloadButton.type = 'button';
+        reloadButton.className = 'btn btn-sm btn-warning mt-2';
+        reloadButton.innerHTML = '<i class="fas fa-sync-alt me-1"></i>Recarregar Caixas';
+        reloadButton.onclick = async () => {
+            reloadButton.disabled = true;
+            reloadButton.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Carregando...';
+            
+            try {
+                console.log(`🔄 Forçando reload das caixas para conta ${accountId}...`);
+                await this.loadInboxesDirectlyForAccount(accountId);
+                
+                // Remover o botão se deu certo
+                const inboxSelect = document.getElementById('userInboxSelect');
+                if (inboxSelect && !inboxSelect.disabled && inboxSelect.options.length > 1) {
+                    reloadButton.remove();
+                }
+            } catch (error) {
+                console.error('❌ Erro ao recarregar caixas:', error);
+            } finally {
+                reloadButton.disabled = false;
+                reloadButton.innerHTML = '<i class="fas fa-sync-alt me-1"></i>Recarregar Caixas';
+            }
+        };
+        
+        inboxContainer.appendChild(reloadButton);
+        console.log('🔧 Botão de recarregar caixas adicionado');
+    }
+
+    removeDebugButtons() {
+        // Remover botões de debug quando tudo estiver funcionando
+        const reloadAccountsBtn = document.getElementById('reloadAccountsBtn');
+        const reloadInboxesBtn = document.getElementById('reloadInboxesBtn');
+        
+        if (reloadAccountsBtn && this.accounts && this.accounts.length > 0) {
+            reloadAccountsBtn.remove();
+            console.log('🗑️ Botão de recarregar contas removido (funcionando)');
+        }
+        
+        if (reloadInboxesBtn) {
+            const inboxSelect = document.getElementById('userInboxSelect');
+            if (inboxSelect && !inboxSelect.disabled && inboxSelect.options.length > 1) {
+                reloadInboxesBtn.remove();
+                console.log('🗑️ Botão de recarregar caixas removido (funcionando)');
+            }
+        }
+    }
+
+    async onUserAccountChange() {
+        const accountSelect = document.getElementById('userAccountSelect');
+        const inboxSelect = document.getElementById('userInboxSelect');
+        const templateSelect = document.getElementById('userModeloMensagem');
+        
+        if (!accountSelect || !inboxSelect) {
+            console.warn('❌ Elementos userAccountSelect ou userInboxSelect não encontrados');
+            return;
+        }
+
+        const selectedAccountId = accountSelect.value;
+        
+        console.log(`🔄 Mudança de conta selecionada: ${selectedAccountId}`);
+        
+        // Resetar inbox e template
+        inboxSelect.innerHTML = '<option value="">Carregando caixas de entrada...</option>';
+        inboxSelect.disabled = true;
+        
+        if (templateSelect) {
+            templateSelect.innerHTML = '<option value="">Primeiro selecione conta e caixa</option>';
+        }
+
+        if (selectedAccountId) {
+            try {
+                // Garantir que as inboxes estejam carregadas para esta conta
+                if (!this.inboxes || this.inboxes.length === 0) {
+                    console.log('🔄 Inboxes não carregadas, carregando agora...');
+                    await this.loadInboxesForAccount(selectedAccountId);
+                }
+                
+                // Filtrar caixas de entrada da conta selecionada
+            const accountInboxes = this.inboxes.filter(inbox => 
+                String(inbox.account_id) === String(selectedAccountId)
+            );
+            
+                console.log(`📋 Caixas encontradas para conta ${selectedAccountId}:`, accountInboxes);
+                
+                // Popular select de inboxes
+                inboxSelect.innerHTML = '<option value="">Selecione uma caixa de entrada...</option>';
+                
+                if (accountInboxes.length > 0) {
+            accountInboxes.forEach(inbox => {
+                const option = document.createElement('option');
+                option.value = inbox.id;
+                option.textContent = inbox.name;
+                inboxSelect.appendChild(option);
+                        console.log(`📋 Caixa adicionada: ${inbox.name} (ID: ${inbox.id})`);
+                    });
+                    inboxSelect.disabled = false;
+                    console.log(`✅ ${accountInboxes.length} caixas carregadas no select`);
+                    
+                    // Remover botões de debug se tudo estiver funcionando
+                    setTimeout(() => this.removeDebugButtons(), 500);
+                } else {
+                    // Se não há inboxes, tentar carregar da API diretamente
+                    console.log('⚠️ Nenhuma caixa encontrada, tentando carregar da API...');
+                    await this.loadInboxesDirectlyForAccount(selectedAccountId);
+                }
+
+            // Configurar listener para mudança de inbox
+            inboxSelect.onchange = () => {
+                if (inboxSelect.value) {
+                        console.log(`🔄 Caixa selecionada: ${inboxSelect.value}`);
+                    this.loadUserTemplates(selectedAccountId, inboxSelect.value);
+                }
+            };
+                
+            } catch (error) {
+                console.error('❌ Erro ao carregar caixas de entrada:', error);
+                inboxSelect.innerHTML = '<option value="">Erro ao carregar caixas - Clique em "Recarregar" abaixo</option>';
+                inboxSelect.disabled = true;
+                this.addReloadInboxesButton(selectedAccountId);
+            }
+        } else {
+            inboxSelect.disabled = true;
+        }
+    }
+
+    async loadUserTemplates(accountId, inboxId) {
+        try {
+            console.log(`🔄 Carregando templates para conta ${accountId}, inbox ${inboxId}`);
+            
+            const response = await fetch(`/api/whatsapp/templates?accountId=${accountId}&inboxId=${inboxId}`, {
+                headers: { 'Authorization': `Bearer ${this.token}` }
+            });
+            
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+            
+            const templates = await response.json();
+            console.log(`📋 Templates recebidos:`, templates);
+            
+            const templateSelect = document.getElementById('userModeloMensagem');
+            if (templateSelect) {
+                if (Array.isArray(templates) && templates.length > 0) {
+                templateSelect.innerHTML = '<option value="">Selecione um template</option>' + 
+                        templates.map(template => 
+                        `<option value="${template.name}">${template.displayName || template.name}</option>`
+                    ).join('');
+                    console.log(`✅ ${templates.length} templates carregados no select`);
+                } else {
+                    templateSelect.innerHTML = '<option value="">Nenhum template disponível</option>';
+                    console.warn('⚠️ Nenhum template encontrado');
+                }
+            }
+        } catch (error) {
+            console.error('❌ Erro ao carregar templates:', error);
+            const templateSelect = document.getElementById('userModeloMensagem');
+            if (templateSelect) {
+                templateSelect.innerHTML = '<option value="">Erro ao carregar templates</option>';
+            }
+            this.showAlert('Erro ao carregar templates. Verifique as credenciais da API.', 'warning');
+        }
+    }
+
+    async submitUserCampaign() {
+        // Validar seleções obrigatórias
+        const selectedAccountId = document.getElementById('userAccountSelect').value;
+        const selectedInboxId = document.getElementById('userInboxSelect').value;
+        
+        if (!selectedAccountId) {
+            this.showAlert('Por favor, selecione uma conta antes de criar a campanha', 'warning');
+            return;
+        }
+        
+        if (!selectedInboxId) {
+            this.showAlert('Por favor, selecione uma caixa de entrada antes de criar a campanha', 'warning');
+            return;
+        }
+
+        const form = document.getElementById('userCampaignForm');
+        const formData = new FormData(form);
+        
+        const campanhaData = {
+            name: document.getElementById('userCampanhaNome').value,
+            type: document.querySelector('input[name="userMetodoEnvio"]:checked').value,
+            template_name: document.getElementById('userModeloMensagem').value,
+            chatwoot_account_id: selectedAccountId,
+            chatwoot_inbox_id: selectedInboxId
+        };
+
+        if (campanhaData.type === 'tag') {
+            campanhaData.tag_name = document.getElementById('userTagNome').value;
+        }
+
+        if (document.getElementById('userAgendarEnvio').checked) {
+            const data = document.getElementById('userDataEnvio').value;
+            const hora = document.getElementById('userHoraEnvio').value;
+            if (data && hora) {
+                // Criar datetime como horário local do Brasil (sem conversão de fuso)
+                const localDateTime = `${data}T${hora}:00`;
+                
+                // Interpretar como horário do Brasil e manter o mesmo
+                const date = new Date(localDateTime);
+                
+                // Verificar se a data é válida
+                if (isNaN(date.getTime())) {
+                    this.showAlert('Data/hora inválida para agendamento', 'warning');
+                    return;
+                }
+                
+                // Verificar se não é uma data passada
+                const now = new Date();
+                if (date <= now) {
+                    this.showAlert('A data/hora do agendamento deve ser no futuro', 'warning');
+                    return;
+                }
+                
+                // Enviar apenas o datetime local sem timezone (será interpretado como horário do Brasil)
+                campanhaData.scheduled_at = localDateTime;
+                
+                console.log(`📅 Agendamento criado: ${localDateTime} (horário do Brasil)`);
+                console.log(`📅 Valor enviado para API: ${campanhaData.scheduled_at}`);
+            }
+        }
+
+        // Obter nomes da conta e caixa de entrada para exibir no modal
+        const accountSelect = document.getElementById('userAccountSelect');
+        const inboxSelect = document.getElementById('userInboxSelect');
+        campanhaData.accountName = accountSelect.options[accountSelect.selectedIndex]?.text || 'N/A';
+        campanhaData.inboxName = inboxSelect.options[inboxSelect.selectedIndex]?.text || 'N/A';
+
+        // Mostrar modal de confirmação
+        this.showCampaignConfirmationModal(campanhaData, async () => {
+            try {
+                const response = await this.apiRequest('/api/campaigns', {
+                    method: 'POST',
+                    body: JSON.stringify(campanhaData)
+                });
+
+                if (response.success) {
+                    const campaignId = response.campaign.id;
+                    
+                    // Se for CSV, fazer upload
+                    if (campanhaData.type === 'csv') {
+                        const csvFile = document.getElementById('userCsvContatos').files[0];
+                        if (csvFile) {
+                            const uploadFormData = new FormData();
+                            uploadFormData.append('file', csvFile);
+                            
+                            await fetch(`/api/campaigns/${campaignId}/upload-csv`, {
+                                method: 'POST',
+                                headers: { 'Authorization': `Bearer ${this.token}` },
+                                body: uploadFormData
+                            });
+                        }
+                    }
+
+                    // Se não for agendado, iniciar
+                    if (!document.getElementById('userAgendarEnvio').checked) {
+                        await this.apiRequest(`/api/campaigns/${campaignId}/start`, {
+                            method: 'POST'
+                        });
+                    }
+
+                    this.showAlert('Campanha criada com sucesso!', 'success');
+                    this.hideUserCampaignInterface();
+                    this.loadUserDashboardStats(); // Recarregar estatísticas
+                } else {
+                    this.showAlert(response.error || 'Erro ao criar campanha', 'danger');
+                }
+            } catch (error) {
+                console.error('Erro ao criar campanha:', error);
+                this.showAlert('Erro ao criar campanha', 'danger');
+            }
+        });
+    }
+
+    async loadUserDashboardStats() {
+        try {
+            const campaigns = await this.apiRequest('/api/campaigns');
+            this.renderDashboardStats(campaigns, 'Minhas Campanhas');
+        } catch (error) {
+            console.error('Erro ao carregar estatísticas:', error);
+        }
+    }
+
+    async loadAdminDashboardStats() {
+        try {
+            // Tentar primeiro o endpoint específico para admin
+            let campaigns;
+            try {
+                campaigns = await this.apiRequest('/api/campaigns');
+            } catch (error) {
+                // Se não existir, usar o endpoint padrão (que pode retornar todas as campanhas para admin)
+                console.log('Endpoint /api/campaigns não encontrado, usando endpoint padrão');
+                campaigns = await this.apiRequest('/api/campaigns');
+            }
+            this.renderDashboardStats(campaigns, 'Todas as Campanhas');
+        } catch (error) {
+            console.error('Erro ao carregar estatísticas de admin:', error);
+        }
+    }
+
+    renderDashboardStats(campaigns, title) {
+        const container = document.getElementById('userDashboardStats');
+        if (!container) return;
+        
+        // Calcular estatísticas
+        const total = campaigns.length;
+        const running = campaigns.filter(c => c.status === 'running').length;
+        const completed = campaigns.filter(c => c.status === 'completed').length;
+        const pending = campaigns.filter(c => c.status === 'pending').length;
+        
+        // Calcular total de contatos enviados
+        const totalSent = campaigns.reduce((sum, c) => sum + (parseInt(c.sent_count) || 0), 0);
+        
+        // Atualizar texto de boas-vindas baseado no título
+        const welcomeSection = document.querySelector('.welcome-section h4');
+        if (welcomeSection) {
+            if (title === 'Todas as Campanhas') {
+                welcomeSection.innerHTML = '<i class="fas fa-chart-line me-2"></i>Dashboard Administrativo - Todas as Campanhas';
+            } else {
+                welcomeSection.innerHTML = '<i class="fas fa-hand-wave me-2"></i>Bem-vindo ao Sistema de Campanhas WhatsApp!';
+            }
+        }
+        
+        container.innerHTML = `
+            <div class="col-12 mb-3">
+                <h5 class="text-muted">
+                    <i class="fas fa-chart-line me-2"></i>${title}
+                </h5>
+            </div>
+            <div class="col-md-3 mb-3">
+                <div class="card border-0 bg-primary text-white">
+                    <div class="card-body text-center">
+                        <i class="fas fa-chart-bar fa-2x mb-2"></i>
+                        <h3 class="mb-0">${total}</h3>
+                        <small>Total de Campanhas</small>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 mb-3">
+                <div class="card border-0 bg-warning text-white">
+                    <div class="card-body text-center">
+                        <i class="fas fa-clock fa-2x mb-2"></i>
+                        <h3 class="mb-0">${running + pending}</h3>
+                        <small>Em Andamento</small>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 mb-3">
+                <div class="card border-0 bg-success text-white">
+                    <div class="card-body text-center">
+                        <i class="fas fa-check-circle fa-2x mb-2"></i>
+                        <h3 class="mb-0">${completed}</h3>
+                        <small>Concluídas</small>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 mb-3">
+                <div class="card border-0 bg-info text-white">
+                    <div class="card-body text-center">
+                        <i class="fas fa-paper-plane fa-2x mb-2"></i>
+                        <h3 class="mb-0">${totalSent.toLocaleString()}</h3>
+                        <small>Mensagens Enviadas</small>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+
 
     async login() {
         const username = document.getElementById('username').value;
@@ -121,6 +1335,184 @@ class ChatwootWorkflowsApp {
         this.showLogin();
     }
 
+    async showUserManagement() {
+        try {
+            const users = await this.apiRequest('/api/users');
+            const accounts = await this.apiRequest('/api/accounts');
+            this.renderUserManagementModal(users, accounts);
+        } catch (error) {
+            console.error('Erro ao carregar usuários:', error);
+            this.showAlert('Erro ao carregar usuários', 'danger');
+        }
+    }
+
+    renderUserManagementModal(users, accounts) {
+        // Criar modal se não existir
+        let modal = document.getElementById('userManagementModal');
+        if (!modal) {
+            modal = document.createElement('div');
+            modal.className = 'modal fade';
+            modal.id = 'userManagementModal';
+            modal.innerHTML = `
+                <div class="modal-dialog modal-xl">
+                    <div class="modal-content">
+                        <div class="modal-header bg-primary text-white">
+                            <h5 class="modal-title">
+                                <i class="fas fa-users me-2"></i>Gerenciamento de Usuários
+                            </h5>
+                            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="d-flex justify-content-between align-items-center mb-4">
+                                <div>
+                                    <h6 class="mb-0">Usuários do Sistema</h6>
+                                    <small class="text-muted">Gerencie usuários e suas permissões de acesso</small>
+                                </div>
+                                <button class="btn btn-primary" onclick="window.app.showCreateUserForm()">
+                                    <i class="fas fa-plus me-2"></i>Novo Usuário
+                                </button>
+                            </div>
+                            <div id="usersList"></div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+                                <i class="fas fa-times me-2"></i>Fechar
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+        }
+
+        // Renderizar lista de usuários
+        this.renderUsersList(users, accounts);
+        
+        // Mostrar modal
+        const bootstrapModal = new bootstrap.Modal(modal);
+        bootstrapModal.show();
+    }
+
+    renderUsersList(users, accounts) {
+        const container = document.getElementById('usersList');
+        
+        if (users.length === 0) {
+            container.innerHTML = `
+                <div class="text-center text-muted py-5">
+                    <i class="fas fa-users fa-3x mb-3"></i>
+                    <h5>Nenhum usuário encontrado</h5>
+                    <p>Clique em "Novo Usuário" para adicionar o primeiro usuário ao sistema.</p>
+                </div>
+            `;
+            return;
+        }
+
+        let html = `
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead class="table-light">
+                        <tr>
+                            <th><i class="fas fa-user me-2"></i>Usuário</th>
+                            <th><i class="fas fa-shield-alt me-2"></i>Perfil</th>
+                            <th><i class="fas fa-building me-2"></i>Contas Atribuídas</th>
+                            <th><i class="fas fa-calendar me-2"></i>Criado em</th>
+                            <th><i class="fas fa-cogs me-2"></i>Ações</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+        `;
+
+        users.forEach(user => {
+            const assignedAccounts = user.assigned_accounts || [];
+            const accountNames = assignedAccounts.map(id => {
+                const account = accounts.find(acc => acc.id === id);
+                return account ? account.name : `Conta ${id}`;
+            });
+
+            const roleLabel = user.role === 'admin' ? 
+                '<span class="badge bg-danger fs-6"><i class="fas fa-crown me-1"></i>Admin</span>' : 
+                '<span class="badge bg-primary fs-6"><i class="fas fa-user me-1"></i>Usuário</span>';
+
+            const canDelete = user.id !== this.user.id; // Não pode excluir a si mesmo
+
+            const accountsDisplay = assignedAccounts.length === 0 ? 
+                '<span class="text-muted"><i class="fas fa-ban me-1"></i>Nenhuma</span>' :
+                user.role === 'admin' ? 
+                '<span class="text-success"><i class="fas fa-check-circle me-1"></i>Todas (Admin)</span>' :
+                accountNames.map(name => `<span class="badge bg-light text-dark me-1">${name}</span>`).join('');
+
+            html += `
+                <tr>
+                    <td>
+                        <div class="d-flex align-items-center">
+                            <div class="avatar-circle me-3">
+                                ${user.username.charAt(0).toUpperCase()}
+                            </div>
+                            <div>
+                                <strong>${user.username}</strong>
+                                ${user.id === this.user.id ? '<br><small class="text-success"><i class="fas fa-check-circle me-1"></i>Você</small>' : ''}
+                            </div>
+                        </div>
+                    </td>
+                    <td>${roleLabel}</td>
+                    <td>${accountsDisplay}</td>
+                    <td>
+                        <small class="text-muted">
+                            ${new Date(user.created_at).toLocaleDateString('pt-BR')}
+                            <br>
+                            ${new Date(user.created_at).toLocaleTimeString('pt-BR')}
+                        </small>
+                    </td>
+                    <td>
+                        <div class="btn-group" role="group">
+                            <button class="btn btn-sm btn-outline-primary" onclick="editUser(${user.id})" title="Editar usuário">
+                                <i class="fas fa-edit"></i>
+                            </button>
+                            ${canDelete ? `
+                                <button class="btn btn-sm btn-outline-danger" onclick="deleteUser(${user.id}, '${user.username}')" title="Excluir usuário">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                            ` : `
+                                <button class="btn btn-sm btn-outline-secondary" disabled title="Não é possível excluir seu próprio usuário">
+                                    <i class="fas fa-lock"></i>
+                                </button>
+                            `}
+                        </div>
+                    </td>
+                </tr>
+            `;
+        });
+
+        html += `
+                    </tbody>
+                </table>
+            </div>
+        `;
+
+        container.innerHTML = html;
+        
+        // Adicionar CSS para avatar circle se não existir
+        if (!document.getElementById('avatarStyles')) {
+            const style = document.createElement('style');
+            style.id = 'avatarStyles';
+            style.textContent = `
+                .avatar-circle {
+                    width: 40px;
+                    height: 40px;
+                    border-radius: 50%;
+                    background: linear-gradient(45deg, #007bff, #0056b3);
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    color: white;
+                    font-weight: bold;
+                    font-size: 16px;
+                }
+            `;
+            document.head.appendChild(style);
+        }
+    }
+
     async apiRequest(endpoint, options = {}) {
         try {
             const response = await fetch(endpoint, {
@@ -149,33 +1541,92 @@ class ChatwootWorkflowsApp {
     }
 
     async loadInitialData() {
-        // 1. Carregar contas
-        await this.loadAccounts();
-        // 2. Carregar inboxes de todas as contas
-        this.inboxes = [];
-        for (const account of this.accounts) {
-            try {
-                const inboxes = await this.apiRequest(`/api/accounts/${account.id}/inboxes`);
-                if (Array.isArray(inboxes)) {
-                    this.inboxes = this.inboxes.concat(inboxes);
+        try {
+            // 1. Carregar contas
+            await this.loadAccounts();
+            
+            // 2. Carregar inboxes de todas as contas
+            this.inboxes = [];
+            console.log(`🔄 Carregando inboxes para ${this.accounts.length} contas...`);
+            
+            for (const account of this.accounts) {
+                try {
+                    console.log(`🔍 Carregando inboxes da conta: ${account.name} (ID: ${account.id})`);
+                    const inboxes = await this.apiRequest(`/api/accounts/${account.id}/inboxes`);
+                    
+                    if (Array.isArray(inboxes) && inboxes.length > 0) {
+                        this.inboxes = this.inboxes.concat(inboxes);
+                        console.log(`✅ ${inboxes.length} inboxes carregadas da conta ${account.name}`);
+                    } else {
+                        console.warn(`⚠️ Nenhuma inbox encontrada para conta ${account.name}`);
+                    }
+                } catch (e) {
+                    console.warn(`❌ Erro ao carregar inboxes da conta ${account.name} (${account.id}):`, e);
                 }
-            } catch (e) {
-                console.warn('Erro ao carregar inboxes da conta', account.id, e);
             }
+            
+            console.log(`📋 Total de inboxes carregadas: ${this.inboxes.length}`);
+            if (this.inboxes.length > 0) {
+                console.log('✅ Inboxes disponíveis:', this.inboxes.map(inbox => ({ 
+                    id: inbox.id, 
+                    name: inbox.name, 
+                    account_id: inbox.account_id 
+                })));
+            }
+            
+            // 3. Populações dos selects (importante fazer depois de carregar dados)
+            // Não popular selects do dashboard aqui, pois já são carregados por loadDashboardSelects
+            // this.populateAccountSelect();
+            // this.populateInboxSelect();
+            
+            // 4. Carregar templates apenas para admins (usuários comuns carregam templates específicos depois)
+            if (this.user.role === 'admin') {
+                try {
+            await this.loadWorkflowTemplates();
+                } catch (error) {
+                    console.warn('⚠️ Erro ao carregar templates globais (continuando mesmo assim):', error);
+                    this.workflowTemplates = []; // Inicializar como array vazio
+                }
+            } else {
+                // Para usuários comuns, inicializar como array vazio
+                // Templates serão carregados quando selecionarem conta/inbox específica
+                this.workflowTemplates = [];
+                console.log('ℹ️ Usuário comum: templates serão carregados por conta/inbox específica');
+            }
+            
+            // 5. Carregar fluxos ativos apenas para admins
+            if (this.user.role === 'admin') {
+            await this.loadActiveWorkflows();
+            } else {
+                // Para usuários comuns, inicializar como array vazio
+                this.activeWorkflows = [];
+                console.log('ℹ️ Usuário comum: workflows ativos não são exibidos');
+            }
+            
+            console.log(`✅ Dados carregados: ${this.accounts.length} contas, ${this.inboxes.length} caixas`);
+        } catch (error) {
+            console.error('❌ Erro ao carregar dados iniciais:', error);
         }
-        // 3. Carregar templates (opcional, não afeta nomes)
-        await this.loadWorkflowTemplates();
-        // 4. Carregar fluxos ativos
-        await this.loadActiveWorkflows();
     }
 
     async loadAccounts() {
         try {
+            console.log(`🔄 Iniciando carregamento de contas para usuário: ${this.user.username} (${this.user.role})`);
             this.accounts = await this.apiRequest('/api/accounts');
-            this.populateAccountSelect();
+            
+            console.log(`📋 Contas carregadas: ${this.accounts.length} contas para ${this.user.role}`);
+            
+            if (this.accounts && this.accounts.length > 0) {
+                console.log('✅ Contas disponíveis:', this.accounts.map(acc => ({ id: acc.id, name: acc.name })));
+            } else {
+                console.warn('⚠️ Nenhuma conta retornada pela API');
+                console.log('🔍 Resposta completa da API:', this.accounts);
+            }
         } catch (error) {
-            console.error('Erro ao carregar contas:', error);
+            console.error('❌ Erro ao carregar contas:', error);
             this.showAlert('Erro ao carregar contas', 'danger');
+            // Garantir que accounts seja um array vazio em caso de erro
+            this.accounts = [];
         }
     }
 
@@ -197,15 +1648,37 @@ class ChatwootWorkflowsApp {
 
     async loadWorkflowTemplates() {
         try {
-            this.workflowTemplates = await this.apiRequest('/api/whatsapp/templates');
+            // Verificar se o usuário tem permissão para carregar templates globais
+            if (this.user.role !== 'admin') {
+                console.log('ℹ️ Usuário comum: não carregando templates globais');
+                this.workflowTemplates = [];
+                this.populateTemplateSelect();
+                return;
+            }
+            
+            // Para carregar templates globais, precisamos de uma conta e inbox selecionada
+            // Como isso é chamado durante a inicialização, vamos pular e carregar depois
+            console.log('ℹ️ Carregamento de templates será feito quando conta/inbox for selecionada');
+            this.workflowTemplates = [];
             this.populateTemplateSelect();
         } catch (error) {
-            console.error('Erro ao carregar templates:', error);
+            console.error('❌ Erro ao carregar templates:', error);
+            // Inicializar como array vazio para evitar erros posteriores
+            this.workflowTemplates = [];
+            this.populateTemplateSelect();
         }
     }
 
     async loadActiveWorkflows(forceRefresh = false) {
         try {
+            // Verificar se o usuário tem permissão para carregar workflows ativos
+            if (this.user.role !== 'admin') {
+                console.log('ℹ️ Usuário comum: não carregando workflows ativos globais');
+                this.activeWorkflows = [];
+                this.populateActiveWorkflows();
+                return;
+            }
+            
             console.log(`🔄 Carregando workflows ativos (força: ${forceRefresh})`);
             
             const headers = {};
@@ -220,6 +1693,9 @@ class ChatwootWorkflowsApp {
             console.log(`✅ ${this.activeWorkflows.length} workflows carregados`);
         } catch (error) {
             console.error('❌ Erro ao carregar fluxos ativos:', error);
+            // Inicializar como array vazio para evitar erros posteriores
+            this.activeWorkflows = [];
+            this.populateActiveWorkflows();
         }
     }
 
@@ -252,6 +1728,11 @@ class ChatwootWorkflowsApp {
 
     populateAccountSelect() {
         const select = document.getElementById('accountSelect');
+        if (!select) {
+            console.log('📋 Select de contas não encontrado (normal para usuários)');
+            return; // Elemento pode não existir para usuários comuns
+        }
+        
         select.innerHTML = '<option value="">Selecione uma conta...</option>';
         
         this.accounts.forEach(account => {
@@ -264,10 +1745,17 @@ class ChatwootWorkflowsApp {
         // Garantir que o select seja clicável
         select.style.pointerEvents = 'auto';
         select.style.zIndex = '1';
+        
+        console.log(`📋 Select de contas populado com ${this.accounts.length} opções`);
     }
 
     populateInboxSelect() {
         const select = document.getElementById('inboxSelect');
+        if (!select) {
+            console.log('📋 Select de caixas não encontrado (normal para usuários)');
+            return; // Elemento pode não existir para usuários comuns
+        }
+        
         select.innerHTML = '<option value="">Selecione uma caixa de entrada...</option>';
         
         this.inboxes.forEach(inbox => {
@@ -280,27 +1768,59 @@ class ChatwootWorkflowsApp {
         // Garantir que o select seja clicável
         select.style.pointerEvents = 'auto';
         select.style.zIndex = '1';
+        
+        console.log(`📋 Select de caixas populado com ${this.inboxes.length} opções`);
     }
 
     populateTemplateSelect() {
         const select = document.getElementById('workflowTemplate');
+        if (!select) {
+            console.log('📋 Select de templates não encontrado (normal para usuários)');
+            return; // Elemento pode não existir para usuários comuns
+        }
+        
         select.innerHTML = '<option value="">Selecione um template...</option>';
         
+        // Verificar se há templates carregados
+        if (this.workflowTemplates && this.workflowTemplates.length > 0) {
         this.workflowTemplates.forEach(template => {
             const option = document.createElement('option');
             option.value = template.name;
-            option.textContent = template.displayName;
+                option.textContent = template.displayName || template.name;
             select.appendChild(option);
         });
+            console.log(`📋 Select de templates populado com ${this.workflowTemplates.length} opções`);
+        } else {
+            // Se não há templates, mostrar mensagem informativa
+            const option = document.createElement('option');
+            option.value = '';
+            option.textContent = this.user.role === 'admin' ? 
+                'Nenhum template disponível' : 
+                'Selecione uma conta e caixa de entrada primeiro';
+            option.disabled = true;
+            select.appendChild(option);
+            console.log('📋 Nenhum template disponível para carregar');
+        }
     }
 
     populateActiveWorkflows() {
         const container = document.getElementById('activeWorkflows');
+        if (!container) {
+            console.log('📋 Container de workflows ativos não encontrado (normal para usuários)');
+            return; // Elemento pode não existir para usuários comuns
+        }
+        
         container.innerHTML = '';
-        if (this.activeWorkflows.length === 0) {
-            container.innerHTML = '<p class="text-muted text-center">Nenhum fluxo ativo</p>';
+        
+        // Verificar se há workflows ativos carregados
+        if (!this.activeWorkflows || this.activeWorkflows.length === 0) {
+            const message = this.user.role === 'admin' ? 
+                'Nenhum fluxo ativo' : 
+                'Workflows ativos disponíveis apenas para administradores';
+            container.innerHTML = `<p class="text-muted text-center">${message}</p>`;
             return;
         }
+        
         this.activeWorkflows.forEach(workflow => {
             // Buscar nome da conta e da caixa, garantindo comparação por string
             let accountName = workflow.account_id;
@@ -330,6 +1850,8 @@ class ChatwootWorkflowsApp {
             `;
             container.appendChild(item);
         });
+        
+        console.log(`📋 ${this.activeWorkflows.length} workflows ativos carregados`);
     }
 
     async showWorkflowEditor() {
@@ -847,7 +2369,7 @@ class ChatwootWorkflowsApp {
                             <h6 class="alert-heading mb-1">✅ Workflow Salvo com Sucesso!</h6>
                             <p class="mb-1"><strong>Nome:</strong> ${workflowName}</p>
                             <p class="mb-1"><strong>Conta:</strong> ${accountId} | <strong>Inbox:</strong> ${inboxId}</p>
-                            <small class="text-muted">Salvo em: ${new Date().toLocaleString()}</small>
+                            <small class="text-muted">Salvo em: ${new Date().toLocaleString('pt-BR', {timeZone: 'America/Sao_Paulo'})}</small>
                         </div>
                     </div>
                     <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
@@ -914,6 +2436,178 @@ class ChatwootWorkflowsApp {
         }, 5000);
     }
 
+    // Função para mostrar modal de confirmação de campanha
+    showCampaignConfirmationModal(campaignData, submitFunction) {
+        // Preencher detalhes da campanha
+        document.getElementById('confirmCampaignName').textContent = campaignData.name || 'N/A';
+        document.getElementById('confirmCampaignType').textContent = this.getCampaignTypeDisplay(campaignData.type);
+        document.getElementById('confirmCampaignTemplate').textContent = campaignData.template_name || 'N/A';
+        document.getElementById('confirmCampaignAccount').textContent = campaignData.accountName || 'N/A';
+        document.getElementById('confirmCampaignInbox').textContent = campaignData.inboxName || 'N/A';
+        
+        // Informações de agendamento
+        if (campaignData.scheduled_at) {
+            const scheduledDate = new Date(campaignData.scheduled_at);
+            const formattedDate = scheduledDate.toLocaleDateString('pt-BR');
+            const formattedTime = scheduledDate.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+            document.getElementById('confirmCampaignSchedule').textContent = `${formattedDate} às ${formattedTime}`;
+        } else {
+            document.getElementById('confirmCampaignSchedule').textContent = 'Envio imediato';
+        }
+        
+        // Informações de destinatários
+        document.getElementById('confirmRecipientMethod').textContent = this.getRecipientMethodDisplay(campaignData.type);
+        
+        // Quantidade estimada baseada no tipo
+        let estimatedCount = 'N/A';
+        let recipientDetails = '';
+        
+        if (campaignData.type === 'tag') {
+            estimatedCount = 'Todos os contatos com a tag';
+            recipientDetails = `<p><strong>Tag:</strong> ${campaignData.tag_name || 'N/A'}</p>`;
+        } else if (campaignData.type === 'csv') {
+            // Usar o ID correto do input de arquivo CSV
+            const csvFile = document.getElementById('csvFile')?.files[0];
+            if (csvFile) {
+                estimatedCount = 'Contatos do arquivo CSV';
+                recipientDetails = `<p><strong>Arquivo:</strong> ${csvFile.name}</p>`;
+                
+                // Tentar contar linhas do CSV (excluindo cabeçalho)
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    const content = e.target.result;
+                    const lines = content.split('\n').filter(line => line.trim() !== '');
+                    const estimatedContacts = Math.max(0, lines.length - 1); // -1 para excluir cabeçalho
+                    
+                    if (estimatedContacts > 0) {
+                        document.getElementById('confirmRecipientCount').textContent = `Aproximadamente ${estimatedContacts} contatos`;
+                    }
+                };
+                reader.readAsText(csvFile);
+            }
+        } else if (campaignData.type === 'all') {
+            estimatedCount = 'Todos os contatos da caixa de entrada';
+        }
+        
+        document.getElementById('confirmRecipientCount').textContent = estimatedCount;
+        document.getElementById('confirmRecipientDetails').innerHTML = recipientDetails;
+        
+        // Resetar checkboxes e botão
+        const termsCheck = document.getElementById('confirmTermsCheck');
+        const dataCheck = document.getElementById('confirmDataCheck');
+        const confirmBtn = document.getElementById('confirmCampaignBtn');
+        
+        termsCheck.checked = false;
+        dataCheck.checked = false;
+        confirmBtn.disabled = true;
+        
+        // Função para atualizar estado do botão
+        const updateConfirmButton = () => {
+            const bothChecked = termsCheck.checked && dataCheck.checked;
+            document.getElementById('confirmCampaignBtn').disabled = !bothChecked;
+            console.log('Checkboxes:', { terms: termsCheck.checked, data: dataCheck.checked, buttonEnabled: bothChecked });
+        };
+        
+        // Remover event listeners anteriores
+        termsCheck.removeEventListener('change', updateConfirmButton);
+        dataCheck.removeEventListener('change', updateConfirmButton);
+        
+        // Adicionar novos event listeners
+        termsCheck.addEventListener('change', updateConfirmButton);
+        dataCheck.addEventListener('change', updateConfirmButton);
+        
+        // Event listener para botão de confirmação
+        // Adicionar event listener para fechar modal com ESC
+        const modalElement = document.getElementById('campaignConfirmationModal');
+        const handleEscape = (e) => {
+            if (e.key === 'Escape') {
+                const modal = bootstrap.Modal.getInstance(modalElement);
+                if (modal) {
+                    modal.hide();
+                    cleanupModal();
+                }
+            }
+        };
+        
+        const cleanupModal = () => {
+            // Remover backdrop
+            const backdrop = document.querySelector('.modal-backdrop');
+            if (backdrop) {
+                backdrop.remove();
+            }
+            // Limpar classes do body
+            document.body.classList.remove('modal-open');
+            document.body.style.paddingRight = '';
+            // Remover event listener
+            document.removeEventListener('keydown', handleEscape);
+        };
+        
+        document.addEventListener('keydown', handleEscape);
+        
+        // Adicionar event listener para quando o modal for fechado
+        modalElement.addEventListener('hidden.bs.modal', cleanupModal);
+        const handleConfirm = async () => {
+            try {
+                confirmBtn.disabled = true;
+                confirmBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Enviando...';
+                
+                // Fechar modal corretamente
+                const modalElement = document.getElementById('campaignConfirmationModal');
+                const modal = bootstrap.Modal.getInstance(modalElement);
+                
+                // Remover focus do botão antes de fechar o modal
+                confirmBtn.blur();
+                
+                // Fechar modal
+                modal.hide();
+                
+                // Remover backdrop manualmente se necessário
+                setTimeout(() => {
+                    cleanupModal();
+                }, 150);
+                
+                // Executar função de submissão
+                await submitFunction();
+                
+            } catch (error) {
+                console.error('Erro ao confirmar campanha:', error);
+                this.showAlert('Erro ao enviar campanha', 'danger');
+            }
+        };
+        
+        // Remover event listener anterior do botão
+        const oldConfirmBtn = document.getElementById('confirmCampaignBtn');
+        const newConfirmBtn = oldConfirmBtn.cloneNode(true);
+        oldConfirmBtn.parentNode.replaceChild(newConfirmBtn, oldConfirmBtn);
+        
+        // Adicionar novo event listener
+        newConfirmBtn.addEventListener('click', handleConfirm);
+        
+        // Mostrar modal
+        const modal = new bootstrap.Modal(document.getElementById('campaignConfirmationModal'));
+        modal.show();
+    }
+    
+    // Função auxiliar para exibir tipo de campanha
+    getCampaignTypeDisplay(type) {
+        const types = {
+            'tag': 'Envio por Tag',
+            'csv': 'Envio por CSV',
+            'all': 'Envio para Todos'
+        };
+        return types[type] || type;
+    }
+    
+    // Função auxiliar para exibir método de destinatários
+    getRecipientMethodDisplay(type) {
+        const methods = {
+            'tag': 'Contatos com tag específica',
+            'csv': 'Contatos do arquivo CSV',
+            'all': 'Todos os contatos da caixa'
+        };
+        return methods[type] || type;
+    }
+
     showChangePasswordDiv() {
         if (!this.token) {
             console.log('Tentativa de abrir div de senha sem estar logado');
@@ -969,8 +2663,946 @@ class ChatwootWorkflowsApp {
     }
 
     hideAllDivs() {
-        const divs = ['loginDiv', 'changePasswordDiv', 'mediaManagerDiv', 'campanhasDiv'];
+        const divs = ['loginDiv', 'changePasswordDiv', 'mediaManagerDiv', 'campaignFormArea'];
         divs.forEach(divId => this.hideDiv(divId));
+    }
+
+    // Função para mostrar o formulário unificado de campanha
+    showUnifiedCampaignForm() {
+        // Obter valores selecionados no dashboard (usando IDs corretos baseado no role)
+        const accountSelectId = this.user.role === 'admin' ? 'accountSelect' : 'userAccountSelect';
+        const inboxSelectId = this.user.role === 'admin' ? 'inboxSelect' : 'userInboxSelect';
+        
+        const accountSelect = document.getElementById(accountSelectId);
+        const inboxSelect = document.getElementById(inboxSelectId);
+        const selectedAccountId = accountSelect.value;
+        const selectedInboxId = inboxSelect.value;
+        const selectedAccountName = accountSelect.options[accountSelect.selectedIndex]?.text;
+        const selectedInboxName = inboxSelect.options[inboxSelect.selectedIndex]?.text;
+        
+        console.log(`📋 Valores selecionados: Conta ${selectedAccountName} (${selectedAccountId}), Caixa ${selectedInboxName} (${selectedInboxId})`);
+        
+        // Ocultar áreas principais baseadas no role
+        if (this.user.role === 'admin') {
+            // Admin: ocultar tanto adminMainArea quanto userMainArea
+            const adminMainArea = document.getElementById('adminMainArea');
+            const userMainArea = document.getElementById('userMainArea');
+            
+            console.log(`🔍 Procurando adminMainArea:`, adminMainArea ? '✅ Encontrado' : '❌ Não encontrado');
+            console.log(`🔍 Procurando userMainArea:`, userMainArea ? '✅ Encontrado' : '❌ Não encontrado');
+            
+            if (adminMainArea) {
+                adminMainArea.style.display = 'none';
+                console.log('✅ adminMainArea ocultado');
+            } else {
+                console.error('❌ adminMainArea não encontrado!');
+            }
+            
+            if (userMainArea) {
+                userMainArea.style.display = 'none';
+                console.log('✅ userMainArea ocultado');
+            } else {
+                console.error('❌ userMainArea não encontrado!');
+            }
+        } else {
+            // User: ocultar apenas userMainArea
+            const userMainArea = document.getElementById('userMainArea');
+            console.log(`🔍 Procurando userMainArea:`, userMainArea ? '✅ Encontrado' : '❌ Não encontrado');
+            if (userMainArea) {
+                userMainArea.style.display = 'none';
+                console.log('✅ userMainArea ocultado');
+            } else {
+                console.error('❌ userMainArea não encontrado!');
+            }
+        }
+        
+        // Mostrar formulário de campanha
+        this.showDiv('campaignFormArea');
+        this.setupUnifiedCampaignForm();
+        this.loadUnifiedCampaignData(selectedAccountId, selectedInboxId);
+    }
+
+    // Configurar o formulário unificado
+    setupUnifiedCampaignForm() {
+        const form = document.getElementById('unifiedCampaignForm');
+        if (!form) return;
+
+        // Configurar mudança de método de envio
+        const methodInputs = form.querySelectorAll('input[name="methodType"]');
+        methodInputs.forEach(input => {
+            input.addEventListener('change', () => {
+                this.toggleMethodDetails(input.value);
+            });
+        });
+
+        // Configurar agendamento
+        const scheduleCheckbox = document.getElementById('scheduleCampaign');
+        const scheduleFields = document.getElementById('scheduleFields');
+        const scheduleDate = document.getElementById('scheduleDate');
+        const scheduleTime = document.getElementById('scheduleTime');
+        const submitBtn = document.getElementById('submitCampaignBtn');
+
+        if (scheduleCheckbox && scheduleFields) {
+            scheduleCheckbox.addEventListener('change', () => {
+                if (scheduleCheckbox.checked) {
+                    scheduleFields.style.display = 'block';
+                    submitBtn.innerHTML = '<i class="fas fa-calendar me-2"></i>Agendar Campanha';
+                    this.fillCurrentDateTime(scheduleDate, scheduleTime);
+                } else {
+                    scheduleFields.style.display = 'none';
+                    submitBtn.innerHTML = '<i class="fas fa-paper-plane me-2"></i>Enviar Agora';
+                }
+            });
+        }
+
+            // Configurar mudança de conta (para ambos os roles)
+    const accountSelect = document.getElementById('unifiedAccountSelect');
+    if (accountSelect) {
+        accountSelect.addEventListener('change', async (e) => {
+            await this.onUnifiedAccountChange();
+        });
+    }
+
+        // Configurar submit do formulário
+        form.addEventListener('submit', (e) => {
+            e.preventDefault();
+            this.submitUnifiedCampaign();
+        });
+
+        // Inicializar com CSV selecionado por padrão
+        this.toggleMethodDetails('csv');
+
+        // Configurar fechamento
+        const closeBtn = document.getElementById('closeCampanha');
+        if (closeBtn) {
+            closeBtn.addEventListener('click', () => {
+                this.hideDiv('campaignFormArea');
+                // Mostrar área principal novamente baseada no role
+                if (this.user.role === 'admin') {
+                    const adminMainArea = document.getElementById('adminMainArea');
+                    if (adminMainArea) adminMainArea.style.display = 'block';
+                    // Admin não vê userMainArea por padrão
+                } else {
+                    const userMainArea = document.getElementById('userMainArea');
+                    if (userMainArea) userMainArea.style.display = 'block';
+                }
+            });
+        }
+    }
+
+    // Alternar detalhes do método de envio
+    toggleMethodDetails(methodType) {
+        const tagDetails = document.getElementById('tagDetails');
+        const csvDetails = document.getElementById('csvDetails');
+        const methodAllOption = document.getElementById('methodAllOption');
+
+        // Mostrar opção "Todos os Contatos" apenas para admin
+        if (methodAllOption) {
+            methodAllOption.style.display = this.user.role === 'admin' ? 'block' : 'none';
+        }
+
+        if (methodType === 'tag') {
+            tagDetails.style.display = 'block';
+            csvDetails.style.display = 'none';
+        } else if (methodType === 'csv') {
+            tagDetails.style.display = 'none';
+            csvDetails.style.display = 'block';
+        } else if (methodType === 'all') {
+            tagDetails.style.display = 'none';
+            csvDetails.style.display = 'none';
+        }
+    }
+
+    // Preencher data e hora atual
+    fillCurrentDateTime(dateInput, timeInput) {
+        if (dateInput) {
+            const today = new Date().toISOString().split('T')[0];
+            dateInput.value = today;
+            dateInput.min = today;
+        }
+        
+        if (timeInput) {
+            const now = new Date();
+            const brazilTime = new Date(now.toLocaleString("en-US", {timeZone: "America/Sao_Paulo"}));
+            const hours = brazilTime.getHours().toString().padStart(2, '0');
+            const minutes = brazilTime.getMinutes().toString().padStart(2, '0');
+            const timeValue = `${hours}:${minutes}`;
+            timeInput.value = timeValue;
+        }
+    }
+
+    // Carregar dados para o formulário unificado
+    async loadUnifiedCampaignData(selectedAccountId = null, selectedInboxId = null) {
+        // Configurar interface baseada no role
+        this.configureUnifiedInterfaceByRole();
+        
+        // Se temos valores pré-selecionados, usar eles
+        if (selectedAccountId && selectedInboxId) {
+            console.log(`📋 Usando valores pré-selecionados: Conta ${selectedAccountId}, Caixa ${selectedInboxId}`);
+            
+            // Popular selects com valores pré-selecionados
+            await this.populateUnifiedSelectsWithPreselected(selectedAccountId, selectedInboxId);
+        } else {
+            // Carregar contas normalmente
+            await this.loadUnifiedAccounts();
+        }
+        
+        // Carregar templates e outros dados
+        await this.loadUnifiedTemplates(selectedAccountId, selectedInboxId);
+        await this.loadUnifiedTags();
+    }
+
+    // Carregar tags para o formulário unificado
+    async loadUnifiedTags() {
+        try {
+            const response = await fetch('/api/chatwoot/tags', {
+                headers: { 'Authorization': `Bearer ${getAuthToken()}` }
+            });
+            
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+            
+            const tags = await response.json();
+            
+            // Implementar autocomplete simples ou datalist
+            const input = document.getElementById('tagNome');
+            if (!input) {
+                console.log('Input de tags não encontrado');
+                return;
+            }
+            
+            // Remover datalist anterior se existir
+            const existingDatalist = document.getElementById('tagsList');
+            if (existingDatalist) {
+                existingDatalist.remove();
+            }
+            
+            const datalist = document.createElement('datalist');
+            datalist.id = 'tagsList';
+            input.setAttribute('list', 'tagsList');
+            
+            if (Array.isArray(tags) && tags.length > 0) {
+                tags.forEach(tag => {
+                    const option = document.createElement('option');
+                    option.value = tag.title || tag.name;
+                    datalist.appendChild(option);
+                });
+                console.log(`✅ ${tags.length} tags carregadas para autocomplete`);
+            } else {
+                console.log('ℹ️ Nenhuma tag encontrada para autocomplete');
+            }
+            
+            input.parentNode.appendChild(datalist);
+        } catch (error) {
+            console.error('❌ Erro ao carregar tags:', error);
+            this.showAlert('Erro ao carregar tags. Verifique sua conexão.', 'warning');
+        }
+    }
+
+    // Carregar templates para o formulário unificado
+    async loadUnifiedTemplates(accountId = null, inboxId = null) {
+        try {
+            console.log('🔍 Carregando templates do WhatsApp para formulário unificado...');
+            
+            // Se não foram passados, obter dos selects do dashboard
+            if (!accountId || !inboxId) {
+                const accountSelectId = this.user.role === 'admin' ? 'accountSelect' : 'userAccountSelect';
+                const inboxSelectId = this.user.role === 'admin' ? 'inboxSelect' : 'userInboxSelect';
+                
+                accountId = document.getElementById(accountSelectId)?.value;
+                inboxId = document.getElementById(inboxSelectId)?.value;
+            }
+            
+            console.log(`📋 Usando Account ID: ${accountId}, Inbox ID: ${inboxId}`);
+            
+            // Construir URL com parâmetros se disponíveis
+            let url = '/api/whatsapp/templates';
+            const params = new URLSearchParams();
+            if (accountId) params.append('accountId', accountId);
+            if (inboxId) params.append('inboxId', inboxId);
+            if (params.toString()) url += `?${params.toString()}`;
+            
+            const response = await fetch(url, {
+                headers: { 'Authorization': `Bearer ${getAuthToken()}` }
+            });
+            
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+            
+            const templates = await response.json();
+            console.log('📋 Templates recebidos:', templates);
+            
+            // Usar o ID correto do formulário unificado
+            const select = document.getElementById('templateSelect');
+            if (!select) {
+                console.error('❌ Elemento templateSelect não encontrado!');
+                return;
+            }
+            
+            select.innerHTML = '<option value="">Selecione um modelo</option>';
+            
+            if (Array.isArray(templates) && templates.length > 0) {
+                // Mostrar templates da API oficial
+                const inboxSpecificTemplates = templates.filter(t => t.inboxId);
+                let label = `🚀 API Oficial WhatsApp (${templates.length})`;
+                if (inboxSpecificTemplates.length > 0) {
+                    const inboxName = inboxSpecificTemplates[0].inboxName;
+                    label = `🚀 ${inboxName} - API Oficial (${templates.length})`;
+                }
+                const optgroup = document.createElement('optgroup');
+                optgroup.label = label;
+                templates.forEach(template => {
+                    const option = document.createElement('option');
+                    option.value = template.name;
+                    option.textContent = template.displayName || template.name;
+                    const sourceText = template.inboxName ? `Caixa: ${template.inboxName}` : 'API Oficial';
+                    option.title = `Fonte: ${sourceText} | Status: ${template.status} | Categoria: ${template.category} | Idioma: ${template.language}`;
+                    optgroup.appendChild(option);
+                });
+                select.appendChild(optgroup);
+                // Mostrar indicador se templates são específicos de uma caixa
+                if (inboxSpecificTemplates.length > 0) {
+                    this.showInboxTemplateIndicator(inboxSpecificTemplates[0].inboxName, templates.length);
+                }
+                console.log(`✅ ${templates.length} templates carregados com sucesso`);
+            } else {
+                console.warn('⚠️ Nenhum template encontrado');
+                const option = document.createElement('option');
+                option.value = '';
+                option.textContent = 'Nenhum template disponível - Verifique as credenciais da API oficial e clique em Sincronizar';
+                option.disabled = true;
+                select.appendChild(option);
+            }
+        } catch (error) {
+            console.error('❌ Erro ao carregar modelos:', error);
+            
+            // Mostrar erro no select
+            const select = document.getElementById('templateSelect');
+            if (select) {
+                select.innerHTML = '<option value="">Erro ao carregar templates - Verifique as credenciais da API oficial e clique em Sincronizar</option>';
+            }
+            
+            this.showAlert('Erro ao carregar modelos de mensagem. Verifique as credenciais da API oficial e tente sincronizar os templates.', 'danger');
+        }
+    }
+
+    // Mostrar indicador de templates específicos da caixa
+    showInboxTemplateIndicator(inboxName, templateCount) {
+        // Remover indicador anterior se existir
+        const existingIndicator = document.getElementById('inboxTemplateIndicator');
+        if (existingIndicator) {
+            existingIndicator.remove();
+        }
+        
+        // Criar novo indicador
+        const indicator = document.createElement('div');
+        indicator.id = 'inboxTemplateIndicator';
+        indicator.className = 'alert alert-info alert-dismissible fade show mt-2';
+        indicator.innerHTML = `
+            <div class="d-flex align-items-center">
+                <i class="fas fa-info-circle me-2"></i>
+                <div>
+                    <strong>🚀 Templates da API Oficial</strong><br>
+                    <small>Carregados ${templateCount} templates da caixa de entrada: <strong>${inboxName}</strong></small>
+                </div>
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+        `;
+        
+        // Inserir após o select de templates (em uma linha separada)
+        const templateSelect = document.getElementById('templateSelect');
+        if (templateSelect && templateSelect.parentNode) {
+            // Encontrar o container do campo (form-group ou div pai)
+            const fieldContainer = templateSelect.closest('.form-group') || templateSelect.parentNode;
+            // Inserir após o container do campo
+            fieldContainer.parentNode.insertBefore(indicator, fieldContainer.nextSibling);
+        }
+    }
+
+    hideSelectedAccountInboxIndicator() {
+        // Remover indicador de template da caixa de entrada se existir
+        const existingIndicator = document.getElementById('inboxTemplateIndicator');
+        if (existingIndicator) {
+            existingIndicator.remove();
+        }
+    }
+
+    // Popular selects unificados com valores pré-selecionados
+    async populateUnifiedSelectsWithPreselected(accountId, inboxId) {
+        try {
+            // Carregar contas para obter nomes
+            const accounts = await this.apiRequest('/api/accounts');
+            const account = accounts.find(acc => acc.id == accountId);
+            
+            // Carregar caixas para obter nome
+            const inboxes = await this.loadInboxesForAccount(accountId);
+            const inbox = inboxes.find(inb => inb.id == inboxId);
+            
+            // Mostrar informações selecionadas
+            const accountDisplay = document.getElementById('selectedAccountDisplay');
+            const inboxDisplay = document.getElementById('selectedInboxDisplay');
+            
+            if (accountDisplay && account) {
+                accountDisplay.innerHTML = `<i class="fas fa-building me-2"></i>${account.name}`;
+            }
+            
+            if (inboxDisplay && inbox) {
+                inboxDisplay.innerHTML = `<i class="fas fa-inbox me-2"></i>${inbox.name}`;
+            }
+            
+            console.log(`✅ Informações exibidas: Conta ${account?.name}, Caixa ${inbox?.name}`);
+        } catch (error) {
+            console.error('❌ Erro ao aplicar valores pré-selecionados:', error);
+        }
+    }
+
+    // Carregar contas para o formulário unificado
+    async loadUnifiedAccounts() {
+        try {
+            console.log('🔄 Carregando contas para formulário unificado...');
+            const accounts = await this.apiRequest('/api/accounts');
+            console.log('📋 Resposta da API de contas:', accounts);
+            
+            if (Array.isArray(accounts) && accounts.length > 0) {
+                console.log(`✅ ${accounts.length} contas recebidas da API`);
+                this.populateUnifiedAccountSelect(accounts);
+            } else {
+                console.warn('⚠️ Resposta da API não contém contas válidas:', accounts);
+                this.showAlert('Nenhuma conta encontrada', 'warning');
+            }
+        } catch (error) {
+            console.error('❌ Erro ao carregar contas:', error);
+            this.showAlert('Erro ao carregar contas', 'danger');
+        }
+    }
+
+    // Popular select unificado de contas
+    populateUnifiedAccountSelect(accounts) {
+        console.log('🔄 Populando select unificado de contas...');
+        const accountSelect = document.getElementById('unifiedAccountSelect');
+        
+        if (!accountSelect) {
+            console.error('❌ Elemento unifiedAccountSelect não encontrado!');
+            return;
+        }
+        
+        console.log('📋 Contas recebidas para popular:', accounts);
+        
+        if (accounts && accounts.length > 0) {
+            accountSelect.innerHTML = '<option value="">Selecione uma conta...</option>';
+            accounts.forEach(account => {
+                const option = document.createElement('option');
+                option.value = account.id;
+                option.textContent = account.name;
+                accountSelect.appendChild(option);
+                console.log(`📋 Adicionada conta: ${account.name} (ID: ${account.id})`);
+            });
+            accountSelect.disabled = false;
+            console.log(`✅ ${accounts.length} contas carregadas no select unificado`);
+        } else {
+            accountSelect.innerHTML = '<option value="">Nenhuma conta encontrada</option>';
+            accountSelect.disabled = true;
+            console.warn('⚠️ Nenhuma conta para popular no select');
+        }
+    }
+
+    // Configurar interface baseada no role
+    configureUnifiedInterfaceByRole() {
+        const methodAllOption = document.getElementById('methodAllOption');
+        
+        // Mostrar opção "Todos os Contatos" apenas para admin
+        if (methodAllOption) {
+            methodAllOption.style.display = this.user.role === 'admin' ? 'block' : 'none';
+        }
+    }
+
+    // Mudança de conta no formulário unificado (ambos os roles)
+    async onUnifiedAccountChange() {
+        const accountId = document.getElementById('unifiedAccountSelect').value;
+        const inboxSelect = document.getElementById('unifiedInboxSelect');
+        
+        if (!accountId) {
+            inboxSelect.innerHTML = '<option value="">Primeiro selecione uma conta</option>';
+            return;
+        }
+
+        try {
+            const inboxes = await this.loadInboxesForAccount(accountId);
+            this.populateUnifiedInboxSelect(inboxes);
+        } catch (error) {
+            console.error('Erro ao carregar caixas de entrada:', error);
+            this.showAlert('Erro ao carregar caixas de entrada', 'danger');
+        }
+    }
+
+    // Mudança de conta no dashboard (unificado para ambos os roles)
+    async onAccountChange() {
+        // Usar IDs diferentes baseado no role
+        const accountSelectId = this.user.role === 'admin' ? 'accountSelect' : 'userAccountSelect';
+        const inboxSelectId = this.user.role === 'admin' ? 'inboxSelect' : 'userInboxSelect';
+        
+        const accountId = document.getElementById(accountSelectId).value;
+        const inboxSelect = document.getElementById(inboxSelectId);
+        
+        if (!accountId) {
+            inboxSelect.innerHTML = '<option value="">Selecione uma caixa de entrada...</option>';
+            return;
+        }
+
+        try {
+            console.log(`🔄 Carregando caixas para conta ${accountId} (${this.user.role})...`);
+            const inboxes = await this.loadInboxesForAccount(accountId);
+            
+            if (Array.isArray(inboxes) && inboxes.length > 0) {
+                inboxSelect.innerHTML = '<option value="">Selecione uma caixa de entrada...</option>';
+                inboxes.forEach(inbox => {
+                    const option = document.createElement('option');
+                    option.value = inbox.id;
+                    option.textContent = inbox.name;
+                    inboxSelect.appendChild(option);
+                });
+                console.log(`✅ ${inboxes.length} caixas carregadas para ${this.user.role}`);
+            } else {
+                inboxSelect.innerHTML = '<option value="">Nenhuma caixa encontrada</option>';
+                console.warn('⚠️ Nenhuma caixa encontrada para esta conta');
+            }
+        } catch (error) {
+            console.error(`❌ Erro ao carregar caixas para ${this.user.role}:`, error);
+            inboxSelect.innerHTML = '<option value="">Erro ao carregar caixas</option>';
+            this.showAlert('Erro ao carregar caixas de entrada', 'danger');
+        }
+    }
+
+    // Popular select unificado de inboxes
+    populateUnifiedInboxSelect(inboxes) {
+        const inboxSelect = document.getElementById('unifiedInboxSelect');
+        
+        if (inboxes.length > 0) {
+            inboxSelect.innerHTML = '<option value="">Selecione uma caixa de entrada...</option>';
+            inboxes.forEach(inbox => {
+                const option = document.createElement('option');
+                option.value = inbox.id;
+                option.textContent = inbox.name;
+                inboxSelect.appendChild(option);
+            });
+            inboxSelect.disabled = false;
+            console.log(`✅ ${inboxes.length} caixas carregadas no select unificado`);
+        } else {
+            inboxSelect.innerHTML = '<option value="">Nenhuma caixa de entrada encontrada</option>';
+            inboxSelect.disabled = true;
+        }
+    }
+
+
+
+    // Submeter campanha unificada
+    async submitUnifiedCampaign() {
+        const formData = new FormData(document.getElementById('unifiedCampaignForm'));
+        
+        // Validar campos obrigatórios
+        const campaignName = formData.get('campaignName');
+        const methodType = formData.get('methodType');
+        const templateSelect = formData.get('templateSelect');
+        
+        if (!campaignName || !methodType || !templateSelect) {
+            this.showAlert('Por favor, preencha todos os campos obrigatórios', 'warning');
+            return;
+        }
+
+        // Obter valores selecionados no dashboard (usando IDs corretos baseado no role)
+        const accountSelectId = this.user.role === 'admin' ? 'accountSelect' : 'userAccountSelect';
+        const inboxSelectId = this.user.role === 'admin' ? 'inboxSelect' : 'userInboxSelect';
+        
+        const accountSelect = document.getElementById(accountSelectId);
+        const inboxSelect = document.getElementById(inboxSelectId);
+        const accountId = accountSelect.value;
+        const inboxId = inboxSelect.value;
+        const accountName = accountSelect.options[accountSelect.selectedIndex]?.text;
+        const inboxName = inboxSelect.options[inboxSelect.selectedIndex]?.text;
+        
+        if (!accountId || !inboxId) {
+            this.showAlert('Por favor, selecione uma conta e caixa de entrada no dashboard', 'warning');
+            return;
+        }
+
+        // Preparar dados da campanha
+        const campaignData = {
+            name: campaignName,
+            type: methodType,
+            template_name: templateSelect
+        };
+
+        // Adicionar dados da conta e caixa (ambos os roles)
+        campaignData.chatwoot_account_id = accountId;
+        campaignData.chatwoot_inbox_id = inboxId;
+
+        // Adicionar dados específicos do método
+        if (methodType === 'tag') {
+            campaignData.tag_name = formData.get('tagName');
+        }
+
+        // Adicionar dados de agendamento
+        if (document.getElementById('scheduleCampaign').checked) {
+            const scheduleDate = formData.get('scheduleDate');
+            const scheduleTime = formData.get('scheduleTime');
+            
+            if (scheduleDate && scheduleTime) {
+                const localDateTime = `${scheduleDate}T${scheduleTime}:00`;
+                const date = new Date(localDateTime);
+                
+                if (isNaN(date.getTime())) {
+                    this.showAlert('Data/hora inválida para agendamento', 'warning');
+                    return;
+                }
+                
+                const now = new Date();
+                if (date <= now) {
+                    this.showAlert('A data/hora do agendamento deve ser no futuro', 'warning');
+                    return;
+                }
+                
+                campaignData.scheduled_at = localDateTime;
+            }
+        }
+
+        // Usar nomes obtidos do dashboard
+        campaignData.accountName = accountName || 'N/A';
+        campaignData.inboxName = inboxName || 'N/A';
+
+        // Mostrar modal de confirmação
+        this.showCampaignConfirmationModal(campaignData, async () => {
+            try {
+                const response = await this.apiRequest('/api/campaigns', {
+                    method: 'POST',
+                    body: JSON.stringify(campaignData)
+                });
+
+                if (response.success) {
+                    const campaignId = response.campaign.id;
+                    
+                    // Upload de CSV se necessário
+                    if (methodType === 'csv') {
+                        const csvFile = document.getElementById('csvFile').files[0];
+                        if (csvFile) {
+                            const uploadFormData = new FormData();
+                            uploadFormData.append('file', csvFile);
+                            
+                            await fetch(`/api/campaigns/${campaignId}/upload-csv`, {
+                                method: 'POST',
+                                headers: { 'Authorization': `Bearer ${this.token}` },
+                                body: uploadFormData
+                            });
+                        }
+                    }
+                    
+                    // Iniciar campanha se não for agendada
+                    if (!document.getElementById('scheduleCampaign').checked) {
+                        await this.apiRequest(`/api/campaigns/${campaignId}/start`, {
+                            method: 'POST'
+                        });
+                    }
+                    
+                    this.showAlert('Campanha criada com sucesso!', 'success');
+                    this.hideDiv('campaignFormArea');
+                    this.hideSelectedAccountInboxIndicator();
+                    
+                    // Retornar às áreas principais baseado no role do usuário
+                    if (this.user.role === 'admin') {
+                        // Admin: mostrar adminMainArea (editor de fluxo)
+                        const adminMainArea = document.getElementById('adminMainArea');
+                        if (adminMainArea) {
+                            adminMainArea.style.display = 'block';
+                            console.log('✅ Retornando para adminMainArea (editor de fluxo)');
+                        }
+                    }
+                    
+                    // Ambos os roles: mostrar userMainArea (dashboard de campanhas)
+                    const userMainArea = document.getElementById('userMainArea');
+                    if (userMainArea) {
+                        userMainArea.style.display = 'block';
+                        console.log('✅ Retornando para userMainArea (dashboard de campanhas)');
+                    }
+                    
+                    // Recarregar estatísticas
+                    if (this.user.role === 'user') {
+                        this.loadUserDashboardStats();
+                    } else if (this.user.role === 'admin') {
+                        this.loadAdminDashboardStats();
+                    }
+                } else {
+                    this.showAlert(response.error || 'Erro ao criar campanha', 'danger');
+                }
+            } catch (error) {
+                console.error('Erro ao criar campanha:', error);
+                this.showAlert('Erro ao criar campanha', 'danger');
+            }
+        });
+    }
+}
+
+// Funções de gerenciamento de usuários
+function showCreateUserForm() {
+    if (!window.app || window.app.user.role !== 'admin') return;
+    
+    const modal = document.getElementById('userFormModal') || createUserFormModal();
+    document.getElementById('userFormTitle').textContent = 'Novo Usuário';
+    document.getElementById('userForm').reset();
+    document.getElementById('userId').value = '';
+    
+    // Carregar contas para seleção
+    loadAccountsForUserForm();
+    
+    const bootstrapModal = new bootstrap.Modal(modal);
+    bootstrapModal.show();
+}
+
+function createUserFormModal() {
+    const modal = document.createElement('div');
+    modal.className = 'modal fade';
+    modal.id = 'userFormModal';
+    modal.innerHTML = `
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header bg-success text-white">
+                    <h5 class="modal-title" id="userFormTitle">
+                        <i class="fas fa-user-plus me-2"></i>Novo Usuário
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="userForm">
+                        <input type="hidden" id="userId">
+                        
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="userUsername" class="form-label">
+                                        <i class="fas fa-user me-1"></i>Nome de Usuário
+                                    </label>
+                                    <input type="text" class="form-control" id="userUsername" required>
+                                    <small class="text-muted">Nome único para login no sistema</small>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="userRole" class="form-label">
+                                        <i class="fas fa-shield-alt me-1"></i>Perfil de Acesso
+                                    </label>
+                                    <select class="form-select" id="userRole" required>
+                                        <option value="user">👤 Usuário - Acesso limitado</option>
+                                        <option value="admin">👑 Admin - Acesso total</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="userPassword" class="form-label">
+                                <i class="fas fa-lock me-1"></i>Senha
+                            </label>
+                            <input type="password" class="form-control" id="userPassword" required>
+                            <small class="text-muted">Mínimo 6 caracteres. Para edição, deixe em branco para manter atual.</small>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label class="form-label">
+                                <i class="fas fa-building me-1"></i>Contas Atribuídas
+                            </label>
+                            <div class="card">
+                                <div class="card-body">
+                                    <div id="accountsCheckboxes"></div>
+                                    <small class="text-muted mt-2 d-block">
+                                        <i class="fas fa-info-circle me-1"></i>
+                                        Selecione as contas do Chatwoot que o usuário pode acessar. Admins sempre têm acesso total.
+                                    </small>
+                                </div>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+                        <i class="fas fa-times me-2"></i>Cancelar
+                    </button>
+                    <button type="button" class="btn btn-success" onclick="saveUser()">
+                        <i class="fas fa-save me-2"></i>Salvar Usuário
+                    </button>
+                </div>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+    return modal;
+}
+
+async function loadAccountsForUserForm() {
+    try {
+        const accounts = await window.app.apiRequest('/api/accounts');
+        const container = document.getElementById('accountsCheckboxes');
+        
+        if (accounts.length === 0) {
+            container.innerHTML = `
+                <div class="text-center text-muted py-3">
+                    <i class="fas fa-exclamation-triangle me-2"></i>
+                    Nenhuma conta disponível
+                </div>
+            `;
+            return;
+        }
+        
+        container.innerHTML = accounts.map(account => `
+            <div class="form-check form-check-inline me-4 mb-2">
+                <input class="form-check-input" type="checkbox" value="${account.id}" id="account_${account.id}">
+                <label class="form-check-label" for="account_${account.id}">
+                    <i class="fas fa-building me-1 text-primary"></i>
+                    <strong>${account.name}</strong>
+                    <br>
+                    <small class="text-muted">ID: ${account.id} • ${account.domain}</small>
+                </label>
+            </div>
+        `).join('');
+    } catch (error) {
+        console.error('Erro ao carregar contas:', error);
+        const container = document.getElementById('accountsCheckboxes');
+        container.innerHTML = `
+            <div class="text-center text-danger py-3">
+                <i class="fas fa-exclamation-circle me-2"></i>
+                Erro ao carregar contas
+            </div>
+        `;
+    }
+}
+
+async function saveUser() {
+    const userId = document.getElementById('userId').value;
+    const username = document.getElementById('userUsername').value.trim();
+    const password = document.getElementById('userPassword').value;
+    const role = document.getElementById('userRole').value;
+    
+    const assignedAccounts = Array.from(document.querySelectorAll('#accountsCheckboxes input:checked'))
+        .map(cb => parseInt(cb.value));
+    
+    // Validações
+    if (!username) {
+        window.app.showAlert('Nome de usuário é obrigatório', 'warning');
+        document.getElementById('userUsername').focus();
+        return;
+    }
+    
+    if (!userId && !password) {
+        window.app.showAlert('Senha é obrigatória para novos usuários', 'warning');
+        document.getElementById('userPassword').focus();
+        return;
+    }
+    
+    if (password && password.length < 6) {
+        window.app.showAlert('Senha deve ter pelo menos 6 caracteres', 'warning');
+        document.getElementById('userPassword').focus();
+        return;
+    }
+    
+    if (!role) {
+        window.app.showAlert('Selecione um perfil de acesso', 'warning');
+        return;
+    }
+    
+    // Desabilitar botão para evitar duplo clique
+    const saveBtn = document.querySelector('#userFormModal .btn-success');
+    const originalText = saveBtn.innerHTML;
+    saveBtn.disabled = true;
+    saveBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Salvando...';
+    
+    try {
+        const url = userId ? `/api/users/${userId}` : '/api/users';
+        const method = userId ? 'PUT' : 'POST';
+        
+        const body = { username, role, assigned_accounts: assignedAccounts };
+        if (password) body.password = password;
+        
+        const response = await window.app.apiRequest(url, {
+            method,
+            body: JSON.stringify(body)
+        });
+        
+        if (response.success) {
+            window.app.showAlert(
+                `✅ Usuário "${username}" ${userId ? 'atualizado' : 'criado'} com sucesso!`, 
+                'success'
+            );
+            bootstrap.Modal.getInstance(document.getElementById('userFormModal')).hide();
+            
+            // Aguardar um pouco antes de recarregar para mostrar o feedback
+            setTimeout(() => {
+                window.app.showUserManagement();
+            }, 500);
+        } else {
+            window.app.showAlert(response.error || 'Erro ao salvar usuário', 'danger');
+        }
+    } catch (error) {
+        console.error('Erro ao salvar usuário:', error);
+        window.app.showAlert('Erro de conexão. Tente novamente.', 'danger');
+    } finally {
+        // Reabilitar botão
+        saveBtn.disabled = false;
+        saveBtn.innerHTML = originalText;
+    }
+}
+
+async function editUser(userId) {
+    try {
+        const users = await window.app.apiRequest('/api/users');
+        const user = users.find(u => u.id === userId);
+        
+        if (!user) {
+            window.app.showAlert('Usuário não encontrado', 'danger');
+            return;
+        }
+        
+        const modal = document.getElementById('userFormModal') || createUserFormModal();
+        document.getElementById('userFormTitle').textContent = 'Editar Usuário';
+        document.getElementById('userId').value = user.id;
+        document.getElementById('userUsername').value = user.username;
+        document.getElementById('userPassword').value = ''; // Não mostrar senha atual
+        document.getElementById('userPassword').placeholder = 'Deixe em branco para manter atual';
+        document.getElementById('userPassword').required = false;
+        document.getElementById('userRole').value = user.role;
+        
+        // Carregar contas e marcar as atribuídas
+        await loadAccountsForUserForm();
+        
+        const assignedAccounts = user.assigned_accounts || [];
+        assignedAccounts.forEach(accountId => {
+            const checkbox = document.getElementById(`account_${accountId}`);
+            if (checkbox) checkbox.checked = true;
+        });
+        
+        const bootstrapModal = new bootstrap.Modal(modal);
+        bootstrapModal.show();
+    } catch (error) {
+        console.error('Erro ao editar usuário:', error);
+        window.app.showAlert('Erro ao carregar dados do usuário', 'danger');
+    }
+}
+
+async function deleteUser(userId, username) {
+    if (!confirm(`Tem certeza que deseja excluir o usuário "${username}"?`)) return;
+    
+    try {
+        const response = await window.app.apiRequest(`/api/users/${userId}`, {
+            method: 'DELETE'
+        });
+        
+        if (response.success) {
+            window.app.showAlert('Usuário excluído com sucesso!', 'success');
+            window.app.showUserManagement(); // Recarregar lista
+        } else {
+            window.app.showAlert(response.error || 'Erro ao excluir usuário', 'danger');
+        }
+    } catch (error) {
+        console.error('Erro ao excluir usuário:', error);
+        window.app.showAlert('Erro ao excluir usuário', 'danger');
     }
 }
 
@@ -988,7 +3620,46 @@ document.addEventListener('DOMContentLoaded', () => {
         window.app.updateWorkflowPreview();
     });
     }
+    
+    // Configurar validação de data/hora para interface administrativa
+    setupDateTimeValidation();
 });
+
+function setupDateTimeValidation() {
+    const dataInput = document.getElementById('dataEnvio');
+    const horaInput = document.getElementById('horaEnvio');
+    
+    // Definir data mínima como hoje
+    if (dataInput) {
+        const today = new Date().toISOString().split('T')[0];
+        dataInput.min = today;
+        
+        console.log('📅 Data mínima definida para campos administrativos:', today);
+    }
+    
+    // Validação em tempo real da data/hora
+    // if (dataInput && horaInput) {
+    //     const validateDateTime = () => {
+    //         if (dataInput.value && horaInput.value) {
+    //             const selectedDateTime = new Date(`${dataInput.value}T${horaInput.value}:00`);
+    //             const now = new Date();
+                
+    //             if (selectedDateTime <= now) {
+    //                 horaInput.setCustomValidity('O horário deve ser no futuro (horário de Brasília)');
+    //                 horaInput.reportValidity();
+    //             } else {
+    //                 horaInput.setCustomValidity('');
+    //                 console.log(`📅 Horário válido selecionado: ${selectedDateTime.toLocaleString('pt-BR', {timeZone: 'America/Sao_Paulo'})}`);
+    //             }
+    //         }
+    //     };
+        
+    //     dataInput.addEventListener('change', validateDateTime);
+    //     horaInput.addEventListener('change', validateDateTime);
+        
+    //     console.log('✅ Validação de data/hora configurada para interface administrativa');
+    // }
+}
 
 // Funções globais para compatibilidade com onclick
 function logout() {
@@ -1066,26 +3737,13 @@ function initCampanhasEventListeners() {
 
         if (btnCriarCampanha) {
             btnCriarCampanha.addEventListener('click', function() {
-                // Verificar se conta e caixa foram selecionadas (mesma regra dos workflows)
-                const accountId = document.getElementById('accountSelect').value;
-                const inboxId = document.getElementById('inboxSelect').value;
-                
-                if (!accountId || !inboxId) {
-                    window.app.showAlert('Selecione uma conta e caixa de entrada primeiro', 'warning');
+                // Validar se conta e caixa foram selecionadas
+                if (!window.app.validateAccountAndInboxSelection()) {
                     return;
                 }
                 
-                // Atualizar as variáveis globais com os valores selecionados
-                selectedAccountId = accountId;
-                selectedInboxId = inboxId;
-                
-                // Abrir modal de campanha
-                window.app.showDiv('campanhasDiv');
-                loadModelos();
-                loadTags();
-                
-                // Mostrar informações da conta/caixa selecionada no modal
-                showSelectedAccountInbox();
+                // Usar formulário unificado
+                window.app.showUnifiedCampaignForm();
             });
         }
 
@@ -1097,7 +3755,7 @@ function initCampanhasEventListeners() {
                     indicator.remove();
                 }
                 
-                window.app.hideDiv('campanhasDiv');
+                window.app.hideDiv('campaignFormArea');
             });
         }
 
@@ -1129,6 +3787,25 @@ function initCampanhasEventListeners() {
                     if (this.checked) {
                         agendamentoCampos.style.display = 'block';
                         btnEnviar.textContent = 'Agendar Campanha';
+
+                        //preencher data e hora atual
+                        const dataInputFinal = document.getElementById('dataEnvio');
+                        const horaInputFinal = document.getElementById('horaEnvio');
+                        if (dataInputFinal) {
+                            const today = new Date().toISOString().split('T')[0];
+                            dataInputFinal.value = today;
+                            console.log('✅ Data preenchida (final):', today);
+                        }
+                        
+                        if (horaInputFinal) {
+                            const now = new Date();
+                            const brazilTime = new Date(now.toLocaleString("en-US", {timeZone: "America/Sao_Paulo"}));
+                            const hours = brazilTime.getHours().toString().padStart(2, '0');
+                            const minutes = brazilTime.getMinutes().toString().padStart(2, '0');
+                            const horaValue = `${hours}:${minutes}`;
+                            horaInputFinal.value = horaValue;
+                            console.log('✅ Hora preenchida (final):', horaValue);
+                        }
                     } else {
                         agendamentoCampos.style.display = 'none';
                         btnEnviar.textContent = 'Enviar Agora';
@@ -1163,71 +3840,91 @@ function initCampanhasEventListeners() {
                     const dataEnvio = formData.get('dataEnvio');
                     const horaEnvio = formData.get('horaEnvio');
                     if (dataEnvio && horaEnvio) {
-                        // Criar timestamp no fuso horário do Brasil (UTC-3)
+                        // Criar datetime como horário local do Brasil (sem conversão de fuso)
                         const localDateTime = `${dataEnvio}T${horaEnvio}:00`;
-                        const brazilDate = new Date(localDateTime);
                         
-                        // Ajustar para fuso horário do Brasil (São Paulo)
-                        const utcTime = brazilDate.getTime() + (brazilDate.getTimezoneOffset() * 60000);
-                        const brazilTimeOffset = -3 * 60 * 60 * 1000; // UTC-3 em millisegundos
-                        const brazilTime = new Date(utcTime + brazilTimeOffset);
+                        // Interpretar como horário do Brasil e manter o mesmo
+                        const date = new Date(localDateTime);
                         
-                        // Formato ISO com fuso horário do Brasil
-                        campanhaData.scheduled_at = brazilTime.toISOString().replace('Z', '-03:00');
+                        // Verificar se a data é válida
+                        if (isNaN(date.getTime())) {
+                            window.app.showAlert('Data/hora inválida para agendamento', 'warning');
+                            return;
+                        }
                         
-                        console.log(`Agendamento criado: ${localDateTime} (local) -> ${campanhaData.scheduled_at} (Brasil)`);
+                        // Verificar se não é uma data passada
+                        const now = new Date();
+                        if (date <= now) {
+                            window.app.showAlert('A data/hora do agendamento deve ser no futuro', 'warning');
+                            return;
+                        }
+                        
+                        // Enviar apenas o datetime local sem timezone (será interpretado como horário do Brasil)
+                        campanhaData.scheduled_at = localDateTime;
+                        
+                        console.log(`📅 Agendamento criado: ${localDateTime} (horário do Brasil)`);
+                        console.log(`📅 Valor enviado para API: ${campanhaData.scheduled_at}`);
                     }
                 }
                 
-                try {
-                    // Criar campanha
-                    const response = await fetch('/api/campaigns', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'Authorization': `Bearer ${getAuthToken()}`
-                        },
-                        body: JSON.stringify(campanhaData)
-                    });
-                    
-                    const result = await response.json();
-                    
-                    if (result.success) {
-                        const campaignId = result.campaign.id;
+                // Obter nomes da conta e caixa de entrada para exibir no modal
+                const accountSelect = document.getElementById('accountSelect');
+                const inboxSelect = document.getElementById('inboxSelect');
+                campanhaData.accountName = accountSelect.options[accountSelect.selectedIndex]?.text || 'N/A';
+                campanhaData.inboxName = inboxSelect.options[inboxSelect.selectedIndex]?.text || 'N/A';
+
+                // Mostrar modal de confirmação
+                window.app.showCampaignConfirmationModal(campanhaData, async () => {
+                    try {
+                        // Criar campanha
+                        const response = await fetch('/api/campaigns', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Authorization': `Bearer ${getAuthToken()}`
+                            },
+                            body: JSON.stringify(campanhaData)
+                        });
                         
-                        // Se for CSV, fazer upload do arquivo
-                        if (metodoEnvio === 'csv') {
-                            const csvFile = formData.get('csvContatos');
-                            if (csvFile && csvFile.size > 0) {
-                                const uploadFormData = new FormData();
-                                uploadFormData.append('file', csvFile);
-                                
-                                await fetch(`/api/campaigns/${campaignId}/upload-csv`, {
+                        const result = await response.json();
+                        
+                        if (result.success) {
+                            const campaignId = result.campaign.id;
+                            
+                            // Se for CSV, fazer upload do arquivo
+                            if (metodoEnvio === 'csv') {
+                                const csvFile = formData.get('csvContatos');
+                                if (csvFile && csvFile.size > 0) {
+                                    const uploadFormData = new FormData();
+                                    uploadFormData.append('file', csvFile);
+                                    
+                                    await fetch(`/api/campaigns/${campaignId}/upload-csv`, {
+                                        method: 'POST',
+                                        headers: { 'Authorization': `Bearer ${getAuthToken()}` },
+                                        body: uploadFormData
+                                    });
+                                }
+                            }
+                            
+                            // Se não for agendado, iniciar envio imediatamente
+                            if (!agendarEnvioChecked) {
+                                await fetch(`/api/campaigns/${campaignId}/start`, {
                                     method: 'POST',
-                                    headers: { 'Authorization': `Bearer ${getAuthToken()}` },
-                                    body: uploadFormData
+                                    headers: { 'Authorization': `Bearer ${getAuthToken()}` }
                                 });
                             }
+                            
+                            window.app.showAlert('Campanha criada com sucesso!', 'success');
+                            window.app.hideDiv('campaignFormArea');
+                            this.reset();
+                        } else {
+                            window.app.showAlert('Erro ao criar campanha: ' + result.error, 'error');
                         }
-                        
-                        // Se não for agendado, iniciar envio imediatamente
-                        if (!agendarEnvioChecked) {
-                            await fetch(`/api/campaigns/${campaignId}/start`, {
-                                method: 'POST',
-                                headers: { 'Authorization': `Bearer ${getAuthToken()}` }
-                            });
-                        }
-                        
-                        window.app.showAlert('Campanha criada com sucesso!', 'success');
-                        window.app.hideDiv('campanhasDiv');
-                        this.reset();
-                    } else {
-                        window.app.showAlert('Erro ao criar campanha: ' + result.error, 'error');
+                    } catch (error) {
+                        console.error('Erro ao criar campanha:', error);
+                        window.app.showAlert('Erro ao criar campanha', 'error');
                     }
-                } catch (error) {
-                    console.error('Erro ao criar campanha:', error);
-                    window.app.showAlert('Erro ao criar campanha', 'error');
-                }
+                });
             });
         }
 
@@ -1268,79 +3965,11 @@ function initCampanhasAfterLogin() {
 
 // Carregar modelos/templates via API
 async function loadModelos() {
-    try {
-        console.log('🔍 Carregando templates do WhatsApp...');
-        
-        // Obter conta e caixa selecionadas
-        const accountId = selectedAccountId || document.getElementById('accountSelect')?.value;
-        const inboxId = selectedInboxId || document.getElementById('inboxSelect')?.value;
-        
-        console.log(`📋 Usando Account ID: ${accountId}, Inbox ID: ${inboxId}`);
-        
-        // Construir URL com parâmetros se disponíveis
-        let url = '/api/whatsapp/templates';
-        const params = new URLSearchParams();
-        if (accountId) params.append('accountId', accountId);
-        if (inboxId) params.append('inboxId', inboxId);
-        if (params.toString()) url += `?${params.toString()}`;
-        
-        const response = await fetch(url, {
-            headers: { 'Authorization': `Bearer ${getAuthToken()}` }
-        });
-        
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-        
-        const templates = await response.json();
-        console.log('📋 Templates recebidos:', templates);
-        
-        const select = document.getElementById('modeloMensagem');
-        select.innerHTML = '<option value="">Selecione um modelo</option>';
-        
-        if (Array.isArray(templates) && templates.length > 0) {
-            // Mostrar templates da API oficial
-            const inboxSpecificTemplates = templates.filter(t => t.inboxId);
-            let label = `🚀 API Oficial WhatsApp (${templates.length})`;
-            if (inboxSpecificTemplates.length > 0) {
-                const inboxName = inboxSpecificTemplates[0].inboxName;
-                label = `🚀 ${inboxName} - API Oficial (${templates.length})`;
-            }
-            const optgroup = document.createElement('optgroup');
-            optgroup.label = label;
-            templates.forEach(template => {
-                const option = document.createElement('option');
-                option.value = template.name;
-                option.textContent = template.displayName || template.name;
-                const sourceText = template.inboxName ? `Caixa: ${template.inboxName}` : 'API Oficial';
-                option.title = `Fonte: ${sourceText} | Status: ${template.status} | Categoria: ${template.category} | Idioma: ${template.language}`;
-                optgroup.appendChild(option);
-            });
-            select.appendChild(optgroup);
-            // Mostrar indicador se templates são específicos de uma caixa
-            if (inboxSpecificTemplates.length > 0) {
-                showInboxTemplateIndicator(inboxSpecificTemplates[0].inboxName, templates.length);
-            }
-            console.log(`✅ ${templates.length} templates carregados com sucesso`);
-        } else {
-            console.warn('⚠️ Nenhum template encontrado');
-            const option = document.createElement('option');
-            option.value = '';
-            option.textContent = 'Nenhum template disponível - Verifique as credenciais da API oficial e clique em Sincronizar';
-            option.disabled = true;
-            select.appendChild(option);
-        }
-    } catch (error) {
-        console.error('❌ Erro ao carregar modelos:', error);
-        
-        // Mostrar erro no select
-        const select = document.getElementById('modeloMensagem');
-        select.innerHTML = '<option value="">Erro ao carregar templates - Verifique as credenciais da API oficial e clique em Sincronizar</option>';
-        
-        // Mostrar alerta se a função showAlert existir
-        if (typeof window.app?.showAlert === 'function') {
-            window.app.showAlert('Erro ao carregar modelos de mensagem. Verifique as credenciais da API oficial e tente sincronizar os templates.', 'danger');
-        }
+    // Usar a função da classe se disponível
+    if (window.app && typeof window.app.loadUnifiedTemplates === 'function') {
+        await window.app.loadUnifiedTemplates();
+    } else {
+        console.error('❌ Função loadUnifiedTemplates não disponível');
     }
 }
 
@@ -1368,9 +3997,18 @@ function showInboxTemplateIndicator(inboxName, templateCount) {
         </div>
     `;
     
-    // Adicionar após o select de templates
+    // Adicionar após o container flex (d-flex gap-2) para que apareça em linha separada
     const selectContainer = document.getElementById('modeloMensagem').parentElement;
-    selectContainer.appendChild(indicator);
+    const flexContainer = selectContainer.parentElement; // Container pai (d-flex gap-2)
+    
+    // Criar um elemento de quebra de linha para separar visualmente
+    const lineBreak = document.createElement('div');
+    lineBreak.style.height = '10px'; // Espaçamento adicional
+    lineBreak.style.clear = 'both';
+    
+    // Adicionar quebra de linha e indicador após o container flex
+    flexContainer.appendChild(lineBreak);
+    flexContainer.appendChild(indicator);
     
     // Auto-remover após 8 segundos
     setTimeout(() => {
@@ -1385,33 +4023,88 @@ async function loadTags() {
         const response = await fetch('/api/chatwoot/tags', {
             headers: { 'Authorization': `Bearer ${getAuthToken()}` }
         });
+        
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
         const tags = await response.json();
+        
         // Implementar autocomplete simples ou datalist
         const input = document.getElementById('tagNome');
+        if (!input) {
+            console.log('Input de tags não encontrado');
+            return;
+        }
+        
+        // Remover datalist anterior se existir
+        const existingDatalist = document.getElementById('tagsList');
+        if (existingDatalist) {
+            existingDatalist.remove();
+        }
+        
         const datalist = document.createElement('datalist');
         datalist.id = 'tagsList';
         input.setAttribute('list', 'tagsList');
+        
+        if (Array.isArray(tags) && tags.length > 0) {
         tags.forEach(tag => {
             const option = document.createElement('option');
             option.value = tag.title || tag.name;
             datalist.appendChild(option);
         });
+            console.log(`✅ ${tags.length} tags carregadas para autocomplete`);
+        } else {
+            console.log('ℹ️ Nenhuma tag encontrada para autocomplete');
+        }
+        
         input.parentNode.appendChild(datalist);
     } catch (error) {
-        console.error('Erro ao carregar tags:', error);
+        console.error('❌ Erro ao carregar tags:', error);
+        
+        // Mostrar alerta se a função showAlert existir
+        if (typeof window.app?.showAlert === 'function') {
+            window.app.showAlert('Erro ao carregar tags. Verifique sua conexão.', 'warning');
+        }
     }
 }
 
 // Carregar lista de campanhas
 async function loadCampanhasList() {
     try {
-        const response = await fetch('/api/campaigns', {
+        // Verificar se é admin para carregar todas as campanhas
+        const isAdmin = window.app.user && window.app.user.role === 'admin';
+        let endpoint = '/api/campaigns';
+        
+        if (isAdmin) {
+            // Tentar primeiro o endpoint específico para admin
+            try {
+                const response = await fetch('/api/campaigns/all', {
+                    headers: { 'Authorization': `Bearer ${getAuthToken()}` }
+                });
+                if (response.ok) {
+                    endpoint = '/api/campaigns/all';
+                }
+            } catch (error) {
+                console.log('Endpoint /api/campaigns/all não encontrado, usando endpoint padrão');
+            }
+        }
+        
+        const response = await fetch(endpoint, {
             headers: { 'Authorization': `Bearer ${getAuthToken()}` }
         });
         const campanhas = await response.json();
         
+        // DEBUG: Log para verificar dados que chegam do backend
+        const campanhaComAgendamento = campanhas.find(c => c.scheduled_at);
+        if (campanhaComAgendamento) {
+            console.log('🔍 DEBUG - Campanha com agendamento:');
+            console.log('   📅 scheduled_at (bruto):', campanhaComAgendamento.scheduled_at);
+            console.log('   📅 formatDateBrazil (corrigido):', formatDateBrazil(campanhaComAgendamento.scheduled_at));
+        }
+        
         // Criar div para exibir campanhas
-        showCampanhasList(campanhas);
+        showCampanhasList(campanhas, isAdmin);
     } catch (error) {
         console.error('Erro ao carregar campanhas:', error);
         window.app.showAlert('Erro ao carregar campanhas', 'danger');
@@ -1419,7 +4112,7 @@ async function loadCampanhasList() {
 }
 
 // Exibir lista de campanhas com estatísticas detalhadas
-function showCampanhasList(campanhas) {
+function showCampanhasList(campanhas, isAdmin = false) {
     // Criar div para listagem de campanhas
     let container = document.getElementById('campanhasListDiv');
     if (!container) {
@@ -1430,12 +4123,14 @@ function showCampanhasList(campanhas) {
         document.body.appendChild(container);
     }
     
+    const title = isAdmin ? 'Todas as Campanhas WhatsApp' : 'Minhas Campanhas WhatsApp';
+    
     container.innerHTML = `
         <div class="container">
             <div class="row">
                 <div class="col-12">
                     <div class="d-flex justify-content-between align-items-center mb-4">
-                        <h3>Campanhas WhatsApp</h3>
+                        <h3>${title}</h3>
                         <div>
                             <button class="btn btn-warning me-2" onclick="corrigirCampanhasPresas()" title="Corrigir campanhas presas no status 'running'">
                                 <i class="fas fa-wrench"></i> Corrigir Presas
@@ -1453,11 +4148,21 @@ function showCampanhasList(campanhas) {
                             const pendingCount = parseInt(campanha.pending_count || 0);
                             const successRate = totalContacts > 0 ? ((sentCount / totalContacts) * 100).toFixed(1) : 0;
                             
+                            // Informação do usuário (se disponível)
+                            const userInfo = campanha.user_name || campanha.username || campanha.created_by || 'N/A';
+                            const userDisplay = isAdmin ? `
+                                <p class="card-text mb-2">
+                                    <strong><i class="fas fa-user me-1"></i>Criado por:</strong> 
+                                    <span class="badge bg-secondary">${userInfo}</span>
+                                </p>
+                            ` : '';
+                            
                             return `
                                 <div class="col-md-6 mb-3">
                                     <div class="card">
                                         <div class="card-body">
                                             <h5 class="card-title">${campanha.name}</h5>
+                                            ${userDisplay}
                                             <p class="card-text">
                                                 <strong>Status:</strong> 
                                                 <span class="badge bg-${getStatusColor(campanha.status)}">${campanha.status}</span>
@@ -1499,8 +4204,8 @@ function showCampanhasList(campanhas) {
                                             <p class="card-text">
                                                 <strong>Tipo:</strong> ${campanha.type}<br>
                                                 <strong>Template:</strong> ${campanha.template_name}<br>
-                                                <strong>Criada:</strong> ${new Date(campanha.created_at).toLocaleString()}
-                                                ${campanha.scheduled_at ? `<br><strong>Agendada:</strong> ${new Date(campanha.scheduled_at).toLocaleString('pt-BR', {timeZone: 'America/Sao_Paulo'})}` : ''}
+                                                <strong>Criada:</strong> ${formatDateBrazil(campanha.created_at_brasil)}
+                                                ${campanha.scheduled_at ? `<br><strong>Agendada:</strong> ${formatDateScheduled(campanha.scheduled_at)}` : ''}
                                             </p>
                                             
                                             <div class="d-flex gap-2 flex-wrap">
@@ -1521,9 +4226,11 @@ function showCampanhasList(campanhas) {
                                                         <i class="fas fa-exclamation-triangle"></i> Ver Erros
                                                     </button>
                                                 ` : ''}
-                                                <button class="btn btn-sm btn-danger" onclick="deleteCampanha(${campanha.id})">
-                                                    <i class="fas fa-trash"></i> Excluir
-                                                </button>
+                                                ${window.app && window.app.user && window.app.user.role === 'admin' ? `
+                                                    <button class="btn btn-sm btn-danger" onclick="deleteCampanha(${campanha.id})">
+                                                        <i class="fas fa-trash"></i> Excluir
+                                                    </button>
+                                                ` : ''}
                                             </div>
                                         </div>
                                     </div>
@@ -1581,25 +4288,1139 @@ async function cancelarCampanha(campanhaId) {
 // Função para ver status detalhado da campanha
 async function verStatusCampanha(campanhaId) {
     try {
+        console.log(`🔍 Carregando status detalhado da campanha ${campanhaId}...`);
+        console.log(`🔍 URL do endpoint: /api/campaigns/${campanhaId}/status`);
+        
+        // Mostrar indicador de carregamento
+        showLoadingStatusModal();
+        
         const response = await fetch(`/api/campaigns/${campanhaId}/status`, {
             headers: { 'Authorization': `Bearer ${getAuthToken()}` }
         });
+        
+        console.log(`📡 Resposta da API: Status ${response.status} - ${response.statusText}`);
+        
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
         const status = await response.json();
+        console.log(`📊 Dados brutos recebidos:`, status);
+        console.log(`📊 Tipo de dados: ${typeof status}, É array: ${Array.isArray(status)}, Tamanho: ${status.length || 'N/A'}`);
         
-        const resumo = status.reduce((acc, item) => {
-            acc[item.status] = (acc[item.status] || 0) + 1;
-            return acc;
-        }, {});
+        // Verificar se há dados válidos
+        if (!Array.isArray(status)) {
+            console.warn('⚠️ Resposta não é um array, convertendo...');
+            status = [status].filter(item => item && Object.keys(item).length > 0);
+        }
         
-        const statusText = Object.entries(resumo)
-            .map(([status, count]) => `${status}: ${count}`)
-            .join('\n');
+        if (status.length === 0) {
+            console.warn(`⚠️ Nenhum dado de status encontrado para campanha ${campanhaId}`);
+            console.log('🔍 Verificando se a campanha existe e tem dados...');
             
-        alert(`Status dos envios:\n\n${statusText}`);
+            // Verificar se há dados de envio em outras tabelas
+            await checkCampaignLogs(campanhaId);
+            
+            // Log especial para o usuário APÓS verificações
+            console.log(`
+🔧 DIAGNÓSTICO RÁPIDO - CAMPANHA ${campanhaId}:
+
+1. ✅ Endpoint /api/campaigns/${campanhaId}/status funciona (retornou resposta válida)
+2. ❌ Nenhum dado na tabela 'campaign_status'
+3. 🔍 Verificações adicionais executadas (veja logs acima)
+
+📋 PRÓXIMOS PASSOS:
+• Analise os logs detalhados acima para entender o problema específico
+• Clique em "Informações de Debug" para dados completos em JSON
+• Use "Verificar Banco de Dados" para análise completa das tabelas
+• Se há contatos mas não envios, use "Tentar Executar Novamente"
+
+🚀 AÇÕES RÁPIDAS:
+• Botão "Tentar Executar Novamente" → força execução da campanha
+• Botão "Verificar Banco de Dados" → análise completa das tabelas
+• Botão "Informações de Debug" → dados técnicos completos
+            `);
+        }
+        
+        // Buscar informações da campanha também
+        let campaignInfo = {};
+        try {
+            console.log('🔍 Buscando informações da campanha...');
+            const campaignResponse = await fetch(`/api/campaigns`, {
+                headers: { 'Authorization': `Bearer ${getAuthToken()}` }
+            });
+            
+            if (campaignResponse.ok) {
+                const campaigns = await campaignResponse.json();
+                console.log(`📋 Campanhas encontradas: ${campaigns.length}`);
+                
+                if (Array.isArray(campaigns)) {
+                    campaignInfo = campaigns.find(c => String(c.id) === String(campanhaId)) || {};
+                    console.log(`📋 Campanha específica encontrada:`, campaignInfo);
+                } else if (campaigns && campaigns.id) {
+                    campaignInfo = campaigns;
+                }
+            }
     } catch (error) {
-        console.error('Erro ao carregar status:', error);
-        window.app.showAlert('Erro ao carregar status da campanha', 'danger');
+            console.warn('⚠️ Erro ao carregar informações da campanha (continuando sem elas):', error);
+        }
+        
+        showDetailedStatusModal(campanhaId, status, campaignInfo);
+        
+    } catch (error) {
+        console.error('❌ Erro ao carregar status:', error);
+        
+        // Fechar modal de carregamento se existir
+        const loadingModal = document.getElementById('detailedStatusModal');
+        if (loadingModal) {
+            loadingModal.remove();
+        }
+        
+        window.app.showAlert('Erro ao carregar status da campanha: ' + error.message, 'danger');
     }
+}
+
+// Nova função para verificar logs da campanha em outras fontes
+async function checkCampaignLogs(campanhaId) {
+    try {
+        console.log(`🔍 Verificando logs alternativos para campanha ${campanhaId}...`);
+        
+        // Primeiro, verificar detalhes específicos da campanha
+        try {
+            console.log(`🔍 Verificando detalhes específicos da campanha...`);
+            const campaignResponse = await fetch(`/api/campaigns/${campanhaId}`, {
+                headers: { 'Authorization': `Bearer ${getAuthToken()}` }
+            });
+            
+            if (campaignResponse.ok) {
+                const campaign = await campaignResponse.json();
+                console.log(`📋 Detalhes específicos da campanha:`, campaign);
+                console.log(`📋 Status: ${campaign.status || 'N/A'}`);
+                console.log(`📋 Total de contatos: ${campaign.total_contacts || 'N/A'}`);
+                console.log(`📋 Total de envios: ${campaign.total_sends || 0}`);
+                console.log(`📋 Enviados: ${campaign.sent_count || 0}`);
+                console.log(`📋 Falhas: ${campaign.failed_count || 0}`);
+                console.log(`📋 Pendentes: ${campaign.pending_count || 0}`);
+                console.log(`📋 Tipo: ${campaign.type || 'N/A'}`);
+                console.log(`📋 Template: ${campaign.template_name || 'N/A'}`);
+                
+                if (campaign.total_contacts && campaign.total_contacts > 0) {
+                    console.log(`✅ Campanha tem ${campaign.total_contacts} contatos configurados`);
+                    
+                    if (campaign.total_sends === 0) {
+                        console.log(`⚠️ Contatos existem, mas nenhum envio foi iniciado ainda`);
+                        if (campaign.status === 'pending') {
+                            console.log(`📌 Campanha está PENDENTE - precisa ser executada`);
+                        } else if (campaign.status === 'running') {
+                            console.log(`🔄 Campanha está EXECUTANDO - aguarde os envios`);
+                        }
+                    } else {
+                        console.log(`📊 ${campaign.total_sends} registros de envio encontrados`);
+                        if (campaign.status === 'completed') {
+                            console.log(`✅ Campanha CONCLUÍDA com dados de envio`);
+                        }
+                    }
+                } else {
+                    console.log(`❌ Campanha SEM CONTATOS - verificando diretamente na tabela...`);
+                    
+                    // Verificar contatos diretamente da tabela
+                    await checkCampaignContacts(campanhaId);
+                }
+            } else {
+                console.log(`❌ Erro ao buscar detalhes: ${campaignResponse.status} ${campaignResponse.statusText}`);
+            }
+        } catch (e) {
+            console.log(`❌ Não foi possível verificar detalhes da campanha: ${e.message}`);
+        }
+        
+        // Verificar outros endpoints alternativos
+        const alternativeEndpoints = [
+            `/api/campaigns/${campanhaId}/contacts`,
+            `/api/campaigns/${campanhaId}/logs`,
+            `/api/campaigns/${campanhaId}/messages`,
+            `/api/campaigns/${campanhaId}/sends`
+        ];
+        
+        for (const endpoint of alternativeEndpoints) {
+            try {
+                console.log(`🔍 Tentando endpoint: ${endpoint}`);
+                const response = await fetch(endpoint, {
+                    headers: { 'Authorization': `Bearer ${getAuthToken()}` }
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    console.log(`✅ Dados encontrados em ${endpoint}:`, data);
+                    
+                    if (Array.isArray(data) && data.length > 0) {
+                        console.log(`📊 Encontrados ${data.length} registros em ${endpoint}`);
+                        return data;
+                    }
+                }
+            } catch (e) {
+                console.log(`❌ Endpoint ${endpoint} não disponível: ${e.message}`);
+            }
+        }
+        
+        console.log('ℹ️ Nenhum dado encontrado em endpoints alternativos');
+        
+        // Verificar se a campanha foi realmente executada
+        await checkCampaignExecution(campanhaId);
+        
+    } catch (error) {
+        console.error('❌ Erro ao verificar logs alternativos:', error);
+    }
+}
+
+// Função para verificar contatos diretamente da tabela
+async function checkCampaignContacts(campanhaId) {
+    try {
+        console.log(`📞 Verificando contatos diretamente para campanha ${campanhaId}...`);
+        
+        const contactsResponse = await fetch(`/api/campaigns/${campanhaId}/contacts`, {
+            headers: { 'Authorization': `Bearer ${getAuthToken()}` }
+        });
+        
+        if (contactsResponse.ok) {
+            const contacts = await contactsResponse.json();
+            console.log(`📞 Resposta da API de contatos:`, contacts);
+            
+            if (Array.isArray(contacts) && contacts.length > 0) {
+                console.log(`✅ CORREÇÃO: Encontrados ${contacts.length} contatos na tabela campaign_contacts!`);
+                console.log(`📞 Contatos encontrados:`, contacts.map(c => `${c.name} (${c.phone})`).join(', '));
+                console.log(`🔧 O problema anterior era no cálculo do endpoint /api/campaigns/${campanhaId}`);
+                
+                return contacts;
+            } else {
+                console.log(`❌ Realmente não há contatos na tabela campaign_contacts para esta campanha`);
+            }
+        } else {
+            console.log(`❌ Erro ao buscar contatos: ${contactsResponse.status} ${contactsResponse.statusText}`);
+        }
+    } catch (error) {
+        console.error('❌ Erro ao verificar contatos diretamente:', error);
+    }
+    
+    return [];
+}
+
+// Função para verificar se a campanha foi executada
+async function checkCampaignExecution(campanhaId) {
+    try {
+        console.log(`🔍 Verificando se campanha ${campanhaId} foi executada...`);
+        
+        // Buscar informações detalhadas da campanha
+        const response = await fetch(`/api/campaigns`, {
+            headers: { 'Authorization': `Bearer ${getAuthToken()}` }
+        });
+        
+        if (response.ok) {
+            const campaigns = await response.json();
+            const campaign = campaigns.find(c => String(c.id) === String(campanhaId));
+            
+            if (campaign) {
+                console.log(`📋 Status da campanha: ${campaign.status}`);
+                console.log(`📋 Contadores: Enviados: ${campaign.sent_count || 0}, Falhas: ${campaign.failed_count || 0}, Pendentes: ${campaign.pending_count || 0}`);
+                console.log(`📋 Dados completos da campanha:`, campaign);
+                
+                if (campaign.status === 'pending') {
+                    console.log('⚠️ Campanha ainda está pendente - pode não ter sido executada ainda');
+                } else if (campaign.status === 'running') {
+                    console.log('🔄 Campanha está em execução - dados podem estar sendo gerados');
+                } else if (campaign.status === 'completed' && (!campaign.sent_count || campaign.sent_count == 0)) {
+                    console.log('⚠️ Campanha marcada como completa mas sem contadores de envio');
+                }
+            } else {
+                console.log('❌ Campanha não encontrada na lista');
+            }
+        }
+    } catch (error) {
+        console.error('❌ Erro ao verificar execução da campanha:', error);
+    }
+}
+
+function showDetailedStatusModal(campanhaId, statusData, campaignInfo) {
+    // Criar modal para status detalhado
+    const modalId = 'detailedStatusModal';
+    let modal = document.getElementById(modalId);
+    
+    if (modal) {
+        modal.remove();
+    }
+    
+    modal = document.createElement('div');
+    modal.className = 'position-fixed top-0 start-0 w-100 h-100 bg-white overflow-auto';
+    modal.style.zIndex = '99999';
+    modal.id = modalId;
+    
+    // Calcular estatísticas
+    const stats = calculateCampaignStats(statusData);
+    
+    modal.innerHTML = `
+        <div class="container-fluid p-4">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <div>
+                    <h4>
+                        <i class="fas fa-chart-line me-2"></i>Status Detalhado da Campanha
+                    </h4>
+                    ${campaignInfo.name ? `<h6 class="text-muted">${campaignInfo.name}</h6>` : ''}
+                    <small class="text-muted">
+                        <i class="fas fa-sync-alt me-1"></i>
+                        Última atualização: ${new Date().toLocaleString('pt-BR')}
+                    </small>
+                </div>
+                <div>
+                    <button class="btn btn-outline-primary me-2" onclick="refreshCampaignStatus(${campanhaId})">
+                        <i class="fas fa-sync-alt me-2"></i>Atualizar
+                    </button>
+                    <button class="btn btn-secondary" onclick="closeDetailedStatusModal()">
+                        <i class="fas fa-times me-2"></i>Fechar
+                    </button>
+                </div>
+            </div>
+            
+            <div id="campaignStatusContent">
+                ${renderCampaignSummary(stats, campaignInfo)}
+                ${renderStatusFilters()}
+                ${renderStatusTable(statusData, campanhaId)}
+            </div>
+        </div>
+    `;
+    
+    document.body.appendChild(modal);
+    
+    // Configurar filtros
+    setupStatusFilters(statusData);
+    
+    // Adicionar funcionalidade de atualização automática a cada 30 segundos
+    if (statusData.some(item => ['pending', 'queued'].includes(item.status))) {
+        console.log('📊 Há envios pendentes, configurando atualização automática...');
+        setupAutoRefresh(campanhaId);
+    }
+    
+    console.log(`✅ Modal de status detalhado exibido para campanha ${campanhaId}`);
+}
+
+function refreshCampaignStatus(campanhaId) {
+    const refreshBtn = document.querySelector('button[onclick*="refreshCampaignStatus"]');
+    const originalText = refreshBtn.innerHTML;
+    
+    refreshBtn.disabled = true;
+    refreshBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Atualizando...';
+    
+    // Chamar a função principal novamente
+    verStatusCampanha(campanhaId).finally(() => {
+        // Restaurar botão (se ainda existir)
+        const newRefreshBtn = document.querySelector('button[onclick*="refreshCampaignStatus"]');
+        if (newRefreshBtn) {
+            newRefreshBtn.disabled = false;
+            newRefreshBtn.innerHTML = originalText;
+        }
+    });
+}
+
+function setupAutoRefresh(campanhaId) {
+    // Limpar refresh anterior se existir
+    if (window.campaignStatusRefreshInterval) {
+        clearInterval(window.campaignStatusRefreshInterval);
+    }
+    
+    // Configurar novo refresh automático
+    window.campaignStatusRefreshInterval = setInterval(() => {
+        const modal = document.getElementById('detailedStatusModal');
+        if (!modal) {
+            // Modal foi fechado, cancelar refresh
+            clearInterval(window.campaignStatusRefreshInterval);
+            return;
+        }
+        
+        console.log('🔄 Atualizando status da campanha automaticamente...');
+        refreshCampaignStatus(campanhaId);
+    }, 30000); // 30 segundos
+    
+    console.log('⏰ Atualização automática configurada para cada 30 segundos');
+}
+
+function showLoadingStatusModal() {
+    const modalId = 'detailedStatusModal';
+    let modal = document.getElementById(modalId);
+    
+    if (modal) {
+        modal.remove();
+    }
+    
+    modal = document.createElement('div');
+    modal.className = 'position-fixed top-0 start-0 w-100 h-100 bg-white overflow-auto d-flex align-items-center justify-content-center';
+    modal.style.zIndex = '99999';
+    modal.id = modalId;
+    
+    modal.innerHTML = `
+        <div class="text-center">
+            <div class="spinner-border text-primary mb-3" style="width: 3rem; height: 3rem;" role="status">
+                <span class="visually-hidden">Carregando...</span>
+            </div>
+            <h5>Carregando detalhes da campanha...</h5>
+            <p class="text-muted">Buscando status de todos os envios...</p>
+        </div>
+    `;
+    
+    document.body.appendChild(modal);
+}
+
+function calculateCampaignStats(statusData) {
+    const stats = {
+        total: statusData.length,
+        sent: 0,
+        failed: 0,
+        pending: 0,
+        other: 0
+    };
+    
+    statusData.forEach(item => {
+        switch (item.status) {
+            case 'sent':
+            case 'delivered':
+            case 'read':
+                stats.sent++;
+                break;
+            case 'failed':
+            case 'error':
+                stats.failed++;
+                break;
+            case 'pending':
+            case 'queued':
+                stats.pending++;
+                break;
+            default:
+                stats.other++;
+        }
+    });
+    
+    return stats;
+}
+
+function renderCampaignSummary(stats, campaignInfo) {
+    const successRate = stats.total > 0 ? ((stats.sent / stats.total) * 100).toFixed(1) : 0;
+    const isEmptyStatus = stats.total === 0;
+    
+    return `
+        <div class="row mb-4">
+            <div class="col-md-12">
+                <div class="card border-0 ${isEmptyStatus ? 'bg-warning bg-opacity-10 border-warning' : 'bg-light'}">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <h6 class="card-title mb-0">
+                                <i class="fas fa-chart-pie me-2"></i>Resumo da Campanha
+                                ${isEmptyStatus ? '<span class="badge bg-warning text-dark ms-2">Sem Dados de Envio</span>' : ''}
+                            </h6>
+                            ${campaignInfo.status ? `
+                                <span class="badge ${getCampaignStatusBadge(campaignInfo.status)} fs-6">
+                                    ${campaignInfo.status.toUpperCase()}
+                                </span>
+                            ` : ''}
+                        </div>
+                        
+                        ${isEmptyStatus ? `
+                            <div class="alert alert-info mb-3">
+                                <i class="fas fa-info-circle me-2"></i>
+                                <strong>Status da Campanha:</strong> ${campaignInfo.status || 'Desconhecido'}
+                                ${campaignInfo.total_contacts ? `| <strong>Contatos Previstos:</strong> ${campaignInfo.total_contacts}` : ''}
+                                ${campaignInfo.sent_count !== undefined ? `| <strong>Contador Enviados:</strong> ${campaignInfo.sent_count}` : ''}
+                            </div>
+                        ` : ''}
+                        
+                        <div class="row text-center">
+                            <div class="col-md-2">
+                                <div class="border-end">
+                                    <h4 class="${isEmptyStatus ? 'text-warning' : 'text-primary'} mb-1">${stats.total}</h4>
+                                    <small class="text-muted">Total</small>
+                                </div>
+                            </div>
+                            <div class="col-md-2">
+                                <div class="border-end">
+                                    <h4 class="text-success mb-1">${stats.sent}</h4>
+                                    <small class="text-muted">Enviados</small>
+                                </div>
+                            </div>
+                            <div class="col-md-2">
+                                <div class="border-end">
+                                    <h4 class="text-danger mb-1">${stats.failed}</h4>
+                                    <small class="text-muted">Falharam</small>
+                                </div>
+                            </div>
+                            <div class="col-md-2">
+                                <div class="border-end">
+                                    <h4 class="text-warning mb-1">${stats.pending}</h4>
+                                    <small class="text-muted">Pendentes</small>
+                                </div>
+                            </div>
+                            <div class="col-md-2">
+                                <div class="border-end">
+                                    <h4 class="text-info mb-1">${stats.other}</h4>
+                                    <small class="text-muted">Outros</small>
+                                </div>
+                            </div>
+                            <div class="col-md-2">
+                                <h4 class="${isEmptyStatus ? 'text-warning' : 'text-primary'} mb-1">${successRate}%</h4>
+                                <small class="text-muted">Taxa Sucesso</small>
+                            </div>
+                        </div>
+                        ${campaignInfo.created_at ? `
+                            <div class="mt-3 pt-3 border-top">
+                                <small class="text-muted">
+                                    <i class="fas fa-calendar me-1"></i>
+                                    Criada em: ${formatDateBrazil(campaignInfo.created_at)}
+                                    ${campaignInfo.scheduled_at ? `| Agendada para: ${formatDateBrazil(campaignInfo.scheduled_at)}` : ''}
+                                </small>
+                            </div>
+                        ` : ''}
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function getCampaignStatusBadge(status) {
+    const badges = {
+        'pending': 'bg-warning text-dark',
+        'running': 'bg-primary',
+        'completed': 'bg-success',
+        'cancelled': 'bg-secondary',
+        'failed': 'bg-danger',
+        'error': 'bg-danger'
+    };
+    return badges[status] || 'bg-secondary';
+}
+
+function renderStatusFilters() {
+    return `
+        <div class="row mb-3">
+            <div class="col-md-6">
+                <div class="input-group">
+                    <span class="input-group-text">
+                        <i class="fas fa-search"></i>
+                    </span>
+                    <input type="text" class="form-control" id="statusSearch" placeholder="Buscar por nome ou telefone...">
+                </div>
+            </div>
+            <div class="col-md-3">
+                <select class="form-select" id="statusFilter">
+                    <option value="">Todos os status</option>
+                    <option value="sent">Enviados</option>
+                    <option value="delivered">Entregues</option>
+                    <option value="read">Lidos</option>
+                    <option value="failed">Falharam</option>
+                    <option value="error">Erro</option>
+                    <option value="pending">Pendentes</option>
+                    <option value="queued">Na fila</option>
+                </select>
+            </div>
+            <div class="col-md-3">
+                <button class="btn btn-outline-secondary" onclick="exportStatusToCSV()">
+                    <i class="fas fa-download me-1"></i>Exportar CSV
+                </button>
+            </div>
+        </div>
+    `;
+}
+
+function renderStatusTable(statusData, campanhaId) {
+    if (!statusData || statusData.length === 0) {
+        return `
+            <div class="card">
+                <div class="card-body">
+                    <div class="text-center py-5">
+                        <i class="fas fa-search fa-3x text-muted mb-3"></i>
+                        <h5 class="text-muted">Nenhum registro de envio encontrado</h5>
+                        <p class="text-muted mb-4">Esta campanha não possui dados de envio na tabela de status.</p>
+                        
+                        <div class="alert alert-warning text-start">
+                            <h6><i class="fas fa-lightbulb me-2"></i>Possíveis causas:</h6>
+                            <ul class="mb-2">
+                                <li><strong>Campanha não executada:</strong> A campanha pode estar pendente ou agendada</li>
+                                <li><strong>Tabela não criada:</strong> A tabela 'campaign_status' pode não existir no banco</li>
+                                <li><strong>Processo de envio:</strong> O sistema pode não estar gravando logs de envio</li>
+                                <li><strong>Configuração:</strong> Problema na configuração da API do WhatsApp</li>
+                            </ul>
+                            <div class="border-top pt-2">
+                                <small><strong>💡 Dica:</strong> Execute o script <code>create-campaign-tables.sql</code> no seu banco PostgreSQL para criar as tabelas necessárias.</small>
+                            </div>
+                        </div>
+                        
+                        <div class="alert alert-info text-start mb-3">
+                            <h6><i class="fas fa-terminal me-2"></i>Diagnóstico Rápido:</h6>
+                            <p class="mb-2">Abra o <strong>Console do Navegador</strong> (F12 → Console) e veja os logs detalhados desta função.</p>
+                            <code class="d-block bg-dark text-light p-2 rounded">
+                                📊 Logs específicos foram gerados para ajudar no diagnóstico
+                            </code>
+                        </div>
+                        
+                        <div class="d-flex gap-2 justify-content-center flex-wrap">
+                            <button class="btn btn-primary" onclick="forceCampaignExecution(${campanhaId || 'null'})">
+                                <i class="fas fa-play me-2"></i>Tentar Executar Novamente
+                            </button>
+                            <button class="btn btn-outline-secondary" onclick="checkDatabaseStatus(${campanhaId || 'null'})">
+                                <i class="fas fa-database me-2"></i>Verificar Banco de Dados
+                            </button>
+                            <button class="btn btn-outline-info" onclick="showDebugInfo(${campanhaId || 'null'})">
+                                <i class="fas fa-bug me-2"></i>Informações de Debug
+                            </button>
+                            <button class="btn btn-outline-warning" onclick="window.location.reload()">
+                                <i class="fas fa-sync me-2"></i>Recarregar Página
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+    
+    return `
+        <div class="card">
+                         <div class="card-header bg-light">
+                 <div class="d-flex justify-content-between align-items-center">
+                     <h6 class="mb-0">
+                         <i class="fas fa-list me-2"></i>Detalhes dos Envios
+                         <span class="badge bg-primary ms-2" id="totalVisible">${statusData.length}</span>
+                         <small class="text-muted ms-2">de ${statusData.length} total</small>
+                     </h6>
+                     <small class="text-muted">
+                         <i class="fas fa-info-circle me-1"></i>
+                         Clique em um erro para ver detalhes completos
+                     </small>
+                 </div>
+             </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0" id="statusTable">
+                        <thead class="table-light">
+                            <tr>
+                                <th style="width: 5%;">#</th>
+                                <th style="width: 25%;">
+                                    <i class="fas fa-user me-1"></i>Contato
+                                </th>
+                                <th style="width: 15%;">
+                                    <i class="fas fa-phone me-1"></i>Telefone
+                                </th>
+                                <th style="width: 15%;">
+                                    <i class="fas fa-traffic-light me-1"></i>Status
+                                </th>
+                                <th style="width: 20%;">
+                                    <i class="fas fa-clock me-1"></i>Data/Hora
+                                </th>
+                                <th style="width: 20%;">
+                                    <i class="fas fa-info-circle me-1"></i>Detalhes
+                                </th>
+                            </tr>
+                        </thead>
+                        <tbody id="statusTableBody">
+                            ${statusData.map((item, index) => renderStatusRow(item, index + 1)).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function renderStatusRow(item, index) {
+    console.log(item);
+    const statusConfig = getStatusConfig(item.status);
+    const formattedDate = item.created_at ? 
+        new Date(item.created_at).toLocaleString('pt-BR') : 
+        'Data não disponível';
+    
+    const errorMessage = item.error_message || item.error || '';
+    const phone = item.contact_phone ? formatPhoneNumber(item.contact_phone) : 'N/A';
+    const name = item.name || item.contact_name || 'Nome não disponível';
+    
+    return `
+        <tr class="status-row" data-status="${item.status}" data-phone="${phone}" data-name="${name.toLowerCase()}">
+            <td>
+                <small class="text-muted">#${index}</small>
+            </td>
+                         <td>
+                 <div class="d-flex align-items-center">
+                     <div class="avatar-circle-small me-2 ${getAvatarClass(item.status)}" title="Status: ${statusConfig.text}">
+                         ${name.charAt(0).toUpperCase()}
+                     </div>
+                     <div>
+                         <div class="fw-medium">${name}</div>
+                         ${item.tag ? `<small class="text-muted"><i class="fas fa-tag me-1"></i>${item.tag}</small>` : ''}
+                     </div>
+                 </div>
+             </td>
+            <td>
+                <span class="font-monospace">${(phone)}</span>
+            </td>
+            <td>
+                <span class="badge ${statusConfig.class} fs-6">
+                    <i class="${statusConfig.icon} me-1"></i>
+                    ${statusConfig.text}
+                </span>
+            </td>
+            <td>
+                <small class="text-muted">
+                    ${formattedDate}
+                </small>
+            </td>
+            <td>
+                ${errorMessage ? `
+                    <div class="text-danger">
+                        <small>
+                            <i class="fas fa-exclamation-triangle me-1"></i>
+                            ${truncateText(errorMessage, 50)}
+                        </small>
+                        ${errorMessage.length > 50 ? `
+                            <br><button class="btn btn-sm btn-outline-danger mt-1" onclick="showFullError('${escapeHtml(errorMessage)}')">
+                                Ver erro completo
+                            </button>
+                        ` : ''}
+                    </div>
+                ` : `
+                    <small class="text-success">
+                        <i class="fas fa-check-circle me-1"></i>
+                        Processado com sucesso
+                    </small>
+                `}
+            </td>
+        </tr>
+    `;
+}
+
+function getStatusConfig(status) {
+    const configs = {
+        'sent': { class: 'bg-success', icon: 'fas fa-check', text: 'Enviado' },
+        'delivered': { class: 'bg-success', icon: 'fas fa-check-double', text: 'Entregue' },
+        'read': { class: 'bg-info', icon: 'fas fa-eye', text: 'Lido' },
+        'failed': { class: 'bg-danger', icon: 'fas fa-times', text: 'Falhou' },
+        'error': { class: 'bg-danger', icon: 'fas fa-exclamation', text: 'Erro' },
+        'pending': { class: 'bg-warning', icon: 'fas fa-clock', text: 'Pendente' },
+        'queued': { class: 'bg-secondary', icon: 'fas fa-hourglass', text: 'Na Fila' }
+    };
+    
+    return configs[status] || { class: 'bg-secondary', icon: 'fas fa-question', text: status || 'Desconhecido' };
+}
+
+function getAvatarClass(status) {
+    const avatarClasses = {
+        'sent': 'avatar-success',
+        'delivered': 'avatar-success',
+        'read': 'avatar-info',
+        'failed': 'avatar-danger',
+        'error': 'avatar-danger',
+        'pending': 'avatar-warning',
+        'queued': 'avatar-secondary'
+    };
+    
+    return avatarClasses[status] || 'avatar-secondary';
+}
+
+function formatPhoneNumber(phone) {
+    if (!phone) return 'N/A';
+    
+    // Formatação básica para números brasileiros
+    const cleanPhone = phone.replace(/\D/g, '');
+    
+    if (cleanPhone.length === 13 && cleanPhone.startsWith('55')) {
+        // +55 (11) 99999-9999
+        return `+${cleanPhone.substring(0,2)} (${cleanPhone.substring(2,4)}) ${cleanPhone.substring(4,9)}-${cleanPhone.substring(9)}`;
+    } else if (cleanPhone.length === 11) {
+        // (11) 99999-9999
+        return `(${cleanPhone.substring(0,2)}) ${cleanPhone.substring(2,7)}-${cleanPhone.substring(7)}`;
+    }
+    
+    return phone;
+}
+
+function truncateText(text, maxLength) {
+    if (!text || text.length <= maxLength) return text;
+    return text.substring(0, maxLength) + '...';
+}
+
+function setupStatusFilters(originalData) {
+    const searchInput = document.getElementById('statusSearch');
+    const statusFilter = document.getElementById('statusFilter');
+    const tableBody = document.getElementById('statusTableBody');
+    const totalVisible = document.getElementById('totalVisible');
+    
+    function filterTable() {
+        const searchTerm = searchInput.value.toLowerCase();
+        const statusValue = statusFilter.value;
+        
+        const rows = document.querySelectorAll('.status-row');
+        let visibleCount = 0;
+        
+        rows.forEach(row => {
+            const name = row.dataset.name || '';
+            const phone = row.dataset.phone || '';
+            const status = row.dataset.status || '';
+            
+            const matchesSearch = name.includes(searchTerm) || phone.includes(searchTerm);
+            const matchesStatus = !statusValue || status === statusValue;
+            
+            if (matchesSearch && matchesStatus) {
+                row.style.display = '';
+                visibleCount++;
+            } else {
+                row.style.display = 'none';
+            }
+        });
+        
+        totalVisible.textContent = visibleCount;
+    }
+    
+    searchInput.addEventListener('input', filterTable);
+    statusFilter.addEventListener('change', filterTable);
+    
+    // Adicionar CSS para avatar pequeno
+    if (!document.getElementById('avatarSmallStyles')) {
+        const style = document.createElement('style');
+        style.id = 'avatarSmallStyles';
+        style.textContent = `
+            .avatar-circle-small {
+                width: 32px;
+                height: 32px;
+                border-radius: 50%;
+                background: linear-gradient(45deg, #007bff, #0056b3);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                color: white;
+                font-weight: bold;
+                font-size: 12px;
+                flex-shrink: 0;
+                transition: all 0.2s ease;
+            }
+            
+            .avatar-circle-small.avatar-success {
+                background: linear-gradient(45deg, #198754, #146c43);
+            }
+            
+            .avatar-circle-small.avatar-danger {
+                background: linear-gradient(45deg, #dc3545, #bb2d3b);
+            }
+            
+            .avatar-circle-small.avatar-warning {
+                background: linear-gradient(45deg, #ffc107, #e0a800);
+                color: #000;
+            }
+            
+            .avatar-circle-small.avatar-info {
+                background: linear-gradient(45deg, #0dcaf0, #31d2f2);
+                color: #000;
+            }
+            
+            .avatar-circle-small.avatar-secondary {
+                background: linear-gradient(45deg, #6c757d, #5c636a);
+            }
+            
+            .status-row:hover .avatar-circle-small {
+                transform: scale(1.1);
+                box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+            }
+        `;
+        document.head.appendChild(style);
+    }
+}
+
+function closeDetailedStatusModal() {
+    // Limpar refresh automático se existir
+    if (window.campaignStatusRefreshInterval) {
+        clearInterval(window.campaignStatusRefreshInterval);
+        window.campaignStatusRefreshInterval = null;
+        console.log('⏰ Atualização automática cancelada');
+    }
+    
+    const modal = document.getElementById('detailedStatusModal');
+    if (modal) {
+        modal.remove();
+        console.log('✅ Modal de status fechado');
+    }
+}
+
+function showFullError(errorMessage) {
+    const modal = document.createElement('div');
+    modal.className = 'modal fade show';
+    modal.style.display = 'block';
+    modal.style.backgroundColor = 'rgba(0,0,0,0.8)';
+    modal.style.zIndex = '999999';
+    
+    modal.innerHTML = `
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header bg-danger text-white">
+                    <h5 class="modal-title">
+                        <i class="fas fa-exclamation-triangle me-2"></i>Detalhes do Erro
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" onclick="this.closest('.modal').remove()"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-danger">
+                        <strong>Mensagem de erro:</strong><br>
+                        <code>${escapeHtml(errorMessage)}</code>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" onclick="this.closest('.modal').remove()">
+                        Fechar
+                    </button>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    document.body.appendChild(modal);
+}
+
+function exportStatusToCSV() {
+    const rows = document.querySelectorAll('.status-row:not([style*="display: none"])');
+    
+    if (rows.length === 0) {
+        window.app.showAlert('Nenhum dado visível para exportar', 'warning');
+        return;
+    }
+    
+    let csv = 'Nome,Telefone,Status,Data/Hora,Erro\n';
+    
+    rows.forEach(row => {
+        const cells = row.querySelectorAll('td');
+        const name = row.dataset.name || '';
+        const phone = row.dataset.phone || '';
+        const status = row.dataset.status || '';
+        const dateTime = cells[4].textContent.trim();
+        const error = cells[5].textContent.includes('Erro') ? 
+            cells[5].textContent.replace(/\s+/g, ' ').trim() : '';
+        
+        csv += `"${name}","${phone}","${status}","${dateTime}","${error}"\n`;
+    });
+    
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `status_campanha_${new Date().toISOString().split('T')[0]}.csv`;
+    link.click();
+    
+    window.app.showAlert('Arquivo CSV exportado com sucesso!', 'success');
+}
+
+// Função para forçar execução da campanha
+async function forceCampaignExecution(campanhaId) {
+    if (!campanhaId || campanhaId === 'null') {
+        window.app.showAlert('ID da campanha não disponível', 'warning');
+        return;
+    }
+    
+    if (!confirm('Tem certeza que deseja tentar executar esta campanha novamente?')) {
+        return;
+    }
+    
+    try {
+        console.log(`🔄 Forçando execução da campanha ${campanhaId}...`);
+        
+        const response = await fetch(`/api/campaigns/${campanhaId}/start`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${getAuthToken()}` }
+        });
+        
+        if (response.ok) {
+            const result = await response.json();
+            console.log('✅ Resposta da execução:', result);
+            
+            if (result.success) {
+                window.app.showAlert('Execução da campanha iniciada com sucesso!', 'success');
+                
+                // Aguardar um pouco e recarregar o status
+                setTimeout(() => {
+                    refreshCampaignStatus(campanhaId);
+                }, 3000);
+            } else {
+                window.app.showAlert(`Erro ao executar campanha: ${result.error || 'Erro desconhecido'}`, 'danger');
+            }
+        } else {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+    } catch (error) {
+        console.error('❌ Erro ao forçar execução:', error);
+        window.app.showAlert(`Erro ao executar campanha: ${error.message}`, 'danger');
+    }
+}
+
+// Função para verificar status do banco de dados
+async function checkDatabaseStatus(campanhaId) {
+    try {
+        console.log(`🔍 Verificando status do banco para campanha ${campanhaId}...`);
+        
+        // Tentar criar/verificar tabela campaign_status
+        const response = await fetch('/api/campaigns/check-database', {
+            method: 'POST',
+            headers: { 
+                'Authorization': `Bearer ${getAuthToken()}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ campaignId })
+        });
+        
+        if (response.ok) {
+            const result = await response.json();
+            console.log('📊 Status do banco:', result);
+            
+            const modal = document.createElement('div');
+            modal.className = 'modal fade show';
+            modal.style.display = 'block';
+            modal.style.backgroundColor = 'rgba(0,0,0,0.8)';
+            modal.style.zIndex = '999999';
+            
+            modal.innerHTML = `
+                <div class="modal-dialog modal-lg">
+                    <div class="modal-content">
+                        <div class="modal-header bg-info text-white">
+                            <h5 class="modal-title">
+                                <i class="fas fa-database me-2"></i>Status do Banco de Dados
+                            </h5>
+                            <button type="button" class="btn-close btn-close-white" onclick="this.closest('.modal').remove()"></button>
+                        </div>
+                        <div class="modal-body">
+                            <pre class="bg-light p-3 rounded">${JSON.stringify(result, null, 2)}</pre>
+                        </div>
+                        <div class="modal-footer">
+                            <button class="btn btn-secondary" onclick="this.closest('.modal').remove()">
+                                Fechar
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            document.body.appendChild(modal);
+        } else {
+            window.app.showAlert('Endpoint de verificação do banco não disponível', 'warning');
+        }
+    } catch (error) {
+        console.error('❌ Erro ao verificar banco:', error);
+        window.app.showAlert(`Erro ao verificar banco: ${error.message}`, 'danger');
+    }
+}
+
+// Função para mostrar informações de debug
+async function showDebugInfo(campanhaId) {
+    try {
+        console.log(`🐛 Coletando informações de debug para campanha ${campanhaId}...`);
+        
+        const debugInfo = {
+            campanhaId: campanhaId,
+            timestamp: new Date().toISOString(),
+            browser: navigator.userAgent,
+            url: window.location.href,
+            localStorage: {
+                authToken: !!localStorage.getItem('authToken'),
+                user: localStorage.getItem('user')
+            }
+        };
+        
+        // Buscar informações da campanha
+        try {
+            const response = await fetch('/api/campaigns', {
+                headers: { 'Authorization': `Bearer ${getAuthToken()}` }
+            });
+            if (response.ok) {
+                const campaigns = await response.json();
+                const campaign = campaigns.find(c => String(c.id) === String(campanhaId));
+                debugInfo.campaign = campaign || 'Não encontrada';
+                debugInfo.totalCampaigns = campaigns.length;
+            }
+        } catch (e) {
+            debugInfo.campaignError = e.message;
+        }
+        
+        // Testar endpoint de status
+        try {
+            const statusResponse = await fetch(`/api/campaigns/${campanhaId}/status`, {
+                headers: { 'Authorization': `Bearer ${getAuthToken()}` }
+            });
+            debugInfo.statusEndpoint = {
+                status: statusResponse.status,
+                statusText: statusResponse.statusText,
+                ok: statusResponse.ok
+            };
+            
+            if (statusResponse.ok) {
+                const statusData = await statusResponse.json();
+                debugInfo.statusData = {
+                    type: typeof statusData,
+                    isArray: Array.isArray(statusData),
+                    length: statusData.length,
+                    sample: statusData.slice(0, 2) // Primeiros 2 registros
+                };
+            }
+        } catch (e) {
+            debugInfo.statusError = e.message;
+        }
+        
+        const modal = document.createElement('div');
+        modal.className = 'modal fade show';
+        modal.style.display = 'block';
+        modal.style.backgroundColor = 'rgba(0,0,0,0.8)';
+        modal.style.zIndex = '999999';
+        
+        modal.innerHTML = `
+            <div class="modal-dialog modal-xl">
+                <div class="modal-content">
+                    <div class="modal-header bg-dark text-white">
+                        <h5 class="modal-title">
+                            <i class="fas fa-bug me-2"></i>Informações de Debug - Campanha ${campanhaId}
+                        </h5>
+                        <button type="button" class="btn-close btn-close-white" onclick="this.closest('.modal').remove()"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="d-flex gap-2 mb-3">
+                            <button class="btn btn-sm btn-outline-primary" onclick="copyDebugInfo()">
+                                <i class="fas fa-copy me-1"></i>Copiar
+                            </button>
+                            <button class="btn btn-sm btn-outline-success" onclick="downloadDebugInfo()">
+                                <i class="fas fa-download me-1"></i>Download
+                            </button>
+                        </div>
+                        <pre id="debugInfoContent" class="bg-dark text-light p-3 rounded" style="max-height: 500px; overflow-y: auto;">${JSON.stringify(debugInfo, null, 2)}</pre>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn btn-secondary" onclick="this.closest('.modal').remove()">
+                            Fechar
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        document.body.appendChild(modal);
+        
+        // Armazenar debug info globalmente para funções de cópia/download
+        window.currentDebugInfo = debugInfo;
+        
+    } catch (error) {
+        console.error('❌ Erro ao coletar debug info:', error);
+        window.app.showAlert(`Erro ao coletar informações: ${error.message}`, 'danger');
+    }
+}
+
+function copyDebugInfo() {
+    const content = document.getElementById('debugInfoContent').textContent;
+    navigator.clipboard.writeText(content).then(() => {
+        window.app.showAlert('Informações de debug copiadas!', 'success');
+    }).catch(() => {
+        window.app.showAlert('Erro ao copiar informações', 'danger');
+    });
+}
+
+function downloadDebugInfo() {
+    const content = JSON.stringify(window.currentDebugInfo, null, 2);
+    const blob = new Blob([content], { type: 'application/json' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `debug_campanha_${window.currentDebugInfo.campanhaId}_${new Date().toISOString().split('T')[0]}.json`;
+    link.click();
+    window.app.showAlert('Arquivo de debug baixado!', 'success');
 }
 
 // Função para reenviar campanhas com erro
@@ -1675,7 +5496,7 @@ async function verErrosCampanha(campanhaId) {
                                             </td>
                                             <td>
                                                 <small class="text-muted">
-                                                    ${new Date(erro.created_at).toLocaleString()}
+                                                    ${new Date(erro.created_at).toLocaleString('pt-BR', {timeZone: 'America/Sao_Paulo'})}
                                                 </small>
                                             </td>
                                         </tr>
@@ -1725,7 +5546,7 @@ function showSelectedAccountInbox() {
         }
         
         // Encontrar elemento para mostrar as informações (pode estar no cabeçalho do modal)
-        const campanhaHeader = document.querySelector('#campanhasDiv .modal-header h5, #campanhasDiv .card-header h5');
+        const campanhaHeader = document.querySelector('#campaignFormArea .modal-header h5, #campaignFormArea .card-header h5');
         if (campanhaHeader) {
             // Remover indicador anterior se existir
             const existingIndicator = document.getElementById('selectedAccountInboxIndicator');

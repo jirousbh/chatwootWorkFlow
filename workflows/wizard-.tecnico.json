@@ -75,34 +75,34 @@
       "id": "bloco_3",
       "name": "Transferir para Pedagógico",
       "message": "Perfeito! Vou te conectar agora mesmo com nossa equipe pedagógica que vai te ajudar com todas as suas dúvidas sobre aulas, metodologia e conteúdo! 📚\n\nEm instantes você receberá o contato de um de nossos especialistas pedagógicos.",
+      "pause_bot": true,
       "next_block": "finalizar",
       "assign_team": 2,
       "assign_labels": [
         "transferido_pedagogico"
-      ],
-      "pause_bot": true
+      ]
     },
     "bloco_4": {
       "id": "bloco_4",
       "name": "Transferir para Financeiro",
       "message": "Perfeito! Vou te conectar agora mesmo com nossa equipe financeira que vai te ajudar com todas as suas dúvidas sobre pagamentos, mensalidades e questões financeiras! 💰\n\nEm instantes você receberá o contato de um de nossos especialistas financeiros.",
+      "pause_bot": true,
       "next_block": "finalizar",
       "assign_team": 3,
       "assign_labels": [
         "transferido_financeiro"
-      ],
-      "pause_bot": true
+      ]
     },
     "bloco_5": {
       "id": "bloco_5",
       "name": "Transferir para Comercial",
       "message": "Perfeito! Vou te conectar agora mesmo com nossa equipe comercial que vai te ajudar com informações sobre cursos, planos e matrículas! 💼\n\nEm instantes você receberá o contato de um de nossos especialistas comerciais.",
+      "pause_bot": true,
       "next_block": "finalizar",
       "assign_team": 1,
       "assign_labels": [
         "transferido_comercial"
-      ],
-      "pause_bot": true
+      ]
     },
     "bloco_10": {
       "id": "bloco_10",
@@ -171,9 +171,9 @@
       "id": "bloco_13",
       "name": "Metodologia Wizard",
       "media": {
-        "delay": 15000,
+        "delay": 10000,
         "attachment": {
-          "file_id": "1752608369518"
+          "file_id": "1753996137331"
         }
       },
       "buttons": [
@@ -405,6 +405,7 @@
       "tag": "encaminhado_atendimento",
       "name": "Encaminhar para Atendimento Humano",
       "message": "Perfeito! Vou te conectar agora mesmo com nossa equipe especializada que vai te ajudar com todas as suas dúvidas e organizar seu curso! 😊\n\nEm instantes você receberá o contato de um de nossos especialistas.",
+      "pause_bot": true,
       "next_block": "finalizar",
       "assign_team": 1,
       "assign_labels": [
@@ -413,8 +414,7 @@
       ],
       "contact_labels": [
         "atendimento_especializado"
-      ],
-      "pause_bot": true
+      ]
     }
   },
   "triggers": [
