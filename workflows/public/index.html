@@ -142,7 +142,6 @@
                         </a>
                         <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="userDropdown">
                             <li><a class="dropdown-item text-dark" href="#" id="menuListarCampanhas"><i class="fas fa-bullhorn me-2"></i>Listar Campanhas</a></li>
-                            <li id="menuListarTodasCampanhasItem" class="d-none"><a class="dropdown-item text-dark" href="#" onclick="loadCampanhasList()"><i class="fas fa-list-alt me-2"></i>Listar Todas as Campanhas</a></li>
                             <li><hr class="dropdown-divider"></li>
                             <li><a class="dropdown-item text-dark" href="#" onclick="showChangePasswordDiv()"><i class="fas fa-key me-2"></i>Mudar senha</a></li>
                             <li id="menuGerenciarUsuariosItem" class="d-none"><a class="dropdown-item text-dark" href="#" onclick="window.app.showUserManagement()"><i class="fas fa-users me-2"></i>Gerenciar Usuários</a></li>
@@ -189,10 +188,6 @@
                             <!-- Botão Gerenciar Mídia (Admin apenas) -->
                             <button id="btnGerenciarMidia" class="btn btn-info w-100 mt-2" onclick="showMediaManager()">
                                 <i class="fas fa-photo-video me-2"></i>Gerenciar Mídia
-                            </button>
-                            <!-- Botão Listar Todas as Campanhas (Admin apenas) -->
-                            <button id="btnListarTodasCampanhas" class="btn btn-warning w-100 mt-2" onclick="loadCampanhasList()">
-                                <i class="fas fa-list-alt me-2"></i>Listar Todas as Campanhas
                             </button>
                         </div>
                     </div>

@@ -24,6 +24,83 @@ if (!fs.existsSync(logDir)) {
   fs.mkdirSync(logDir, { recursive: true });
 }
 
+// ===== CONFIGURAÇÕES GLOBAIS =====
+const CHATWOOT_BASE_URL = process.env.CHATWOOT_BASE_URL || 'https://crm.inovaianalytics.com.br';
+const CHATWOOT_API_TOKEN = process.env.CHATWOOT_API_TOKEN;
+const CHATWOOT_ACCOUNT_ID = process.env.CHATWOOT_ACCOUNT_ID || '1'; // Mantido para compatibilidade
+
+// Cache de contas disponíveis
+let availableAccounts = [];
+let accountsCacheExpiry = 0;
+const ACCOUNTS_CACHE_DURATION = 5 * 60 * 1000; // 5 minutos
+
+// Função para obter todas as contas disponíveis
+async function getAllAvailableAccounts() {
+  try {
+    // Verificar se o cache ainda é válido
+    if (availableAccounts.length > 0 && Date.now() < accountsCacheExpiry) {
+      return availableAccounts;
+    }
+
+    console.log('🔍 Buscando todas as contas disponíveis...');
+    
+    // Tentar diferentes endpoints para listar contas
+    const endpoints = [
+      '/api/v1/profile',  // Endpoint que funcionou no teste
+      '/api/v1/accounts',
+      '/platform/api/v1/accounts',
+      '/admin/api/v1/accounts'
+    ];
+
+    for (const endpoint of endpoints) {
+      try {
+        const response = await axios.get(`${CHATWOOT_BASE_URL}${endpoint}`, {
+          headers: {
+            'api_access_token': CHATWOOT_API_TOKEN,
+            'Content-Type': 'application/json'
+          }
+        });
+
+        let accounts = [];
+        
+        // Extrair contas da resposta baseado na estrutura
+        if (Array.isArray(response.data)) {
+          accounts = response.data;
+        } else if (response.data.payload && Array.isArray(response.data.payload)) {
+          accounts = response.data.payload;
+        } else if (response.data.data && Array.isArray(response.data.data)) {
+          accounts = response.data.data;
+        } else if (response.data.accounts && Array.isArray(response.data.accounts)) {
+          // Endpoint /api/v1/profile retorna as contas em response.data.accounts
+          accounts = response.data.accounts;
+        }
+
+        if (accounts.length > 0) {
+          console.log(`✅ Encontradas ${accounts.length} contas via ${endpoint}`);
+          availableAccounts = accounts;
+          accountsCacheExpiry = Date.now() + ACCOUNTS_CACHE_DURATION;
+          return accounts;
+        }
+      } catch (error) {
+        console.log(`⚠️ Endpoint ${endpoint} não disponível: ${error.response?.status || 'CONNECTION_ERROR'}`);
+      }
+    }
+
+    // Se nenhum endpoint funcionou, usar a conta padrão
+    console.log('⚠️ Não foi possível listar múltiplas contas, usando conta padrão');
+    availableAccounts = [{ id: CHATWOOT_ACCOUNT_ID, name: 'Conta Padrão' }];
+    accountsCacheExpiry = Date.now() + ACCOUNTS_CACHE_DURATION;
+    return availableAccounts;
+
+  } catch (error) {
+    console.error('❌ Erro ao obter contas disponíveis:', error);
+    // Fallback para conta padrão
+    availableAccounts = [{ id: CHATWOOT_ACCOUNT_ID, name: 'Conta Padrão' }];
+    accountsCacheExpiry = Date.now() + ACCOUNTS_CACHE_DURATION;
+    return availableAccounts;
+  }
+}
+
 // Função para formatar timestamp (horário local do Brasil)
 function getTimestamp() {
   const now = new Date();
@@ -186,12 +263,9 @@ const limiter = rateLimit({
 app.use(limiter);
 
 // Configurações do Chatwoot
-const CHATWOOT_BASE_URL = process.env.CHATWOOT_BASE_URL || 'https://crm.inovaianalytics.com.br';
-const CHATWOOT_API_TOKEN = process.env.CHATWOOT_API_TOKEN;
 const WHATSAPP_API_TOKEN = process.env.WHATSAPP_API_TOKEN;
 const WHATSAPP_PHONE_ID = process.env.WHATSAPP_PHONE_ID;
 const WHATSAPP_BUSINESS_ACCOUNT_ID = process.env.WHATSAPP_BUSINESS_ACCOUNT_ID;
-const CHATWOOT_ACCOUNT_ID = process.env.CHATWOOT_ACCOUNT_ID || '1';
 
 // Configuração do PostgreSQL (usando o mesmo servidor postgres do Chatwoot)
 const pool = new Pool({
@@ -627,7 +701,7 @@ async function createInitialUser() {
 }
 
 // Função para adicionar labels ao contato no Chatwoot
-async function addLabelsToContact(contactId, labels) {
+async function addLabelsToContact(contactId, labels, accountId = CHATWOOT_ACCOUNT_ID) {
   try {
     // Garantir que todos os labels existem antes de adicioná-los
     for (const label of labels) {
@@ -655,7 +729,7 @@ async function addLabelsToContact(contactId, labels) {
     }
     
     await axios.post(
-      `${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/contacts/${internalId}/labels`,
+      `${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/contacts/${internalId}/labels`,
       { labels },
       { headers: { 'api_access_token': CHATWOOT_API_TOKEN } }
     );
@@ -673,7 +747,7 @@ async function addLabelsToContact(contactId, labels) {
 }
 
 // Função para remover todos os labels do contato no Chatwoot
-async function removeAllLabelsFromContact(contactId) {
+async function removeAllLabelsFromContact(contactId, accountId = CHATWOOT_ACCOUNT_ID) {
   try {
     console.log(`🧹 Iniciando remoção de labels para contactId: ${contactId}`);
     
@@ -703,7 +777,7 @@ async function removeAllLabelsFromContact(contactId) {
 
     // Primeiro, buscar todos os labels atuais do contato
     const labelsResponse = await axios.get(
-      `${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/contacts/${internalId}/labels`,
+      `${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/contacts/${internalId}/labels`,
       { headers: { 'api_access_token': CHATWOOT_API_TOKEN } }
     );
     
@@ -718,7 +792,7 @@ async function removeAllLabelsFromContact(contactId) {
 
     // Remover todos os labels definindo uma lista vazia
     await axios.post(
-      `${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/contacts/${internalId}/labels`,
+      `${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/contacts/${internalId}/labels`,
       { labels: [] },
       { headers: { 'api_access_token': CHATWOOT_API_TOKEN } }
     );
@@ -737,7 +811,7 @@ async function removeAllLabelsFromContact(contactId) {
 }
 
 // Função para atribuir conversa a um agente
-async function assignConversationToAgent(conversationId, agentId) {
+async function assignConversationToAgent(conversationId, agentId, accountId = CHATWOOT_ACCOUNT_ID) {
   try {
     // Validar parâmetros
     if (!conversationId) {
@@ -760,7 +834,7 @@ async function assignConversationToAgent(conversationId, agentId) {
     }
     
     await axios.post(
-      `${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/conversations/${conversationId}/assignments`,
+      `${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/conversations/${conversationId}/assignments`,
       { assignee_id: agentId },
       { headers: { 'api_access_token': CHATWOOT_API_TOKEN } }
     );
@@ -771,7 +845,7 @@ async function assignConversationToAgent(conversationId, agentId) {
 }
 
 // Função para atribuir conversa a um time (sem atribuir a agente específico)
-async function assignConversationToTeam(conversationId, teamId) {
+async function assignConversationToTeam(conversationId, teamId, accountId = CHATWOOT_ACCOUNT_ID) {
   try {
     // Validar parâmetros
     if (!conversationId) {
@@ -795,14 +869,14 @@ async function assignConversationToTeam(conversationId, teamId) {
     
     // Primeiro, atribuir ao time
     await axios.post(
-      `${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/conversations/${conversationId}/assignments`,
+      `${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/conversations/${conversationId}/assignments`,
       { team_id: teamId },
       { headers: { 'api_access_token': CHATWOOT_API_TOKEN } }
     );
     
     // Depois, remover a atribuição de agente específico (definir assignee_id como null)
     await axios.post(
-      `${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/conversations/${conversationId}/assignments`,
+      `${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/conversations/${conversationId}/assignments`,
       { assignee_id: null },
       { headers: { 'api_access_token': CHATWOOT_API_TOKEN } }
     );
@@ -814,7 +888,7 @@ async function assignConversationToTeam(conversationId, teamId) {
 }
 
 // Função para atribuir conversa apenas ao time (sem agente específico) - versão alternativa
-async function assignConversationToTeamOnly(conversationId, teamId) {
+async function assignConversationToTeamOnly(conversationId, teamId, accountId = CHATWOOT_ACCOUNT_ID) {
   try {
     // Validar parâmetros
     if (!conversationId) {
@@ -838,7 +912,7 @@ async function assignConversationToTeamOnly(conversationId, teamId) {
     
     // Atribuir ao time e remover agente em uma única operação
     await axios.post(
-      `${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/conversations/${conversationId}/assignments`,
+      `${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/conversations/${conversationId}/assignments`,
       { 
         team_id: teamId,
         assignee_id: null 
@@ -853,7 +927,7 @@ async function assignConversationToTeamOnly(conversationId, teamId) {
 }
 
 // Função para atribuir conversa a um membro específico do time (não-administrador)
-async function assignConversationToTeamMember(conversationId, teamId, options = {}) {
+async function assignConversationToTeamMember(conversationId, teamId, options = {}, accountId = CHATWOOT_ACCOUNT_ID) {
   try {
     // Validar parâmetros
     if (!conversationId) {
@@ -897,7 +971,7 @@ async function assignConversationToTeamMember(conversationId, teamId, options = 
       
       // Se não houver agentes disponíveis, atribuir ao time
       console.log(`🔄 Atribuindo conversa ao time ${teamId} (sem agente específico)`);
-      await assignConversationToTeam(conversationId, teamId);
+      await assignConversationToTeam(conversationId, teamId, accountId);
       return;
     }
 
@@ -926,12 +1000,12 @@ async function assignConversationToTeamMember(conversationId, teamId, options = 
 
     if (!selectedAgent) {
       console.log(`⚠️ Não foi possível selecionar um agente, atribuindo ao time ${teamId}`);
-      await assignConversationToTeam(conversationId, teamId);
+      await assignConversationToTeam(conversationId, teamId, accountId);
       return;
     }
 
     // Atribuir conversa ao agente selecionado
-    await assignConversationToAgent(conversationId, selectedAgent.id);
+    await assignConversationToAgent(conversationId, selectedAgent.id, accountId);
     
     console.log(`✅ Conversa ${conversationId} atribuída ao agente ${selectedAgent.name} (${selectedAgent.id}) do time ${teamId}`);
     
@@ -941,7 +1015,7 @@ async function assignConversationToTeamMember(conversationId, teamId, options = 
     // Em caso de erro, tentar atribuir ao time como fallback
     try {
       console.log(`🔄 Fallback: atribuindo conversa ao time ${teamId}`);
-      await assignConversationToTeam(conversationId, teamId);
+      await assignConversationToTeam(conversationId, teamId, accountId);
     } catch (fallbackError) {
       console.error(`❌ Erro no fallback ao atribuir ao time:`, fallbackError.response?.data || fallbackError.message);
     }
@@ -994,7 +1068,7 @@ async function selectLeastBusyAgent(teamMembers) {
       teamMembers.map(async (agent) => {
         try {
           const response = await axios.get(
-            `${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/conversations`,
+            `${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/conversations`,
             {
               params: { assignee_id: agent.id, status: 'open' },
               headers: { 'api_access_token': CHATWOOT_API_TOKEN }
@@ -2010,15 +2084,34 @@ async function pollChatwootMessages() {
   try {
     console.log('🔍 Verificando novas mensagens no Chatwoot...');
     
-    // Obter conversas ativas do Chatwoot
-    const conversations = await getChatwootConversations();
-    console.log(`📋 Encontradas ${conversations.length} conversas ativas`);
+    // Obter todas as contas disponíveis
+    const accounts = await getAllAvailableAccounts();
+    console.log(`🏢 Monitorando ${accounts.length} conta(s)`);
     
-    for (const conversation of conversations) {
-      await processChatwootConversation(conversation);
+    let totalConversations = 0;
+    
+    // Iterar por cada conta
+    for (const account of accounts) {
+      try {
+        console.log(`📋 Verificando conta: ${account.name} (ID: ${account.id})`);
+        
+        // Obter conversas ativas da conta atual
+        const conversations = await getChatwootConversations(account.id);
+        console.log(`   📋 Encontradas ${conversations.length} conversas ativas na conta ${account.name}`);
+        
+        totalConversations += conversations.length;
+        
+        // Processar conversas da conta atual
+        for (const conversation of conversations) {
+          await processChatwootConversation(conversation, account.id);
+        }
+        
+      } catch (error) {
+        console.error(`❌ Erro ao processar conta ${account.name} (ID: ${account.id}):`, error);
+      }
     }
     
-    console.log('✅ Polling concluído, agendando próximo...');
+    console.log(`✅ Polling concluído - ${totalConversations} conversas processadas em ${accounts.length} conta(s), agendando próximo...`);
   } catch (error) {
     console.error('❌ Erro no polling do Chatwoot:', error);
   } finally {
@@ -2031,9 +2124,9 @@ async function pollChatwootMessages() {
 }
 
 // Obter conversas ativas do Chatwoot
-async function getChatwootConversations() {
+async function getChatwootConversations(accountId = CHATWOOT_ACCOUNT_ID) {
   try {
-    const response = await axios.get(`${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/conversations`, {
+    const response = await axios.get(`${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/conversations`, {
       headers: {
         'api_access_token': CHATWOOT_API_TOKEN
       },
@@ -2044,13 +2137,13 @@ async function getChatwootConversations() {
     });
     return response.data.data.payload || [];
   } catch (error) {
-    console.error('❌ Erro ao obter conversas do Chatwoot:', error);
+    console.error(`❌ Erro ao obter conversas da conta ${accountId}:`, error);
     return [];
   }
 }
 
 // Processar conversa do Chatwoot
-async function processChatwootConversation(conversation) {
+async function processChatwootConversation(conversation, accountId = CHATWOOT_ACCOUNT_ID) {
   try {
     // Novo formato: pegar o número do contato de conversation.meta.sender.phone_number
     const contactId = conversation.meta && conversation.meta.sender && conversation.meta.sender.phone_number
@@ -2064,13 +2157,13 @@ async function processChatwootConversation(conversation) {
       return;
     }
     
-    //console.log(`🔍 Processando conversa - ID: ${conversationId}, Inbox: ${inboxId}, Contato: ${contactId}`);
+    //console.log(`🔍 Processando conversa - ID: ${conversationId}, Inbox: ${inboxId}, Contato: ${contactId}, Conta: ${accountId}`);
     
     // Verificar se já existe uma conversa de workflow ativa
     let workflowConversation = await conversationManager.getConversation(contactId);
     
     // Obter mensagens recentes da conversa
-    const messages = await getChatwootMessages(conversationId);
+    const messages = await getChatwootMessages(conversationId, accountId);
     
     for (const message of messages) {
       // Verificar se a mensagem já foi processada
@@ -2082,18 +2175,18 @@ async function processChatwootConversation(conversation) {
       
       // Processar apenas mensagens do usuário (não do bot)
       if (message.message_type === 0 && message.content) {  // 0 = incoming, 1 = outgoing
-        await processUserMessage(contactId, conversationId, message.content, inboxId);
+        await processUserMessage(contactId, conversationId, message.content, inboxId, accountId);
       }
     }
   } catch (error) {
-    console.error('❌ Erro ao processar conversa do Chatwoot:', error);
+    console.error(`❌ Erro ao processar conversa da conta ${accountId}:`, error);
   }
 }
 
 // Obter mensagens de uma conversa do Chatwoot
-async function getChatwootMessages(conversationId) {
+async function getChatwootMessages(conversationId, accountId = CHATWOOT_ACCOUNT_ID) {
   try {
-    const response = await axios.get(`${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/conversations/${conversationId}/messages`, {
+    const response = await axios.get(`${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/conversations/${conversationId}/messages`, {
       headers: {
         'api_access_token': CHATWOOT_API_TOKEN
       },
@@ -2105,7 +2198,7 @@ async function getChatwootMessages(conversationId) {
     
     return response.data.payload || [];
   } catch (error) {
-    console.error('❌ Erro ao obter mensagens do Chatwoot:', error);
+    console.error(`❌ Erro ao obter mensagens da conta ${accountId}:`, error);
     return [];
   }
 }
@@ -2134,7 +2227,7 @@ async function markMessageAsProcessed(messageId, contactId) {
 }
 
 // Processar mensagem do usuário
-async function processUserMessage(contactId, conversationId, userMessage, inboxId) {
+async function processUserMessage(contactId, conversationId, userMessage, inboxId, accountId = CHATWOOT_ACCOUNT_ID) {
   try {
     console.log(`📨 Processando mensagem de ${contactId} (Inbox: ${inboxId}): ${userMessage}`);
     
@@ -2145,12 +2238,12 @@ async function processUserMessage(contactId, conversationId, userMessage, inboxI
       console.log(`🔄 Reset solicitado por ${contactId}`);
       await pool.query('DELETE FROM workflow_conversations WHERE contact_id = $1', [contactId]);
       // Remover todos os labels do contato
-      await removeAllLabelsFromContact(contactId);
+      await removeAllLabelsFromContact(contactId, accountId);
       // Remover todos os labels da conversa
       await removeAllLabelsFromConversation(conversationId);
       // Reativar o bot após reset
       await reactivateBotForConversation(conversationId, contactId, 'user_reset');
-      await sendChatwootMessage(conversationId, 'Fluxo reiniciado com sucesso e todos os labels removidos (contato e conversa). Agora você pode iniciar a conversa novamente. Tente dar um "oi".');
+      await sendChatwootMessage(conversationId, 'Fluxo reiniciado com sucesso e todos os labels removidos (contato e conversa). Agora você pode iniciar a conversa novamente. Tente dar um "oi".', [], null, accountId);
       return;
     }
     
@@ -2159,9 +2252,9 @@ async function processUserMessage(contactId, conversationId, userMessage, inboxI
       console.log(`▶️ Comando de reativação do bot solicitado por ${contactId}`);
       const success = await reactivateBotForConversation(conversationId, contactId, contactId);
       if (success) {
-        await sendChatwootMessage(conversationId, '▶️ Bot reativado com sucesso! O bot voltará a responder normalmente nesta conversa.');
-      } else {
-        await sendChatwootMessage(conversationId, '❌ Erro ao reativar bot. Tente novamente.');
+        await sendChatwootMessage(conversationId, '▶️ Bot reativado com sucesso! O bot voltará a responder normalmente nesta conversa.', [], null, accountId);
+              } else {
+          await sendChatwootMessage(conversationId, '❌ Erro ao reativar bot. Tente novamente.', [], null, accountId);
       }
       return;
     }
@@ -2174,10 +2267,10 @@ async function processUserMessage(contactId, conversationId, userMessage, inboxI
         const status = botStatus.bot_active ? '✅ Ativo' : `❌ Pausado (${botStatus.paused_reason})`;
         const agent = botStatus.has_human_agent ? `👤 Agente: ${botStatus.agent_id}` : '🤖 Sem agente humano';
         const message = `🤖 **Status do Bot**\n${status}\n${agent}\n\nComandos disponíveis:\n• !pausebot - Pausar bot\n• !activebot - Reativar bot\n• !reset - Reiniciar fluxo`;
-        await sendChatwootMessage(conversationId, message);
+        await sendChatwootMessage(conversationId, message, [], null, accountId);
       } catch (error) {
         console.error('❌ Erro ao obter status do bot:', error);
-        await sendChatwootMessage(conversationId, '❌ Erro ao obter status do bot.');
+        await sendChatwootMessage(conversationId, '❌ Erro ao obter status do bot.', [], null, accountId);
       }
       return;
     }
@@ -2188,10 +2281,10 @@ async function processUserMessage(contactId, conversationId, userMessage, inboxI
       try {
         await conversationManager.loadWorkflowsFromDatabase();
         const totalWorkflows = conversationManager.workflows.size;
-        await sendChatwootMessage(conversationId, `✅ Workflows recarregados com sucesso! Total de workflows no cache: ${totalWorkflows}`);
+        await sendChatwootMessage(conversationId, `✅ Workflows recarregados com sucesso! Total de workflows no cache: ${totalWorkflows}`, [], null, accountId);
       } catch (error) {
         console.error('❌ Erro ao recarregar workflows:', error);
-        await sendChatwootMessage(conversationId, '❌ Erro ao recarregar workflows. Verifique os logs do sistema.');
+        await sendChatwootMessage(conversationId, '❌ Erro ao recarregar workflows. Verifique os logs do sistema.', [], null, accountId);
       }
       return;
     }
@@ -2202,10 +2295,10 @@ async function processUserMessage(contactId, conversationId, userMessage, inboxI
       try {
         const workflowNames = Array.from(conversationManager.workflows.keys());
         const message = `📋 Workflows disponíveis (${workflowNames.length}):\n${workflowNames.map(name => `• ${name}`).join('\n')}`;
-        await sendChatwootMessage(conversationId, message);
+        await sendChatwootMessage(conversationId, message, [], null, accountId);
       } catch (error) {
         console.error('❌ Erro ao listar workflows:', error);
-        await sendChatwootMessage(conversationId, '❌ Erro ao listar workflows. Verifique os logs do sistema.');
+        await sendChatwootMessage(conversationId, '❌ Erro ao listar workflows. Verifique os logs do sistema.', [], null, accountId);
       }
       return;
     }
@@ -2215,9 +2308,9 @@ async function processUserMessage(contactId, conversationId, userMessage, inboxI
       console.log(`⏸️ Comando de pausa do bot solicitado por ${contactId}`);
       const success = await pauseBotForConversation(conversationId, contactId, 'manual_pause', contactId);
       if (success) {
-        await sendChatwootMessage(conversationId, '⏸️ Bot pausado com sucesso! O bot não responderá mais nesta conversa até ser reativado com !activebot');
+        await sendChatwootMessage(conversationId, '⏸️ Bot pausado com sucesso! O bot não responderá mais nesta conversa até ser reativado com !activebot', [], null, accountId);
       } else {
-        await sendChatwootMessage(conversationId, '❌ Erro ao pausar bot. Tente novamente.');
+        await sendChatwootMessage(conversationId, '❌ Erro ao pausar bot. Tente novamente.', [], null, accountId);
       }
       return;
     }
@@ -2238,7 +2331,7 @@ async function processUserMessage(contactId, conversationId, userMessage, inboxI
       // Iniciar nova conversa se for uma mensagem de trigger
       if (await isTriggerMessage(userMessage, inboxId)) {
         // Buscar o fluxo configurado para esta caixa de entrada específica
-        const inboxWorkflow = await inboxWorkflowManager.getInboxWorkflow(CHATWOOT_ACCOUNT_ID, inboxId);
+        const inboxWorkflow = await inboxWorkflowManager.getInboxWorkflow(accountId, inboxId);
         
         if (inboxWorkflow) {
           console.log(`🔍 Usando fluxo do banco para inbox ${inboxId}: ${inboxWorkflow.workflow_name}`);
@@ -2339,9 +2432,9 @@ async function processUserMessage(contactId, conversationId, userMessage, inboxI
       
       if (result && result.type) {
       if (result.type === 'next_block') {
-        await sendChatwootMessage(conversationId, result.message, result.block.buttons, result.block.media);
+        await sendChatwootMessage(conversationId, result.message, result.block.buttons, result.block.media, accountId);
       } else if (result.type === 'finalized') {
-        await sendChatwootMessage(conversationId, result.message);
+        await sendChatwootMessage(conversationId, result.message, [], null, accountId);
         await conversationManager.finalizeConversation(contactId);
       } else if (result.type === 'invalid_response') {
         let workflow = conversationManager.workflows.get(conversation.workflow_name);
@@ -2354,7 +2447,7 @@ async function processUserMessage(contactId, conversationId, userMessage, inboxI
         
         if (workflow) {
           const currentBlock = workflow.blocks[conversation.current_block];
-          await sendChatwootMessage(conversationId, result.message, currentBlock.buttons, currentBlock.media);
+          await sendChatwootMessage(conversationId, result.message, currentBlock.buttons, currentBlock.media, accountId);
         } else {
           console.error(`❌ Não foi possível encontrar workflow '${conversation.workflow_name}' para resposta inválida`);
         }
@@ -2404,7 +2497,7 @@ async function processUserMessage(contactId, conversationId, userMessage, inboxI
 }
 
 // Enviar mensagem para o Chatwoot
-async function sendChatwootMessage(conversationId, message, buttons = [], mediaContent = null) {
+async function sendChatwootMessage(conversationId, message, buttons = [], mediaContent = null, accountId = CHATWOOT_ACCOUNT_ID) {
   try {
     // Se houver anexo direto via file_id, baixar arquivo e enviar via multipart/form-data
     if (mediaContent && mediaContent.attachment && mediaContent.attachment.file_id) {
@@ -2421,7 +2514,7 @@ async function sendChatwootMessage(conversationId, message, buttons = [], mediaC
         console.log(`⏰ Delay configurado: ${customDelay}ms`);
         
         // ✅ ABORDAGEM CORRETA: Baixar arquivo da URL pública e enviar via multipart/form-data
-        return await sendChatwootMessageWithFileDownload(conversationId, message, buttons, file, customDelay);
+        return await sendChatwootMessageWithFileDownload(conversationId, message, buttons, file, customDelay, accountId);
       } else {
         console.error(`❌ Arquivo não encontrado: ${mediaContent.attachment.file_id}`);
         // Continuar com envio normal da mensagem
@@ -2430,7 +2523,7 @@ async function sendChatwootMessage(conversationId, message, buttons = [], mediaC
     
     // Se houver anexo direto (arquivo local), enviar como anexo
     if (mediaContent && mediaContent.attachment && mediaContent.attachment.path) {
-      return await sendChatwootMessageWithAttachment(conversationId, message, buttons, mediaContent.attachment);
+      return await sendChatwootMessageWithAttachment(conversationId, message, buttons, mediaContent.attachment, 1000, accountId);
     }
     
     // ESPECIAL: Vídeo do YouTube - enviar thumbnail + link para melhor visualização no WhatsApp
@@ -2438,7 +2531,7 @@ async function sendChatwootMessage(conversationId, message, buttons = [], mediaC
       const videoId = extractYouTubeVideoId(mediaContent.url);
       if (videoId) {
         console.log(`🎬 Detectado vídeo do YouTube: ${videoId}, enviando com thumbnail otimizado para WhatsApp`);
-        return await sendYouTubeVideoWithThumbnail(conversationId, message, buttons, mediaContent, videoId);
+        return await sendYouTubeVideoWithThumbnail(conversationId, message, buttons, mediaContent, videoId, accountId);
       }
     }
     
@@ -2474,7 +2567,7 @@ async function sendChatwootMessage(conversationId, message, buttons = [], mediaC
       };
     }
     
-    await axios.post(`${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/conversations/${conversationId}/messages`, payload, {
+    await axios.post(`${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/conversations/${conversationId}/messages`, payload, {
       headers: {
         'api_access_token': CHATWOOT_API_TOKEN,
         'Content-Type': 'application/json'
@@ -2517,7 +2610,7 @@ function extractYouTubeVideoId(url) {
 }
 
 // Enviar vídeo do YouTube com thumbnail para WhatsApp
-async function sendYouTubeVideoWithThumbnail(conversationId, message, buttons, mediaContent, videoId) {
+async function sendYouTubeVideoWithThumbnail(conversationId, message, buttons, mediaContent, videoId, accountId = CHATWOOT_ACCOUNT_ID) {
   try {
     // 1. Enviar mensagem de texto primeiro
     if (message) {
@@ -2567,7 +2660,7 @@ async function sendYouTubeVideoWithThumbnail(conversationId, message, buttons, m
     formData.append('message_type', 'outgoing');
     
     await axios.post(
-      `${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/conversations/${conversationId}/messages`,
+      `${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/conversations/${conversationId}/messages`,
       formData,
       {
         headers: {
@@ -2590,7 +2683,7 @@ async function sendYouTubeVideoWithThumbnail(conversationId, message, buttons, m
       message_type: 'outgoing'
     };
     
-    await axios.post(`${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/conversations/${conversationId}/messages`, linkPayload, {
+    await axios.post(`${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/conversations/${conversationId}/messages`, linkPayload, {
       headers: {
         'api_access_token': CHATWOOT_API_TOKEN,
         'Content-Type': 'application/json'
@@ -2700,7 +2793,7 @@ function validateWhatsAppMedia(attachment) {
 }
 
 // Enviar mensagem baixando arquivo via URL pública e usando multipart/form-data
-async function sendChatwootMessageWithFileDownload(conversationId, message, buttons = [], file, buttonDelay = 1000) {
+async function sendChatwootMessageWithFileDownload(conversationId, message, buttons = [], file, buttonDelay = 1000, accountId = CHATWOOT_ACCOUNT_ID) {
   // Declarar tempFilePath fora do try para ter acesso no catch
   const baseUrl = process.env.BASE_URL || process.env.CHATWOOT_BASE_URL?.replace('crm.', 'workflows.') || 'https://workflows.inovaianalytics.com.br';
   const publicUrl = `${baseUrl}/public-preview/${file.id}`;
@@ -2756,7 +2849,7 @@ async function sendChatwootMessageWithFileDownload(conversationId, message, butt
     
     // 4. Enviar via multipart/form-data usando função existente
     console.log('🚀 Enviando via multipart/form-data...');
-    const result = await sendChatwootMessageWithAttachment(conversationId, message, buttons, attachment, buttonDelay);
+    const result = await sendChatwootMessageWithAttachment(conversationId, message, buttons, attachment, buttonDelay, accountId);
     
     // 5. Limpar arquivo temporário
     console.log('🧹 Limpando arquivo temporário...');
@@ -2783,7 +2876,7 @@ async function sendChatwootMessageWithFileDownload(conversationId, message, butt
 }
 
 // Enviar mensagem com anexo para o Chatwoot
-async function sendChatwootMessageWithAttachment(conversationId, message, buttons = [], attachment, buttonDelay = 1000) {
+async function sendChatwootMessageWithAttachment(conversationId, message, buttons = [], attachment, buttonDelay = 1000, accountId = CHATWOOT_ACCOUNT_ID) {
   try {
     console.log(`📎 Enviando mensagem com anexo: ${attachment.originalname}`);
     
@@ -2824,7 +2917,7 @@ async function sendChatwootMessageWithAttachment(conversationId, message, button
     formData.append('file_type', fileType);
     
     // Enviar anexo (seguindo padrão oficial do Chatwoot)
-    console.log(`🚀 Enviando para: ${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/conversations/${conversationId}/messages`);
+    console.log(`🚀 Enviando para: ${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/conversations/${conversationId}/messages`);
     console.log(`📝 Dados: content="${message || '📎 Arquivo anexado'}", message_type="outgoing", file_type="${fileType}"`);
     
     // Debug dos headers para verificar Content-Type com boundary
@@ -2865,7 +2958,7 @@ async function sendChatwootMessageWithAttachment(conversationId, message, button
         message_type: 'outgoing'
       };
       
-      await axios.post(`${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/conversations/${conversationId}/messages`, buttonPayload, {
+      await axios.post(`${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/conversations/${conversationId}/messages`, buttonPayload, {
         headers: {
           'api_access_token': CHATWOOT_API_TOKEN,
           'Content-Type': 'application/json'
@@ -2917,7 +3010,7 @@ Arquivo: ${attachment.originalname}`);
 }
 
 // Enviar mensagem com anexo via URL pública para o Chatwoot
-async function sendChatwootMessageWithAttachmentUrl(conversationId, message, buttons = [], attachmentInfo) {
+async function sendChatwootMessageWithAttachmentUrl(conversationId, message, buttons = [], attachmentInfo, accountId = CHATWOOT_ACCOUNT_ID) {
   try {
     console.log(`📎 Enviando mensagem com anexo via URL pública: ${attachmentInfo.originalname}`);
     console.log(`🌐 URL: ${attachmentInfo.url}`);
@@ -2941,10 +3034,10 @@ async function sendChatwootMessageWithAttachmentUrl(conversationId, message, but
       }
     };
     
-    console.log(`🚀 Enviando card com mídia para: ${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/conversations/${conversationId}/messages`);
+    console.log(`🚀 Enviando card com mídia para: ${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/conversations/${conversationId}/messages`);
     
     const response = await axios.post(
-      `${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/conversations/${conversationId}/messages`,
+      `${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/conversations/${conversationId}/messages`,
       payload,
       {
         headers: {
@@ -5204,6 +5297,7 @@ app.get('/api/campaigns/:id/status', authenticateToken, async (req, res) => {
         cs.message_id,
         cs.error_message,
         cs.sent_at,
+        cs.sent_at - INTERVAL '3 hours' as sent_at_br,
         cs.created_at,
         cc.name as contact_name,
         cc.phone as contact_phone

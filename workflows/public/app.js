@@ -183,21 +183,12 @@ class ChatwootWorkflowsApp {
         
         // Mostrar/ocultar menu de gerenciamento de usuários
         const userManagementItem = document.getElementById('menuGerenciarUsuariosItem');
-        const listarTodasCampanhasItem = document.getElementById('menuListarTodasCampanhasItem');
         
         if (userManagementItem) {
             if (isAdmin) {
                 userManagementItem.classList.remove('d-none');
             } else {
                 userManagementItem.classList.add('d-none');
-            }
-        }
-        
-        if (listarTodasCampanhasItem) {
-            if (isAdmin) {
-                listarTodasCampanhasItem.classList.remove('d-none');
-            } else {
-                listarTodasCampanhasItem.classList.add('d-none');
             }
         }
         
@@ -269,7 +260,7 @@ class ChatwootWorkflowsApp {
     }
 
     // Validar se conta e caixa foram selecionadas
-    validateAccountAndInboxSelection() {
+    async validateAccountAndInboxSelection() {
         console.log(`🔍 Validando seleção para role: ${this.user.role}`);
         
         // Usar IDs diferentes baseado no role
@@ -314,7 +305,47 @@ class ChatwootWorkflowsApp {
             return false;
         }
         
-        console.log(`✅ Validação aprovada: Conta ${selectedAccount}, Caixa ${selectedInbox}`);
+        // Validar se a caixa de entrada é uma API oficial do WhatsApp
+        try {
+            console.log('🔍 Validando se a caixa de entrada é uma API oficial do WhatsApp...');
+            
+            // Buscar informações da caixa de entrada
+            const inboxes = this.inboxes || [];
+            const selectedInboxInfo = inboxes.find(inbox => String(inbox.id) === String(selectedInbox));
+            
+            if (!selectedInboxInfo) {
+                console.warn('⚠️ Informações da caixa de entrada não encontradas, tentando buscar...');
+                // Tentar buscar as informações da caixa
+                const accountInboxes = await this.loadInboxesForAccount(selectedAccount);
+                const inboxInfo = accountInboxes.find(inbox => String(inbox.id) === String(selectedInbox));
+                
+                if (!inboxInfo) {
+                    console.error('❌ Não foi possível obter informações da caixa de entrada');
+                    this.showAlert('Erro ao validar caixa de entrada. Tente selecionar novamente.', 'danger');
+                    return false;
+                }
+                
+                if (inboxInfo.channel_type !== 'Channel::Whatsapp') {
+                    console.warn(`⚠️ Caixa de entrada não é uma API oficial do WhatsApp: ${inboxInfo.channel_type}`);
+                    this.showAlert(`Esta caixa de entrada (${inboxInfo.name}) não é uma API oficial do WhatsApp. Apenas caixas do WhatsApp são suportadas para campanhas.`, 'warning');
+                    return false;
+                }
+            } else {
+                if (selectedInboxInfo.channel_type !== 'Channel::Whatsapp') {
+                    console.warn(`⚠️ Caixa de entrada não é uma API oficial do WhatsApp: ${selectedInboxInfo.channel_type}`);
+                    this.showAlert(`Esta caixa de entrada (${selectedInboxInfo.name}) não é uma API oficial do WhatsApp. Apenas caixas do WhatsApp são suportadas para campanhas.`, 'warning');
+                    return false;
+                }
+            }
+            
+            console.log('✅ Caixa de entrada é uma API oficial do WhatsApp');
+        } catch (error) {
+            console.error('❌ Erro ao validar tipo da caixa de entrada:', error);
+            this.showAlert('Erro ao validar caixa de entrada. Tente novamente.', 'danger');
+            return false;
+        }
+        
+        console.log(`✅ Validação aprovada: Conta ${selectedAccount}, Caixa ${selectedInbox} (WhatsApp API)`);
         return true;
     }
 
@@ -329,7 +360,7 @@ class ChatwootWorkflowsApp {
             if (button && !button.hasAttribute('data-listener-added')) {
                 button.addEventListener('click', async () => {
                     // Validar se conta e caixa foram selecionadas
-                    if (!this.validateAccountAndInboxSelection()) {
+                    if (!(await this.validateAccountAndInboxSelection())) {
                         return;
                     }
                     
@@ -885,9 +916,18 @@ class ChatwootWorkflowsApp {
                 inboxes.forEach(inbox => {
                     const option = document.createElement('option');
                     option.value = inbox.id;
-                    option.textContent = inbox.name;
+                    
+                    // Adicionar indicador visual para caixas do WhatsApp
+                    if (inbox.channel_type === 'Channel::Whatsapp') {
+                        option.textContent = `📱 ${inbox.name} (WhatsApp API)`;
+                        console.log(`📋 Caixa WhatsApp adicionada: ${inbox.name} (ID: ${inbox.id})`);
+                    } else {
+                        option.textContent = `❌ ${inbox.name} (Não suportado)`;
+                        option.disabled = true;
+                        console.log(`📋 Caixa não suportada: ${inbox.name} (ID: ${inbox.id}) - Tipo: ${inbox.channel_type}`);
+                    }
+                    
                     inboxSelect.appendChild(option);
-                    console.log(`📋 Caixa adicionada diretamente: ${inbox.name} (ID: ${inbox.id})`);
                 });
                 inboxSelect.disabled = false;
                 console.log(`✅ ${inboxes.length} caixas carregadas diretamente no select`);
@@ -1234,6 +1274,9 @@ class ChatwootWorkflowsApp {
         // Calcular total de contatos enviados
         const totalSent = campaigns.reduce((sum, c) => sum + (parseInt(c.sent_count) || 0), 0);
         
+        // Calcular total de falhas de envio
+        const totalFailed = campaigns.reduce((sum, c) => sum + (parseInt(c.failed_count) || 0), 0);
+        
         // Atualizar texto de boas-vindas baseado no título
         const welcomeSection = document.querySelector('.welcome-section h4');
         if (welcomeSection) {
@@ -1250,7 +1293,7 @@ class ChatwootWorkflowsApp {
                     <i class="fas fa-chart-line me-2"></i>${title}
                 </h5>
             </div>
-            <div class="col-md-3 mb-3">
+            <div class="col-md-2 mb-3">
                 <div class="card border-0 bg-primary text-white">
                     <div class="card-body text-center">
                         <i class="fas fa-chart-bar fa-2x mb-2"></i>
@@ -1259,7 +1302,7 @@ class ChatwootWorkflowsApp {
                     </div>
                 </div>
             </div>
-            <div class="col-md-3 mb-3">
+            <div class="col-md-2 mb-3">
                 <div class="card border-0 bg-warning text-white">
                     <div class="card-body text-center">
                         <i class="fas fa-clock fa-2x mb-2"></i>
@@ -1268,7 +1311,7 @@ class ChatwootWorkflowsApp {
                     </div>
                 </div>
             </div>
-            <div class="col-md-3 mb-3">
+            <div class="col-md-2 mb-3">
                 <div class="card border-0 bg-success text-white">
                     <div class="card-body text-center">
                         <i class="fas fa-check-circle fa-2x mb-2"></i>
@@ -1277,12 +1320,21 @@ class ChatwootWorkflowsApp {
                     </div>
                 </div>
             </div>
-            <div class="col-md-3 mb-3">
+            <div class="col-md-2 mb-3">
                 <div class="card border-0 bg-info text-white">
                     <div class="card-body text-center">
                         <i class="fas fa-paper-plane fa-2x mb-2"></i>
                         <h3 class="mb-0">${totalSent.toLocaleString()}</h3>
                         <small>Mensagens Enviadas</small>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-2 mb-3">
+                <div class="card border-0 bg-danger text-white">
+                    <div class="card-body text-center">
+                        <i class="fas fa-exclamation-triangle fa-2x mb-2"></i>
+                        <h3 class="mb-0">${totalFailed.toLocaleString()}</h3>
+                        <small>Falhas de Envio</small>
                     </div>
                 </div>
             </div>
@@ -1761,7 +1813,15 @@ class ChatwootWorkflowsApp {
         this.inboxes.forEach(inbox => {
             const option = document.createElement('option');
             option.value = inbox.id;
-            option.textContent = inbox.name;
+            
+            // Adicionar indicador visual para caixas do WhatsApp
+            if (inbox.channel_type === 'Channel::Whatsapp') {
+                option.textContent = `📱 ${inbox.name} (WhatsApp API)`;
+            } else {
+                option.textContent = `❌ ${inbox.name} (Não suportado)`;
+                option.disabled = true;
+            }
+            
             select.appendChild(option);
         });
         
@@ -3184,7 +3244,15 @@ class ChatwootWorkflowsApp {
             inboxes.forEach(inbox => {
                 const option = document.createElement('option');
                 option.value = inbox.id;
-                option.textContent = inbox.name;
+                
+                // Adicionar indicador visual para caixas do WhatsApp
+                if (inbox.channel_type === 'Channel::Whatsapp') {
+                    option.textContent = `📱 ${inbox.name} (WhatsApp API)`;
+                } else {
+                    option.textContent = `❌ ${inbox.name} (Não suportado)`;
+                    option.disabled = true;
+                }
+                
                 inboxSelect.appendChild(option);
             });
             inboxSelect.disabled = false;
@@ -3736,9 +3804,9 @@ function initCampanhasEventListeners() {
         });
 
         if (btnCriarCampanha) {
-            btnCriarCampanha.addEventListener('click', function() {
+            btnCriarCampanha.addEventListener('click', async function() {
                 // Validar se conta e caixa foram selecionadas
-                if (!window.app.validateAccountAndInboxSelection()) {
+                if (!(await window.app.validateAccountAndInboxSelection())) {
                     return;
                 }
                 
@@ -4352,11 +4420,11 @@ async function verStatusCampanha(campanhaId) {
             
             if (campaignResponse.ok) {
                 const campaigns = await campaignResponse.json();
-                console.log(`📋 Campanhas encontradas: ${campaigns.length}`);
+                //console.log(`📋 Campanhas encontradas: ${campaigns.length}`);
                 
                 if (Array.isArray(campaigns)) {
                     campaignInfo = campaigns.find(c => String(c.id) === String(campanhaId)) || {};
-                    console.log(`📋 Campanha específica encontrada:`, campaignInfo);
+                    //console.log(`📋 Campanha específica encontrada:`, campaignInfo);
                 } else if (campaigns && campaigns.id) {
                     campaignInfo = campaigns;
                 }
@@ -4566,7 +4634,7 @@ function showDetailedStatusModal(campanhaId, statusData, campaignInfo) {
                     ${campaignInfo.name ? `<h6 class="text-muted">${campaignInfo.name}</h6>` : ''}
                     <small class="text-muted">
                         <i class="fas fa-sync-alt me-1"></i>
-                        Última atualização: ${new Date().toLocaleString('pt-BR')}
+                        Última atualização: ${formatDateBrazil(new Date())}
                     </small>
                 </div>
                 <div>
@@ -4769,7 +4837,7 @@ function renderCampaignSummary(stats, campaignInfo) {
                             <div class="mt-3 pt-3 border-top">
                                 <small class="text-muted">
                                     <i class="fas fa-calendar me-1"></i>
-                                    Criada em: ${formatDateBrazil(campaignInfo.created_at)}
+                                    Criada em: ${formatDateBrazil(campaignInfo.created_at_brasil)}
                                     ${campaignInfo.scheduled_at ? `| Agendada para: ${formatDateBrazil(campaignInfo.scheduled_at)}` : ''}
                                 </small>
                             </div>
@@ -4907,7 +4975,7 @@ function renderStatusTable(statusData, campanhaId) {
                                     <i class="fas fa-traffic-light me-1"></i>Status
                                 </th>
                                 <th style="width: 20%;">
-                                    <i class="fas fa-clock me-1"></i>Data/Hora
+                                    <i class="fas fa-clock me-1"></i>Data/Hora Envio
                                 </th>
                                 <th style="width: 20%;">
                                     <i class="fas fa-info-circle me-1"></i>Detalhes
@@ -4925,10 +4993,13 @@ function renderStatusTable(statusData, campanhaId) {
 }
 
 function renderStatusRow(item, index) {
-    console.log(item);
+    //console.log(item);
     const statusConfig = getStatusConfig(item.status);
     const formattedDate = item.created_at ? 
-        new Date(item.created_at).toLocaleString('pt-BR') : 
+        formatDateBrazil(item.created_at) : 
+        'Data não disponível';
+    const formattedDateSent = item.sent_at_br ? 
+        formatDateBrazil(item.sent_at_br) : 
         'Data não disponível';
     
     const errorMessage = item.error_message || item.error || '';
@@ -4962,7 +5033,7 @@ function renderStatusRow(item, index) {
             </td>
             <td>
                 <small class="text-muted">
-                    ${formattedDate}
+                    ${formattedDateSent}
                 </small>
             </td>
             <td>
@@ -5496,7 +5567,7 @@ async function verErrosCampanha(campanhaId) {
                                             </td>
                                             <td>
                                                 <small class="text-muted">
-                                                    ${new Date(erro.created_at).toLocaleString('pt-BR', {timeZone: 'America/Sao_Paulo'})}
+                                                    ${formatDateBrazil(erro.created_at)}
                                                 </small>
                                             </td>
                                         </tr>
@@ -5951,7 +6022,7 @@ function showFileDetails(fileId) {
     if (!file) return;
     
     const fileSize = formatFileSize(file.size);
-    const uploadDate = new Date(file.upload_date).toLocaleString('pt-BR');
+    const uploadDate = formatDateBrazil(file.upload_date);
     const fileIcon = getFileIcon(file.mimetype);
     
     // Criar div simples para detalhes
@@ -6194,7 +6265,7 @@ function showVideoInfo(fileId, fileName) {
     if (!file) return;
     
     const fileSize = formatFileSize(file.size);
-    const uploadDate = new Date(file.upload_date).toLocaleString('pt-BR');
+    const uploadDate = formatDateBrazil(file.upload_date);
     
     const modal = document.createElement('div');
     modal.className = 'modal fade show';
