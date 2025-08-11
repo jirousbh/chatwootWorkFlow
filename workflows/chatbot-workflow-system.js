@@ -398,6 +398,7 @@ async function initializeDatabase() {
         id SERIAL PRIMARY KEY,
         contact_id VARCHAR(255) NOT NULL,
         conversation_id INTEGER,
+        account_id INTEGER DEFAULT 1,
         workflow_name VARCHAR(255) NOT NULL,
         current_block VARCHAR(255) NOT NULL,
         data JSONB DEFAULT '{}',
@@ -406,6 +407,12 @@ async function initializeDatabase() {
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
+    `);
+
+    // Adicionar coluna account_id se não existir
+    await pool.query(`
+      ALTER TABLE workflow_conversations 
+      ADD COLUMN IF NOT EXISTS account_id INTEGER DEFAULT 1
     `);
 
     // Criar tabela de interações do workflow
@@ -526,6 +533,7 @@ async function initializeDatabase() {
         last_agent_check TIMESTAMP,
         has_human_agent BOOLEAN DEFAULT false,
         agent_id INTEGER,
+        last_interaction_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
@@ -712,7 +720,7 @@ async function addLabelsToContact(contactId, labels, accountId = CHATWOOT_ACCOUN
     let internalId = contactId;
     if (typeof contactId === 'string' && (contactId.startsWith('+') || contactId.length > 8)) {
       console.log(`🔍 ContactId parece ser telefone, buscando ID interno...`);
-      const foundId = await getContactIdByPhone(contactId);
+      const foundId = await getContactIdByPhone(contactId, accountId);
       if (foundId) {
         internalId = foundId;
         console.log(`🔄 Convertido telefone ${contactId} para ID interno: ${internalId}`);
@@ -735,7 +743,7 @@ async function addLabelsToContact(contactId, labels, accountId = CHATWOOT_ACCOUN
     );
     console.log(`✅ Labels [${labels.join(', ')}] adicionadas ao contato ${internalId}`);
   } catch (error) {
-    console.error('❌ Erro ao adicionar labels ao contato:', error.response?.data || error.message);
+    console.error('❌ Erro ao adicionar labels ao contato:', JSON.stringify(error.response?.data) || error.message);
     
     // Log adicional para debug
     if (error.response) {
@@ -757,7 +765,7 @@ async function removeAllLabelsFromContact(contactId, accountId = CHATWOOT_ACCOUN
     // Se contactId parece ser um número de telefone, buscar o ID interno
     if (typeof contactId === 'string' && (contactId.startsWith('+') || contactId.length > 8)) {
       console.log(`🔍 ContactId parece ser telefone, buscando ID interno...`);
-      const foundId = await getContactIdByPhone(contactId);
+      const foundId = await getContactIdByPhone(contactId, accountId);
       if (foundId) {
         internalId = foundId;
         console.log(`🔄 Convertido telefone ${contactId} para ID interno: ${internalId}`);
@@ -861,7 +869,7 @@ async function assignConversationToTeam(conversationId, teamId, accountId = CHAT
     console.log(`🔍 Tentando atribuir conversa ${conversationId} ao time ${teamId} (sem agente específico)`);
     
     // Verificar se a conversa existe
-    const exists = await conversationExists(conversationId);
+    const exists = await conversationExists(conversationId, accountId);
     if (!exists) {
       console.log(`⚠️ Conversa ${conversationId} não existe, pulando atribuição de time`);
       return;
@@ -904,7 +912,7 @@ async function assignConversationToTeamOnly(conversationId, teamId, accountId = 
     console.log(`🔍 Tentando atribuir conversa ${conversationId} apenas ao time ${teamId}`);
     
     // Verificar se a conversa existe
-    const exists = await conversationExists(conversationId);
+    const exists = await conversationExists(conversationId, accountId);
     if (!exists) {
       console.log(`⚠️ Conversa ${conversationId} não existe, pulando atribuição de time`);
       return;
@@ -943,14 +951,14 @@ async function assignConversationToTeamMember(conversationId, teamId, options = 
     console.log(`🔍 Tentando atribuir conversa ${conversationId} a um membro do time ${teamId}`);
     
     // Verificar se a conversa existe
-    const exists = await conversationExists(conversationId);
+    const exists = await conversationExists(conversationId, accountId);
     if (!exists) {
       console.log(`⚠️ Conversa ${conversationId} não existe, pulando atribuição de membro do time`);
       return;
     }
 
     // Buscar todos os agentes
-    const allAgents = await getChatwootAgents();
+    const allAgents = await getChatwootAgents(accountId);
     
     // Filtrar agentes que pertencem ao time especificado e não são administradores
     const teamMembers = allAgents.filter(agent => {
@@ -983,7 +991,7 @@ async function assignConversationToTeamMember(conversationId, teamId, options = 
     switch (strategy) {
       case 'least_busy':
         // Selecionar agente com menos conversas ativas
-        selectedAgent = await selectLeastBusyAgent(teamMembers);
+        selectedAgent = await selectLeastBusyAgent(teamMembers, accountId);
         break;
         
       case 'random':
@@ -994,7 +1002,7 @@ async function assignConversationToTeamMember(conversationId, teamId, options = 
       case 'round_robin':
       default:
         // Round-robin (rotação)
-        selectedAgent = await selectNextAgentInRoundRobin(teamMembers, teamId);
+        selectedAgent = await selectNextAgentInRoundRobin(teamMembers, teamId, accountId);
         break;
     }
 
@@ -1023,7 +1031,7 @@ async function assignConversationToTeamMember(conversationId, teamId, options = 
 }
 
 // Função para selecionar o próximo agente no round-robin
-async function selectNextAgentInRoundRobin(teamMembers, teamId) {
+async function selectNextAgentInRoundRobin(teamMembers, teamId, accountId = CHATWOOT_ACCOUNT_ID) {
   try {
     // Buscar o último agente usado para este time no banco de dados
     const result = await pool.query(
@@ -1061,7 +1069,7 @@ async function selectNextAgentInRoundRobin(teamMembers, teamId) {
 }
 
 // Função para selecionar o agente menos ocupado
-async function selectLeastBusyAgent(teamMembers) {
+async function selectLeastBusyAgent(teamMembers, accountId = CHATWOOT_ACCOUNT_ID) {
   try {
     // Buscar conversas ativas de cada agente
     const agentWorkloads = await Promise.all(
@@ -1105,7 +1113,7 @@ let labelsCacheExpiry = 0;
 const LABELS_CACHE_DURATION = 5 * 60 * 1000; // 5 minutos
 
 // Função para obter labels existentes (com cache)
-async function getExistingLabels() {
+async function getExistingLabels(accountId = CHATWOOT_ACCOUNT_ID) {
   const now = Date.now();
   
   // Verificar se o cache ainda é válido
@@ -1115,7 +1123,7 @@ async function getExistingLabels() {
   
   try {
     const response = await axios.get(
-      `${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/labels`,
+      `${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/labels`,
       { headers: { 'api_access_token': CHATWOOT_API_TOKEN } }
     );
     
@@ -1137,15 +1145,15 @@ async function getExistingLabels() {
 }
 
 // Função para criar label se não existir
-async function createLabelIfNotExists(labelName) {
+async function createLabelIfNotExists(labelName, accountId = CHATWOOT_ACCOUNT_ID) {
   try {
     // Verificar cache primeiro
-    const existingLabels = await getExistingLabels();
+    const existingLabels = await getExistingLabels(accountId);
     
     if (!existingLabels.has(labelName)) {
       // Criar o label se não existir
       const response = await axios.post(
-        `${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/labels`,
+        `${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/labels`,
         { 
           title: labelName,
           description: `Label criado automaticamente pelo workflow: ${labelName}`,
@@ -1172,7 +1180,7 @@ async function createLabelIfNotExists(labelName) {
 }
 
 // Função para verificar se a conversa existe
-async function conversationExists(conversationId) {
+async function conversationExists(conversationId, accountId = CHATWOOT_ACCOUNT_ID) {
   try {
     if (!conversationId) {
       console.log('❌ ConversationId é inválido (null/undefined)');
@@ -1180,7 +1188,7 @@ async function conversationExists(conversationId) {
     }
     
     const response = await axios.get(
-      `${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/conversations/${conversationId}`,
+      `${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/conversations/${conversationId}`,
       { headers: { 'api_access_token': CHATWOOT_API_TOKEN } }
     );
     
@@ -1192,7 +1200,7 @@ async function conversationExists(conversationId) {
 }
 
 // Função para adicionar etiquetas à conversa
-async function addLabelsToConversation(conversationId, labels) {
+async function addLabelsToConversation(conversationId, labels, accountId = CHATWOOT_ACCOUNT_ID) {
   try {
     // Validar parâmetros
     if (!conversationId) {
@@ -1208,7 +1216,7 @@ async function addLabelsToConversation(conversationId, labels) {
     console.log(`🔍 Tentando adicionar etiquetas à conversa ${conversationId}: [${labels.join(', ')}]`);
     
     // Verificar se a conversa existe
-    const exists = await conversationExists(conversationId);
+    const exists = await conversationExists(conversationId, accountId);
     if (!exists) {
       console.log(`⚠️ Conversa ${conversationId} não existe, pulando adição de etiquetas`);
       return;
@@ -1216,11 +1224,11 @@ async function addLabelsToConversation(conversationId, labels) {
     
     // Garantir que todos os labels existem antes de adicioná-los
     for (const label of labels) {
-      await createLabelIfNotExists(label);
+      await createLabelIfNotExists(label, accountId);
     }
     
     await axios.post(
-      `${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/conversations/${conversationId}/labels`,
+      `${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/conversations/${conversationId}/labels`,
       { labels },
       { headers: { 'api_access_token': CHATWOOT_API_TOKEN } }
     );
@@ -1238,7 +1246,7 @@ async function addLabelsToConversation(conversationId, labels) {
 }
 
 // Função para remover todos os labels da conversa no Chatwoot
-async function removeAllLabelsFromConversation(conversationId) {
+async function removeAllLabelsFromConversation(conversationId, accountId = CHATWOOT_ACCOUNT_ID) {
   try {
     console.log(`🧹 Iniciando remoção de labels da conversa: ${conversationId}`);
     
@@ -1249,7 +1257,7 @@ async function removeAllLabelsFromConversation(conversationId) {
     }
     
     // Verificar se a conversa existe
-    const exists = await conversationExists(conversationId);
+    const exists = await conversationExists(conversationId, accountId);
     if (!exists) {
       console.log(`⚠️ Conversa ${conversationId} não existe, pulando remoção de etiquetas`);
       return;
@@ -1261,7 +1269,7 @@ async function removeAllLabelsFromConversation(conversationId) {
     let currentLabels = [];
     try {
       const conversationResponse = await axios.get(
-        `${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/conversations/${conversationId}`,
+        `${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/conversations/${conversationId}`,
         { headers: { 'api_access_token': CHATWOOT_API_TOKEN } }
       );
       
@@ -1287,7 +1295,7 @@ async function removeAllLabelsFromConversation(conversationId) {
     
     // Remover todos os labels definindo uma lista vazia
     await axios.post(
-      `${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/conversations/${conversationId}/labels`,
+      `${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/conversations/${conversationId}/labels`,
       { labels: [] },
       { headers: { 'api_access_token': CHATWOOT_API_TOKEN } }
     );
@@ -1305,10 +1313,10 @@ async function removeAllLabelsFromConversation(conversationId) {
 }
 
 // Função para buscar agentes disponíveis
-async function getChatwootAgents() {
+async function getChatwootAgents(accountId = CHATWOOT_ACCOUNT_ID) {
   try {
     const response = await axios.get(
-      `${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/agents`,
+      `${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/agents`,
       { headers: { 'api_access_token': CHATWOOT_API_TOKEN } }
     );
     return response.data.payload || [];
@@ -1319,10 +1327,10 @@ async function getChatwootAgents() {
 }
 
 // Função para buscar times disponíveis
-async function getChatwootTeams() {
+async function getChatwootTeams(accountId = CHATWOOT_ACCOUNT_ID) {
   try {
     const response = await axios.get(
-      `${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/teams`,
+      `${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/teams`,
       { headers: { 'api_access_token': CHATWOOT_API_TOKEN } }
     );
     return response.data.payload || [];
@@ -1452,7 +1460,7 @@ class ConversationManager {
   }
 
   // Iniciar nova conversa
-  async startConversation(contactId, workflowName, initialData = {}) {
+  async startConversation(contactId, workflowName, initialData = {}, accountId = CHATWOOT_ACCOUNT_ID) {
     try {
       let workflow = this.workflows.get(workflowName);
       
@@ -1468,7 +1476,7 @@ class ConversationManager {
 
       // Buscar nome do contato se não estiver em initialData
       if (!initialData.nome) {
-        initialData.nome = await getContactName(contactId);
+        initialData.nome = await getContactName(contactId, null, accountId);
       }
       console.log("Nome do contato:", initialData.nome);
 
@@ -1481,16 +1489,16 @@ class ConversationManager {
       if (existingResult.rows.length > 0) {
         // Atualizar conversa existente
         await pool.query(
-          'UPDATE workflow_conversations SET workflow_name = $1, current_block = $2, data = $3, last_activity = CURRENT_TIMESTAMP WHERE id = $4',
-          [workflowName, 'bloco_1', JSON.stringify(initialData), existingResult.rows[0].id]
+          'UPDATE workflow_conversations SET workflow_name = $1, current_block = $2, data = $3, account_id = $4, last_activity = CURRENT_TIMESTAMP WHERE id = $5',
+          [workflowName, 'bloco_1', JSON.stringify(initialData), accountId, existingResult.rows[0].id]
         );
         return existingResult.rows[0];
       }
 
       // Criar nova conversa
       const result = await pool.query(
-        'INSERT INTO workflow_conversations (contact_id, workflow_name, current_block, data) VALUES ($1, $2, $3, $4) RETURNING *',
-        [contactId, workflowName, 'bloco_1', JSON.stringify(initialData)]
+        'INSERT INTO workflow_conversations (contact_id, workflow_name, current_block, data, account_id) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+        [contactId, workflowName, 'bloco_1', JSON.stringify(initialData), accountId]
       );
 
       return result.rows[0];
@@ -1515,7 +1523,7 @@ class ConversationManager {
   }
 
   // Processar resposta do usuário
-  async processResponse(contactId, userResponse) {
+  async processResponse(contactId, userResponse, accountId = CHATWOOT_ACCOUNT_ID) {
     try {
       const conversation = await this.getConversation(contactId);
       if (!conversation) return null;
@@ -1543,7 +1551,7 @@ class ConversationManager {
       let data = conversation.data;
       if (typeof data === 'string') data = JSON.parse(data);
       if (!data.nome) {
-        data.nome = await getContactName(contactId);
+        data.nome = await getContactName(contactId, null, accountId);
       }
 
       const button = Array.isArray(currentBlock.buttons)
@@ -1559,14 +1567,14 @@ class ConversationManager {
 
         // Aplicar tag se especificada
         if (button.tag) {
-          await this.applyTag(contactId, button.tag);
+          await this.applyTag(contactId, button.tag, accountId);
           // Adicionar label: tag - texto do botão
-          await addLabelsToContact(contactId, [`${button.tag} - ${button.text}`]);
+          await addLabelsToContact(contactId, [`${button.tag} - ${button.text}`], accountId);
         }
 
         // Aplicar atribuições do botão
         console.log(`🔍 Debug - conversation.conversation_id: ${conversation.conversation_id}, conversation.data.conversation_id: ${conversation.data?.conversation_id}, usando: ${conversationId}`);
-        await this.processButtonActions(button, conversationId, contactId);
+        await this.processButtonActions(button, conversationId, contactId, accountId);
 
         // Mover para próximo bloco
         if (button.next_block === 'finalizar') {
@@ -1583,7 +1591,7 @@ class ConversationManager {
             }
             
             // Aplicar ações do próximo bloco
-            await this.processBlockActions(nextBlock, conversationId, contactId);
+            await this.processBlockActions(nextBlock, conversationId, contactId, accountId);
             
             // Atualizar o campo data com o nome
             await pool.query(
@@ -1602,20 +1610,20 @@ class ConversationManager {
         await this.saveInteraction(conversation.id, contactId, conversation.current_block, userResponse, currentBlock.message, []);
         // Aplicar tag se houver
         if (currentBlock.tag) {
-          await this.applyTag(contactId, currentBlock.tag);
+          await this.applyTag(contactId, currentBlock.tag, accountId);
           // Adicionar label: tag - resposta do usuário
-          await addLabelsToContact(contactId, [`${currentBlock.tag} - ${userResponse}`]);
+          await addLabelsToContact(contactId, [`${currentBlock.tag} - ${userResponse}`], accountId);
         }
         
         // Aplicar ações do bloco atual
-        await this.processBlockActions(currentBlock, conversationId, contactId);
+        await this.processBlockActions(currentBlock, conversationId, contactId, accountId);
         
         // Avançar para o next_block se existir
         if (currentBlock.next_block) {
           const nextBlock = workflow.blocks[currentBlock.next_block];
           if (nextBlock) {
             // Aplicar ações do próximo bloco
-            await this.processBlockActions(nextBlock, conversationId, contactId);
+            await this.processBlockActions(nextBlock, conversationId, contactId, accountId);
             
             // Atualizar o campo data com o nome
             await pool.query(
@@ -1658,14 +1666,21 @@ class ConversationManager {
     if (typeof data === 'string') {
       data = JSON.parse(data);
     }
-    console.log('Processando mensagem:', message, 'com data:', data);
-    return message.replace(/\{\{(\w+)\}\}/g, (match, key) => {
-      return data[key] || match;
+    console.log('🔧 Processando mensagem:', message);
+    console.log('🔧 Dados disponíveis:', JSON.stringify(data, null, 2));
+    
+    const processedMessage = message.replace(/\{\{(\w+)\}\}/g, (match, key) => {
+      const value = data[key];
+      console.log(`🔧 Substituindo ${match} por ${value || 'NÃO ENCONTRADO'}`);
+      return value || match;
     });
+    
+    console.log('🔧 Mensagem processada:', processedMessage);
+    return processedMessage;
   }
 
   // Aplicar tag ao contato
-  async applyTag(contactId, tag) {
+  async applyTag(contactId, tag, accountId = CHATWOOT_ACCOUNT_ID) {
     try {
       console.log(`🏷️ Aplicando tag "${tag}" ao contactId: ${contactId}`);
       
@@ -1676,7 +1691,7 @@ class ConversationManager {
       let internalId = contactId;
       if (typeof contactId === 'string' && (contactId.startsWith('+') || contactId.length > 8)) {
         console.log(`🔍 ContactId parece ser telefone, buscando ID interno...`);
-        const foundId = await getContactIdByPhone(contactId);
+        const foundId = await getContactIdByPhone(contactId, accountId);
         if (foundId) {
           internalId = foundId;
           console.log(`🔄 Convertido telefone ${contactId} para ID interno: ${internalId}`);
@@ -1693,7 +1708,7 @@ class ConversationManager {
       }
       
       // Primeiro, obter labels existentes
-      const existingLabelsResponse = await axios.get(`${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/contacts/${internalId}/labels`, {
+      const existingLabelsResponse = await axios.get(`${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/contacts/${internalId}/labels`, {
         headers: {
           'api_access_token': CHATWOOT_API_TOKEN
         }
@@ -1705,7 +1720,7 @@ class ConversationManager {
       if (!existingLabels.includes(tag)) {
         const updatedLabels = [...existingLabels, tag];
         
-        await axios.post(`${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/contacts/${internalId}/labels`, {
+        await axios.post(`${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/contacts/${internalId}/labels`, {
           labels: updatedLabels
         }, {
           headers: {
@@ -1731,14 +1746,14 @@ class ConversationManager {
   }
 
   // Processar ações do botão (atribuições, etiquetas, etc.)
-  async processButtonActions(button, conversationId, contactId) {
+  async processButtonActions(button, conversationId, contactId, accountId = CHATWOOT_ACCOUNT_ID) {
     try {
       console.log(`🔧 Processando ações do botão "${button.text}" - ConversationId: ${conversationId}, ContactId: ${contactId}`);
       
       // Atribuir agente se especificado
       if (button.assign_agent) {
         console.log(`🔧 Botão solicita atribuição de agente: ${button.assign_agent}`);
-        await assignConversationToAgent(conversationId, button.assign_agent);
+        await assignConversationToAgent(conversationId, button.assign_agent, accountId);
       }
 
       // Atribuir time se especificado
@@ -1750,22 +1765,22 @@ class ConversationManager {
           const options = {
             strategy: button.assignment_strategy || 'round_robin' // 'round_robin', 'least_busy', 'random'
           };
-          await assignConversationToTeamMember(conversationId, button.assign_team, options);
+          await assignConversationToTeamMember(conversationId, button.assign_team, options, accountId);
         } else {
-          await assignConversationToTeam(conversationId, button.assign_team);
+          await assignConversationToTeam(conversationId, button.assign_team, accountId);
         }
       }
 
       // Adicionar etiquetas se especificadas
       if (button.assign_labels && Array.isArray(button.assign_labels)) {
         console.log(`🔧 Botão solicita etiquetas na conversa: [${button.assign_labels.join(', ')}]`);
-        await addLabelsToConversation(conversationId, button.assign_labels);
+        await addLabelsToConversation(conversationId, button.assign_labels, accountId);
       }
 
       // Adicionar etiquetas ao contato se especificadas
       if (button.contact_labels && Array.isArray(button.contact_labels)) {
         console.log(`🔧 Botão solicita etiquetas no contato: [${button.contact_labels.join(', ')}]`);
-        await addLabelsToContact(contactId, button.contact_labels);
+        await addLabelsToContact(contactId, button.contact_labels, accountId);
       }
 
       // Pausar bot se solicitado no botão
@@ -1779,14 +1794,14 @@ class ConversationManager {
   }
 
   // Processar ações do bloco (atribuições, etiquetas, etc.)
-  async processBlockActions(block, conversationId, contactId) {
+  async processBlockActions(block, conversationId, contactId, accountId = CHATWOOT_ACCOUNT_ID) {
     try {
       console.log(`🔧 Processando ações do bloco "${block.name || block.id}" - ConversationId: ${conversationId}, ContactId: ${contactId}`);
       
       // Atribuir agente se especificado
       if (block.assign_agent) {
         console.log(`🔧 Bloco solicita atribuição de agente: ${block.assign_agent}`);
-        await assignConversationToAgent(conversationId, block.assign_agent);
+        await assignConversationToAgent(conversationId, block.assign_agent, accountId);
       }
 
       // Atribuir time se especificado
@@ -1798,22 +1813,22 @@ class ConversationManager {
           const options = {
             strategy: block.assignment_strategy || 'round_robin' // 'round_robin', 'least_busy', 'random'
           };
-          await assignConversationToTeamMember(conversationId, block.assign_team, options);
+          await assignConversationToTeamMember(conversationId, block.assign_team, options, accountId);
         } else {
-          await assignConversationToTeam(conversationId, block.assign_team);
+          await assignConversationToTeam(conversationId, block.assign_team, accountId);
         }
       }
 
       // Adicionar etiquetas se especificadas
       if (block.assign_labels && Array.isArray(block.assign_labels)) {
         console.log(`🔧 Bloco solicita etiquetas na conversa: [${block.assign_labels.join(', ')}]`);
-        await addLabelsToConversation(conversationId, block.assign_labels);
+        await addLabelsToConversation(conversationId, block.assign_labels, accountId);
       }
 
       // Adicionar etiquetas ao contato se especificadas
       if (block.contact_labels && Array.isArray(block.contact_labels)) {
         console.log(`🔧 Bloco solicita etiquetas no contato: [${block.contact_labels.join(', ')}]`);
-        await addLabelsToContact(contactId, block.contact_labels);
+        await addLabelsToContact(contactId, block.contact_labels, accountId);
       }
 
       // Pausar bot se solicitado no bloco
@@ -2173,9 +2188,13 @@ async function processChatwootConversation(conversation, accountId = CHATWOOT_AC
       // Marcar mensagem como processada
       await markMessageAsProcessed(message.id, contactId);
       
-      // Processar apenas mensagens do usuário (não do bot)
-      if (message.message_type === 0 && message.content) {  // 0 = incoming, 1 = outgoing
-        await processUserMessage(contactId, conversationId, message.content, inboxId, accountId);
+      // Processar mensagens do usuário (incoming) e comandos especiais de agentes (outgoing)
+      if (message.content) {
+        if (message.message_type === 0) {  // 0 = incoming (usuário)
+          await processUserMessage(contactId, conversationId, message.content, inboxId, accountId);
+        } else if (message.message_type === 1 && message.content.trim().startsWith('!')) {  // 1 = outgoing (agente) com comando
+          await processAgentCommand(contactId, conversationId, message.content, inboxId, accountId, message.user_id);
+        }
       }
     }
   } catch (error) {
@@ -2226,6 +2245,107 @@ async function markMessageAsProcessed(messageId, contactId) {
   }
 }
 
+// Processar comando de agente
+async function processAgentCommand(contactId, conversationId, agentMessage, inboxId, accountId = CHATWOOT_ACCOUNT_ID, agentId = null) {
+  try {
+    console.log(`👤 Processando comando de agente ${agentId} (Inbox: ${inboxId}): ${agentMessage}`);
+    
+    const command = agentMessage.trim().toLowerCase();
+    
+    // ===== COMANDOS DISPONÍVEIS PARA AGENTES =====
+    
+    // Reset do fluxo
+    if (command === '!reset') {
+      console.log(`🔄 Reset solicitado por agente ${agentId}`);
+      await pool.query('DELETE FROM workflow_conversations WHERE contact_id = $1', [contactId]);
+      // Remover todos os labels do contato
+      await removeAllLabelsFromContact(contactId, accountId);
+      // Remover todos os labels da conversa
+      await removeAllLabelsFromConversation(conversationId, accountId);
+      // Reativar o bot após reset
+      await reactivateBotForConversation(conversationId, contactId, `agent_${agentId}_reset`);
+      await sendChatwootMessage(conversationId, '🔄 **Comando de Agente Executado**\n\nFluxo reiniciado com sucesso e todos os labels removidos (contato e conversa). O bot foi reativado e está pronto para uma nova conversa.', [], null, accountId);
+      return;
+    }
+    
+    // Reativar bot
+    if (command === '!activebot') {
+      console.log(`▶️ Comando de reativação do bot solicitado por agente ${agentId}`);
+      const success = await reactivateBotForConversation(conversationId, contactId, `agent_${agentId}`);
+      if (success) {
+        await sendChatwootMessage(conversationId, '🔄 **Comando de Agente Executado**\n\n▶️ Bot reativado com sucesso! O bot voltará a responder normalmente nesta conversa.', [], null, accountId);
+      } else {
+        await sendChatwootMessage(conversationId, '❌ Erro ao reativar bot. Tente novamente.', [], null, accountId);
+      }
+      return;
+    }
+    
+    // Pausar bot
+    if (command === '!pausebot') {
+      console.log(`⏸️ Comando de pausa do bot solicitado por agente ${agentId}`);
+      const success = await pauseBotForConversation(conversationId, contactId, 'manual_pause', `agent_${agentId}`);
+      if (success) {
+        await sendChatwootMessage(conversationId, '🔄 **Comando de Agente Executado**\n\n⏸️ Bot pausado com sucesso! O bot não responderá mais nesta conversa até ser reativado.', [], null, accountId);
+      } else {
+        await sendChatwootMessage(conversationId, '❌ Erro ao pausar bot. Tente novamente.', [], null, accountId);
+      }
+      return;
+    }
+    
+    // Status do bot
+    if (command === '!botstatus') {
+      console.log(`🔍 Status do bot solicitado por agente ${agentId}`);
+      try {
+        const botStatus = await getBotConversationStatus(conversationId, contactId);
+        const status = botStatus.bot_active ? '✅ Ativo' : `❌ Pausado (${botStatus.paused_reason})`;
+        const agent = botStatus.has_human_agent ? `👤 Agente: ${botStatus.agent_id}` : '🤖 Sem agente humano';
+        const message = `🔄 **Comando de Agente Executado**\n\n🤖 **Status do Bot**\n${status}\n${agent}\n\n**Comandos disponíveis para agentes:**\n• !pausebot - Pausar bot\n• !activebot - Reativar bot\n• !reset - Reiniciar fluxo\n• !workflows - Listar workflows\n• !reload - Recarregar workflows`;
+        await sendChatwootMessage(conversationId, message, [], null, accountId);
+      } catch (error) {
+        console.error('❌ Erro ao obter status do bot:', error);
+        await sendChatwootMessage(conversationId, '❌ Erro ao obter status do bot.', [], null, accountId);
+      }
+      return;
+    }
+    
+    // Recarregar workflows
+    if (command === '!reload') {
+      console.log(`🔄 Reload de workflows solicitado por agente ${agentId}`);
+      try {
+        await conversationManager.loadWorkflowsFromDatabase();
+        const totalWorkflows = conversationManager.workflows.size;
+        await sendChatwootMessage(conversationId, `🔄 **Comando de Agente Executado**\n\n✅ Workflows recarregados com sucesso! Total de workflows no cache: ${totalWorkflows}`, [], null, accountId);
+      } catch (error) {
+        console.error('❌ Erro ao recarregar workflows:', error);
+        await sendChatwootMessage(conversationId, '❌ Erro ao recarregar workflows. Verifique os logs do sistema.', [], null, accountId);
+      }
+      return;
+    }
+    
+    // Listar workflows
+    if (command === '!workflows') {
+      console.log(`🔍 Lista de workflows solicitada por agente ${agentId}`);
+      try {
+        const workflowNames = Array.from(conversationManager.workflows.keys());
+        const message = `🔄 **Comando de Agente Executado**\n\n📋 Workflows disponíveis (${workflowNames.length}):\n${workflowNames.map(name => `• ${name}`).join('\n')}`;
+        await sendChatwootMessage(conversationId, message, [], null, accountId);
+      } catch (error) {
+        console.error('❌ Erro ao listar workflows:', error);
+        await sendChatwootMessage(conversationId, '❌ Erro ao listar workflows. Verifique os logs do sistema.', [], null, accountId);
+      }
+      return;
+    }
+    
+    // Comando não reconhecido
+    console.log(`⚠️ Comando não reconhecido por agente ${agentId}: ${command}`);
+    await sendChatwootMessage(conversationId, `🔄 **Comando de Agente**\n\n❌ Comando não reconhecido: ${command}\n\n**Comandos disponíveis para agentes:**\n• !pausebot - Pausar bot\n• !activebot - Reativar bot\n• !reset - Reiniciar fluxo\n• !botstatus - Status do bot\n• !workflows - Listar workflows\n• !reload - Recarregar workflows`, [], null, accountId);
+    
+  } catch (error) {
+    console.error(`❌ Erro ao processar comando de agente ${agentId}:`, error);
+    await sendChatwootMessage(conversationId, '❌ Erro ao processar comando. Verifique os logs do sistema.', [], null, accountId);
+  }
+}
+
 // Processar mensagem do usuário
 async function processUserMessage(contactId, conversationId, userMessage, inboxId, accountId = CHATWOOT_ACCOUNT_ID) {
   try {
@@ -2240,7 +2360,7 @@ async function processUserMessage(contactId, conversationId, userMessage, inboxI
       // Remover todos os labels do contato
       await removeAllLabelsFromContact(contactId, accountId);
       // Remover todos os labels da conversa
-      await removeAllLabelsFromConversation(conversationId);
+      await removeAllLabelsFromConversation(conversationId, accountId);
       // Reativar o bot após reset
       await reactivateBotForConversation(conversationId, contactId, 'user_reset');
       await sendChatwootMessage(conversationId, 'Fluxo reiniciado com sucesso e todos os labels removidos (contato e conversa). Agora você pode iniciar a conversa novamente. Tente dar um "oi".', [], null, accountId);
@@ -2317,11 +2437,22 @@ async function processUserMessage(contactId, conversationId, userMessage, inboxI
     
     // ===== VERIFICAÇÃO DE STATUS DO BOT (apenas para mensagens normais) =====
     // NOVA VERIFICAÇÃO: Verificar se o bot deve estar ativo para esta conversa
-    const botShouldBeActive = await isBotActiveForConversation(conversationId, contactId);
+    const botShouldBeActive = await isBotActiveForConversation(conversationId, contactId, accountId);
     
     if (!botShouldBeActive) {
       console.log(`🚫 Bot desativado para conversa ${conversationId}, ignorando mensagem: ${userMessage}`);
       return;
+    }
+    
+    // Atualizar timestamp da última interação
+    try {
+      await pool.query(`
+        UPDATE bot_conversation_status 
+        SET last_interaction_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP 
+        WHERE conversation_id = $1
+      `, [conversationId]);
+    } catch (error) {
+      console.log(`⚠️ Erro ao atualizar last_interaction_at para conversa ${conversationId}:`, error.message);
     }
     
     // Verificar se é uma conversa existente
@@ -2329,7 +2460,7 @@ async function processUserMessage(contactId, conversationId, userMessage, inboxI
     
     if (!conversation) {
       // Iniciar nova conversa se for uma mensagem de trigger
-      if (await isTriggerMessage(userMessage, inboxId)) {
+      if (await isTriggerMessage(userMessage, inboxId, accountId)) {
         // Buscar o fluxo configurado para esta caixa de entrada específica
         const inboxWorkflow = await inboxWorkflowManager.getInboxWorkflow(accountId, inboxId);
         
@@ -2349,8 +2480,8 @@ async function processUserMessage(contactId, conversationId, userMessage, inboxI
           try {
           conversation = await conversationManager.startConversation(contactId, inboxWorkflow.workflow_name, {
             conversation_id: conversationId,
-            nome: await getContactName(contactId)
-          });
+            nome: await getContactName(contactId, conversation, accountId)
+          }, accountId);
             
             if (!conversation) {
               console.error(`❌ Falha ao criar conversa para contato ${contactId}`);
@@ -2372,13 +2503,14 @@ async function processUserMessage(contactId, conversationId, userMessage, inboxI
           }
           
           // Aplicar ações do primeiro bloco
-          await conversationManager.processBlockActions(firstBlock, conversationId, contactId);
+          await conversationManager.processBlockActions(firstBlock, conversationId, contactId, accountId);
           
           await sendChatwootMessage(
             conversationId,
             conversationManager.processMessage(firstBlock.message, conversation.data),
             firstBlock.buttons,
-            firstBlock.media
+            firstBlock.media,
+            accountId
           );
         } else {
           console.log(`⚠️ Nenhum fluxo configurado para a caixa de entrada ${inboxId}, usando fluxo padrão`);
@@ -2395,8 +2527,8 @@ async function processUserMessage(contactId, conversationId, userMessage, inboxI
           try {
           conversation = await conversationManager.startConversation(contactId, 'wizard_bh_buritis', {
             conversation_id: conversationId,
-            nome: await getContactName(contactId)
-          });
+            nome: await getContactName(contactId, conversation, accountId)
+          }, accountId);
             
             if (!conversation) {
               console.error(`❌ Falha ao criar conversa padrão para contato ${contactId}`);
@@ -2416,19 +2548,20 @@ async function processUserMessage(contactId, conversationId, userMessage, inboxI
           }
           
           // Aplicar ações do primeiro bloco
-          await conversationManager.processBlockActions(firstBlock, conversationId, contactId);
+          await conversationManager.processBlockActions(firstBlock, conversationId, contactId, accountId);
           
           await sendChatwootMessage(
             conversationId,
             conversationManager.processMessage(firstBlock.message, conversation.data),
             firstBlock.buttons,
-            firstBlock.media
+            firstBlock.media,
+            accountId
           );
         }
       }
     } else {
       // Processar resposta na conversa existente
-      const result = await conversationManager.processResponse(contactId, userMessage);
+      const result = await conversationManager.processResponse(contactId, userMessage, accountId);
       
       if (result && result.type) {
       if (result.type === 'next_block') {
@@ -2566,6 +2699,8 @@ async function sendChatwootMessage(conversationId, message, buttons = [], mediaC
         }))
       };
     }
+
+    console.log(`${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/conversations/${conversationId}/messages`);
     
     await axios.post(`${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/conversations/${conversationId}/messages`, payload, {
       headers: {
@@ -2579,7 +2714,7 @@ async function sendChatwootMessage(conversationId, message, buttons = [], mediaC
   } catch (error) {
     console.error('❌ Erro ao enviar mensagem para Chatwoot:', error);
     if (error.response) {
-      console.error('   Response data:', error.response.data);
+      console.error('   Response data:', JSON.stringify(error.response.data, null, 2));
       console.error('   Status:', error.response.status);
     }
   }
@@ -2619,7 +2754,7 @@ async function sendYouTubeVideoWithThumbnail(conversationId, message, buttons, m
         message_type: 'outgoing'
       };
       
-      await axios.post(`${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/conversations/${conversationId}/messages`, textPayload, {
+      await axios.post(`${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/conversations/${conversationId}/messages`, textPayload, {
         headers: {
           'api_access_token': CHATWOOT_API_TOKEN,
           'Content-Type': 'application/json'
@@ -2706,7 +2841,7 @@ async function sendYouTubeVideoWithThumbnail(conversationId, message, buttons, m
         message_type: 'outgoing'
       };
       
-      await axios.post(`${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/conversations/${conversationId}/messages`, buttonPayload, {
+      await axios.post(`${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/conversations/${conversationId}/messages`, buttonPayload, {
         headers: {
           'api_access_token': CHATWOOT_API_TOKEN,
           'Content-Type': 'application/json'
@@ -2744,7 +2879,7 @@ async function sendYouTubeVideoWithThumbnail(conversationId, message, buttons, m
       };
     }
     
-    await axios.post(`${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/conversations/${conversationId}/messages`, fallbackPayload, {
+    await axios.post(`${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/conversations/${conversationId}/messages`, fallbackPayload, {
       headers: {
         'api_access_token': CHATWOOT_API_TOKEN,
         'Content-Type': 'application/json'
@@ -2931,7 +3066,7 @@ async function sendChatwootMessageWithAttachment(conversationId, message, button
     });
     
     const response = await axios.post(
-      `${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/conversations/${conversationId}/messages`,
+      `${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/conversations/${conversationId}/messages`,
       formData,
       {
         headers
@@ -3080,7 +3215,7 @@ async function sendChatwootMessageWithAttachmentUrl(conversationId, message, but
           };
           
           console.log(`🔄 Tentando envio via arquivo local como fallback...`);
-          return await sendChatwootMessageWithAttachment(conversationId, message, buttons, attachment);
+          return await sendChatwootMessageWithAttachment(conversationId, message, buttons, attachment, accountId);
         }
       }
     }
@@ -3090,7 +3225,7 @@ async function sendChatwootMessageWithAttachmentUrl(conversationId, message, but
 }
 
 // Verificar se é mensagem de trigger baseada no workflow da caixa de entrada
-async function isTriggerMessage(message, inboxId = null) {
+async function isTriggerMessage(message, inboxId = null, accountId = CHATWOOT_ACCOUNT_ID) {
   try {
     // Se não temos inbox específico, usar triggers padrão
     if (!inboxId) {
@@ -3101,7 +3236,7 @@ async function isTriggerMessage(message, inboxId = null) {
     }
     
     // Buscar workflow específico da caixa de entrada
-    const inboxWorkflow = await inboxWorkflowManager.getInboxWorkflow(CHATWOOT_ACCOUNT_ID, inboxId);
+    const inboxWorkflow = await inboxWorkflowManager.getInboxWorkflow(accountId, inboxId);
     
     if (inboxWorkflow && inboxWorkflow.workflow_config && inboxWorkflow.workflow_config.triggers) {
       const triggers = inboxWorkflow.workflow_config.triggers;
@@ -3142,16 +3277,202 @@ async function isTriggerMessage(message, inboxId = null) {
 }
 
 // Buscar contato pelo telefone para obter o ID interno
-async function getContactIdByPhone(phoneNumber) {
+/**
+ * Busca o ID de um contato pelo número de telefone usando o endpoint de busca otimizado do Chatwoot
+ * 
+ * Melhorias implementadas:
+ * - Usa o endpoint específico /contacts/search para busca mais eficiente
+ * - Implementa fallback para o endpoint tradicional caso o de busca não esteja disponível
+ * - Ordenação por última atividade para priorizar contatos mais recentes
+ * - Melhor tratamento de diferentes formatos de telefone
+ * - Logs mais detalhados para debugging
+ * - Correspondência mais robusta de números de telefone
+ * 
+ * @param {string} phoneNumber - Número de telefone para buscar
+ * @param {number|null} accountId - ID da conta específica (opcional)
+ * @returns {number|null} - ID do contato encontrado ou null
+ */
+async function getContactIdByPhone(phoneNumber, accountId = null) {
   try {
-    console.log(`🔍 Buscando contato por telefone: ${phoneNumber}`);
+    console.log(`🔍 Buscando contato por telefone: ${phoneNumber}${accountId ? ` na conta ${accountId}` : ''}`);
     
-    // Tentar diferentes formatos do número
+    // Normalizar o número de telefone para busca
+    const normalizedPhone = phoneNumber.replace(/\D/g, '');
+    console.log(`📱 Número normalizado para busca: ${normalizedPhone}`);
+    
+    // Função auxiliar para buscar em uma conta específica usando o endpoint de busca
+    async function searchInAccount(account, searchPhone) {
+      try {
+        console.log(`🔍 Buscando na conta: ${account.name} (ID: ${account.id})`);
+        
+        // Usar o endpoint específico de busca de contatos
+        const response = await axios.get(
+          `${CHATWOOT_BASE_URL}/api/v1/accounts/${account.id}/contacts/search`,
+          {
+            headers: { 'api_access_token': CHATWOOT_API_TOKEN },
+            params: { 
+              q: searchPhone,
+              sort: '-last_activity_at' // Ordenar por última atividade (mais recente primeiro)
+            }
+          }
+        );
+        
+        if (response.data.payload && response.data.payload.length > 0) {
+          console.log(`📊 Encontrados ${response.data.payload.length} contatos na busca`);
+          
+          // Procurar contato que tenha o telefone correspondente
+          const contact = response.data.payload.find(c => {
+            if (!c.phone_number) return false;
+            
+            // Comparar removendo caracteres especiais
+            const contactPhone = c.phone_number.replace(/\D/g, '');
+            const searchPhoneClean = searchPhone.replace(/\D/g, '');
+            
+            // Verificar correspondência exata ou parcial
+            const isExactMatch = contactPhone === searchPhoneClean;
+            const isEndsWith = contactPhone.endsWith(searchPhoneClean) || searchPhoneClean.endsWith(contactPhone);
+            const isIncludes = contactPhone.includes(searchPhoneClean) || searchPhoneClean.includes(contactPhone);
+            
+            if (isExactMatch || isEndsWith || isIncludes) {
+              console.log(`🔍 Correspondência encontrada: ${contactPhone} vs ${searchPhoneClean}`);
+              return true;
+            }
+            
+            return false;
+          });
+          
+          if (contact && contact.id) {
+            console.log(`✅ Contato encontrado na conta ${account.name}! ID: ${contact.id}, Telefone: ${contact.phone_number}, Nome: ${contact.name || 'N/A'}`);
+            return contact.id;
+          }
+        }
+        
+        console.log(`⚠️ Nenhum contato encontrado na conta ${account.name} para: ${searchPhone}`);
+        return null;
+        
+      } catch (searchError) {
+        if (searchError.response?.status === 404) {
+          console.log(`⚠️ Endpoint de busca não disponível na conta ${account.name}, tentando endpoint tradicional...`);
+          // Fallback para o endpoint tradicional
+          return await searchInAccountFallback(account, searchPhone);
+        } else {
+          console.log(`⚠️ Erro ao buscar na conta ${account.name}:`, searchError.response?.status || searchError.message);
+        }
+        return null;
+      }
+    }
+    
+    // Função de fallback usando o endpoint tradicional
+    async function searchInAccountFallback(account, searchPhone) {
+      try {
+        console.log(`🔄 Usando fallback para busca na conta: ${account.name}`);
+        
+        const response = await axios.get(
+          `${CHATWOOT_BASE_URL}/api/v1/accounts/${account.id}/contacts`,
+          {
+            headers: { 'api_access_token': CHATWOOT_API_TOKEN },
+            params: { q: searchPhone }
+          }
+        );
+        
+        if (response.data.payload && response.data.payload.length > 0) {
+          console.log(`📊 Encontrados ${response.data.payload.length} contatos no fallback`);
+          
+          // Procurar contato que tenha o telefone correspondente
+          const contact = response.data.payload.find(c => {
+            if (!c.phone_number) return false;
+            
+            // Comparar removendo caracteres especiais
+            const contactPhone = c.phone_number.replace(/\D/g, '');
+            const searchPhoneClean = searchPhone.replace(/\D/g, '');
+            
+            // Verificar correspondência exata ou parcial
+            const isExactMatch = contactPhone === searchPhoneClean;
+            const isEndsWith = contactPhone.endsWith(searchPhoneClean) || searchPhoneClean.endsWith(contactPhone);
+            const isIncludes = contactPhone.includes(searchPhoneClean) || searchPhoneClean.includes(contactPhone);
+            
+            if (isExactMatch || isEndsWith || isIncludes) {
+              console.log(`🔍 Correspondência encontrada (fallback): ${contactPhone} vs ${searchPhoneClean}`);
+              return true;
+            }
+            
+            return false;
+          });
+          
+          if (contact && contact.id) {
+            console.log(`✅ Contato encontrado via fallback na conta ${account.name}! ID: ${contact.id}, Telefone: ${contact.phone_number}, Nome: ${contact.name || 'N/A'}`);
+            return contact.id;
+          }
+        }
+        
+        console.log(`⚠️ Nenhum contato encontrado via fallback na conta ${account.name} para: ${searchPhone}`);
+        return null;
+        
+      } catch (fallbackError) {
+        console.log(`⚠️ Erro no fallback para conta ${account.name}:`, fallbackError.response?.status || fallbackError.message);
+        return null;
+      }
+    }
+    
+    // Se accountId foi fornecido, buscar apenas naquela conta
+    if (accountId) {
+      const account = (await getAllAvailableAccounts()).find(a => a.id === accountId);
+      if (!account) {
+        console.log(`❌ Conta ${accountId} não encontrada ou não disponível`);
+        return null;
+      }
+      
+      // Tentar diferentes formatos do número para busca
+      const phoneVariations = [
+        normalizedPhone,
+        phoneNumber, // formato original
+        phoneNumber.startsWith('+') ? phoneNumber.substring(1) : '+' + phoneNumber,
+        phoneNumber.replace(/^\+55/, ''), // remover código do Brasil
+        phoneNumber.replace(/^\+/, ''), // remover apenas o +
+      ];
+      
+      // Remover duplicatas
+      const uniquePhones = [...new Set(phoneVariations)];
+      console.log(`📱 Tentando formatos de telefone:`, uniquePhones);
+      
+      for (const phone of uniquePhones) {
+        const result = await searchInAccount(account, phone);
+        if (result) return result;
+      }
+      
+      // Se não encontrou com busca, tentar buscar diretamente por telefone como ID
+      console.log(`🔍 Tentando busca direta por telefone como ID na conta ${account.name}...`);
+      try {
+        const directResponse = await axios.get(
+          `${CHATWOOT_BASE_URL}/api/v1/accounts/${account.id}/contacts/${phoneNumber}`,
+          {
+            headers: { 'api_access_token': CHATWOOT_API_TOKEN }
+          }
+        );
+        
+        if (directResponse.data.payload && directResponse.data.payload.id) {
+          const contact = directResponse.data.payload;
+          console.log(`✅ Contato encontrado diretamente! ID: ${contact.id}, Telefone: ${contact.phone_number}`);
+          return contact.id;
+        }
+      } catch (directError) {
+        console.log(`⚠️ Busca direta falhou:`, directError.response?.status);
+      }
+      
+      console.log(`❌ Contato não encontrado na conta ${account.name} para nenhum formato de: ${phoneNumber}`);
+      return null;
+    }
+    
+    // Se não foi fornecido accountId, buscar em todas as contas
+    const accounts = await getAllAvailableAccounts();
+    console.log(`🏢 Buscando em ${accounts.length} conta(s)`);
+    
+    // Tentar diferentes formatos do número para busca
     const phoneVariations = [
-      phoneNumber,
-      phoneNumber.replace(/\D/g, ''), // apenas números
+      normalizedPhone,
+      phoneNumber, // formato original
       phoneNumber.startsWith('+') ? phoneNumber.substring(1) : '+' + phoneNumber,
-      phoneNumber.replace(/^\+55/, ''), // remover código do país
+      phoneNumber.replace(/^\+55/, ''), // remover código do Brasil
       phoneNumber.replace(/^\+/, ''), // remover apenas o +
     ];
     
@@ -3160,41 +3481,13 @@ async function getContactIdByPhone(phoneNumber) {
     console.log(`📱 Tentando formatos de telefone:`, uniquePhones);
     
     for (const phone of uniquePhones) {
-      try {
-        const response = await axios.get(
-          `${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/contacts`,
-          {
-            headers: { 'api_access_token': CHATWOOT_API_TOKEN },
-            params: { q: phone }
-          }
-        );
-        
-        if (response.data.payload && response.data.payload.length > 0) {
-          // Procurar contato que tenha o telefone correspondente
-          const contact = response.data.payload.find(c => {
-            if (!c.phone_number) return false;
-            
-            // Comparar removendo caracteres especiais
-            const contactPhone = c.phone_number.replace(/\D/g, '');
-            const searchPhone = phone.replace(/\D/g, '');
-            
-            return contactPhone === searchPhone || 
-                   contactPhone.endsWith(searchPhone) || 
-                   searchPhone.endsWith(contactPhone);
-          });
-          
-          if (contact && contact.id) {
-            console.log(`✅ Contato encontrado! ID: ${contact.id}, Telefone: ${contact.phone_number}`);
-            return contact.id;
-          }
-        }
-      } catch (searchError) {
-        console.log(`⚠️ Erro ao buscar com formato ${phone}:`, searchError.response?.status);
-        continue;
+      for (const account of accounts) {
+        const result = await searchInAccount(account, phone);
+        if (result) return result;
       }
     }
     
-    console.log(`❌ Contato não encontrado para nenhum formato de: ${phoneNumber}`);
+    console.log(`❌ Contato não encontrado para nenhum formato de: ${phoneNumber} em nenhuma conta`);
     return null;
   } catch (error) {
     console.error('❌ Erro geral ao buscar ID do contato pelo telefone:', error.response?.data || error.message);
@@ -3202,41 +3495,120 @@ async function getContactIdByPhone(phoneNumber) {
   }
 }
 
-// Obter nome do contato
-async function getContactName(contactId) {
+/**
+ * Busca o nome de um contato usando diferentes estratégias
+ * 
+ * Melhorias implementadas:
+ * - Suporte ao parâmetro accountId para busca específica
+ * - Usa a função getContactIdByPhone melhorada para conversão de telefone
+ * - Busca prioritária na conta específica quando accountId é fornecido
+ * - Melhor validação de nomes vazios ou nulos
+ * - Logs mais detalhados para debugging
+ * 
+ * @param {string|number} contactId - ID do contato ou número de telefone
+ * @param {object|null} conversationData - Dados da conversa (opcional)
+ * @param {number|null} accountId - ID da conta específica (opcional)
+ * @returns {string} - Nome do contato ou 'Cliente' como fallback
+ */
+async function getContactName(contactId, conversationData = null, accountId = null) {
   try {
-    console.log(`👤 Buscando nome para contactId: ${contactId}`);
+    console.log(`👤 Buscando nome para contactId: ${contactId}${accountId ? ` na conta ${accountId}` : ''}`);
     
-    // Se contactId for um número de telefone, buscar o ID interno
+    // Se temos dados da conversa e há um nome, usar primeiro
+    if (conversationData && conversationData.meta && conversationData.meta.sender) {
+      const senderName = conversationData.meta.sender.name;
+      if (senderName && senderName.trim() !== '') {
+        console.log(`✅ Nome encontrado nos dados da conversa: ${senderName}`);
+        const firstName = senderName.split(' ')[0];
+        return firstName;
+      }
+    }
+    
+    // Se contactId for um número de telefone, buscar o ID interno usando a função melhorada
     let internalId = contactId;
     if (typeof contactId === 'string' && (contactId.startsWith('+') || contactId.length > 8)) {
       console.log(`🔍 ContactId parece ser telefone, buscando ID interno...`);
-      const foundId = await getContactIdByPhone(contactId);
+      const foundId = await getContactIdByPhone(contactId, accountId);
       if (foundId) {
         internalId = foundId;
         console.log(`🔄 Convertido telefone ${contactId} para ID interno: ${internalId}`);
       } else {
-        console.error(`❌ Não foi possível encontrar contato para telefone: ${contactId}`);
+        console.log(`⚠️ Contato não encontrado no Chatwoot para telefone: ${contactId}`);
+        // Se não encontrou o ID interno, tentar buscar o nome diretamente pelo telefone
+        console.log(`🔍 Tentando buscar nome diretamente pelo telefone...`);
+        const accounts = await getAllAvailableAccounts();
+        
+        for (const account of accounts) {
+          try {
+            const response = await axios.get(`${CHATWOOT_BASE_URL}/api/v1/accounts/${account.id}/contacts/${contactId}`, {
+              headers: {
+                'api_access_token': CHATWOOT_API_TOKEN
+              }
+            });
+            const fullName = response.data.payload.name;
+            if (fullName && fullName.trim() !== '') {
+              const firstName = fullName.split(' ')[0];
+              console.log(`✅ Nome encontrado diretamente na conta ${account.name}: ${firstName}`);
+              return firstName;
+            }
+          } catch (directError) {
+            console.log(`⚠️ Não foi possível buscar na conta ${account.name}`);
+            continue;
+          }
+        }
+        
+        console.log(`⚠️ Não foi possível buscar diretamente pelo telefone em nenhuma conta`);
         return 'Cliente';
       }
     }
     
-    // Validar se temos um ID válido
-    if (!internalId || internalId === contactId && typeof contactId === 'string' && contactId.startsWith('+')) {
-      console.error(`❌ ID de contato inválido: ${internalId}`);
-      return 'Cliente';
+    // Buscar o contato usando o ID interno (que pode ser o contactId original ou o ID encontrado)
+    const accounts = await getAllAvailableAccounts();
+    
+    // Se temos um accountId específico, buscar apenas nessa conta primeiro
+    if (accountId) {
+      const account = accounts.find(a => a.id === accountId);
+      if (account) {
+        try {
+          const response = await axios.get(`${CHATWOOT_BASE_URL}/api/v1/accounts/${account.id}/contacts/${internalId}`, {
+            headers: {
+              'api_access_token': CHATWOOT_API_TOKEN
+            }
+          });
+          const fullName = response.data.payload.name;
+          if (fullName && fullName.trim() !== '') {
+            const firstName = fullName.split(' ')[0];
+            console.log(`✅ Nome encontrado na conta específica ${account.name}: ${firstName}`);
+            return firstName;
+          }
+        } catch (error) {
+          console.log(`⚠️ Contato não encontrado na conta específica ${account.name}`);
+        }
+      }
     }
     
-    const response = await axios.get(`${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/contacts/${internalId}`, {
-      headers: {
-        'api_access_token': CHATWOOT_API_TOKEN
+    // Se não encontrou na conta específica ou não foi fornecida, buscar em todas as contas
+    for (const account of accounts) {
+      try {
+        const response = await axios.get(`${CHATWOOT_BASE_URL}/api/v1/accounts/${account.id}/contacts/${internalId}`, {
+          headers: {
+            'api_access_token': CHATWOOT_API_TOKEN
+          }
+        });
+        const fullName = response.data.payload.name;
+        if (fullName && fullName.trim() !== '') {
+          const firstName = fullName.split(' ')[0];
+          console.log(`✅ Nome encontrado na conta ${account.name}: ${firstName}`);
+          return firstName;
+        }
+      } catch (error) {
+        console.log(`⚠️ Contato não encontrado na conta ${account.name}`);
+        continue;
       }
-    });
-    console.log("Dados do contato:", response.data.payload);
-    const fullName = response.data.payload.name || 'Cliente';
-    const firstName = fullName.split(' ')[0];
-    console.log(`✅ Nome encontrado: ${firstName}`);
-    return firstName;
+    }
+    
+    console.log(`⚠️ Contato não encontrado em nenhuma conta`);
+    return 'Cliente';
   } catch (error) {
     console.error('❌ Erro ao obter nome do contato:', error.response?.data || error.message);
     
@@ -3253,7 +3625,7 @@ async function getContactName(contactId) {
 // ===== FUNÇÕES DE CONTROLE DE STATUS DO BOT =====
 
 // Verificar se o bot deve estar ativo para uma conversa
-async function isBotActiveForConversation(conversationId, contactId) {
+async function isBotActiveForConversation(conversationId, contactId, accountId = CHATWOOT_ACCOUNT_ID) {
   try {
     console.log(`🤖 Verificando status do bot para conversa ${conversationId}`);
     
@@ -3266,7 +3638,7 @@ async function isBotActiveForConversation(conversationId, contactId) {
     }
     
     // Verificar se há atendente humano ativo no Chatwoot
-    const hasHumanAgent = await checkHumanAgentActive(conversationId);
+    const hasHumanAgent = await checkHumanAgentActive(conversationId, accountId);
     
     if (hasHumanAgent) {
       console.log(`👤 Atendente humano detectado na conversa ${conversationId}, pausando bot automaticamente`);
@@ -3297,8 +3669,8 @@ async function getBotConversationStatus(conversationId, contactId) {
       console.log(`📝 Criando novo status de bot para conversa ${conversationId}`);
       result = await pool.query(`
         INSERT INTO bot_conversation_status 
-        (conversation_id, contact_id, bot_active, created_at, updated_at) 
-        VALUES ($1, $2, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) 
+        (conversation_id, contact_id, bot_active, last_interaction_at, created_at, updated_at) 
+        VALUES ($1, $2, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) 
         RETURNING *
       `, [conversationId, contactId]);
     }
@@ -3319,12 +3691,12 @@ async function getBotConversationStatus(conversationId, contactId) {
 }
 
 // Verificar se há atendente humano ativo no Chatwoot
-async function checkHumanAgentActive(conversationId) {
+async function checkHumanAgentActive(conversationId, accountId = CHATWOOT_ACCOUNT_ID) {
   try {
     console.log(`🔍 Verificando atendente humano para conversa ${conversationId}`);
     
     const response = await axios.get(
-      `${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/conversations/${conversationId}`,
+      `${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/conversations/${conversationId}`,
       {
         headers: { 'api_access_token': CHATWOOT_API_TOKEN }
       }
@@ -3340,7 +3712,7 @@ async function checkHumanAgentActive(conversationId) {
     const isHumanStatus = humanStatuses.includes(conversation.status);
     
     // Verificar se há mensagens recentes de agentes humanos
-    const hasRecentAgentActivity = await checkRecentAgentActivity(conversationId);
+    const hasRecentAgentActivity = await checkRecentAgentActivity(conversationId, accountId);
     
     const hasHumanAgent = hasAssignedAgent && isHumanStatus;
     
@@ -3351,17 +3723,17 @@ async function checkHumanAgentActive(conversationId) {
     
     return hasHumanAgent || hasRecentAgentActivity;
   } catch (error) {
-    console.error(`❌ Erro ao verificar atendente humano para conversa ${conversationId}:`, error.response?.status, error.response?.data);
+    console.error(`❌ Erro ao verificar atendente humano para conversa ${conversationId}:`, error.response?.status, JSON.stringify(error.response?.data));
     // Em caso de erro, assumir que não há atendente (permitir bot)
     return false;
   }
 }
 
 // Verificar atividade recente de agente humano
-async function checkRecentAgentActivity(conversationId) {
+async function checkRecentAgentActivity(conversationId, accountId = CHATWOOT_ACCOUNT_ID) {
   try {
     const response = await axios.get(
-      `${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/conversations/${conversationId}/messages`,
+      `${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/conversations/${conversationId}/messages`,
       {
         headers: { 'api_access_token': CHATWOOT_API_TOKEN },
         params: { page: 1, per_page: 5 }
@@ -3397,8 +3769,8 @@ async function pauseBotForConversation(conversationId, contactId, reason, paused
     
     await pool.query(`
       INSERT INTO bot_conversation_status 
-      (conversation_id, contact_id, bot_active, paused_reason, paused_by, paused_at, updated_at) 
-      VALUES ($1, $2, false, $3, $4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      (conversation_id, contact_id, bot_active, paused_reason, paused_by, paused_at, last_interaction_at, updated_at) 
+      VALUES ($1, $2, false, $3, $4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
       ON CONFLICT (conversation_id) 
       DO UPDATE SET 
         bot_active = false, 
@@ -3423,14 +3795,15 @@ async function reactivateBotForConversation(conversationId, contactId, reactivat
     
     await pool.query(`
       INSERT INTO bot_conversation_status 
-      (conversation_id, contact_id, bot_active, paused_reason, paused_by, reactivated_at, updated_at) 
-      VALUES ($1, $2, true, NULL, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      (conversation_id, contact_id, bot_active, paused_reason, paused_by, reactivated_at, last_interaction_at, updated_at) 
+      VALUES ($1, $2, true, NULL, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
       ON CONFLICT (conversation_id) 
       DO UPDATE SET 
         bot_active = true, 
         paused_reason = NULL, 
         paused_by = NULL, 
         reactivated_at = CURRENT_TIMESTAMP,
+        last_interaction_at = CURRENT_TIMESTAMP,
         updated_at = CURRENT_TIMESTAMP
     `, [conversationId, contactId]);
     
@@ -3475,8 +3848,22 @@ async function checkAndReactivateBotsAfter24Hours() {
       for (const row of result.rows) {
         const { conversation_id, contact_id, paused_reason, paused_at } = row;
         
+        // Buscar o accountId da conversa no banco de dados
+        let accountId = CHATWOOT_ACCOUNT_ID;
+        try {
+          const conversationResult = await pool.query(
+            'SELECT account_id FROM workflow_conversations WHERE conversation_id = $1',
+            [conversation_id]
+          );
+          if (conversationResult.rows.length > 0 && conversationResult.rows[0].account_id) {
+            accountId = conversationResult.rows[0].account_id;
+          }
+        } catch (err) {
+          console.log(`⚠️ Não foi possível obter accountId para conversa ${conversation_id}, usando padrão`);
+        }
+        
         // Verificar se ainda há agente humano ativo
-        const hasActiveAgent = await checkHumanAgentActive(conversation_id);
+        const hasActiveAgent = await checkHumanAgentActive(conversation_id, accountId);
         
         if (!hasActiveAgent) {
           console.log(`🔄 Reativando bot para conversa ${conversation_id} após 24h de inatividade (pausado em: ${paused_at})`);
@@ -3485,22 +3872,72 @@ async function checkAndReactivateBotsAfter24Hours() {
           await reactivateBotForConversation(conversation_id, contact_id, 'auto_24h_reactivation');
           
           // Enviar mensagem informativa opcional (pode comentar se não quiser)
-          try {
-            await sendChatwootMessage(conversation_id, 
-              '🤖 *Bot reativado automaticamente*\n\n' +
-              'Como não detectei atividade de atendimento humano nas últimas 24 horas, ' +
-              'reativei o assistente virtual para te ajudar.\n\n' +
-              'Se precisar falar com nossa equipe, é só dizer "atendimento humano" ou usar !pausebot para pausar o bot.'
-            );
-          } catch (msgError) {
-            console.log(`⚠️ Não foi possível enviar mensagem de reativação para conversa ${conversation_id}:`, msgError.message);
-          }
+          // try {
+          //   await sendChatwootMessage(conversation_id, 
+          //     '🤖 *Bot reativado automaticamente*\n\n' +
+          //     'Como não detectei atividade de atendimento humano nas últimas 24 horas, ' +
+          //     'reativei o assistente virtual para te ajudar.\n\n' +
+          //     'Se precisar falar com nossa equipe, é só dizer "atendimento humano" ou usar !pausebot para pausar o bot.'
+          //   );
+          // } catch (msgError) {
+          //   console.log(`⚠️ Não foi possível enviar mensagem de reativação para conversa ${conversation_id}:`, msgError.message);
+          // }
         } else {
           console.log(`👤 Conversa ${conversation_id} ainda tem agente ativo, mantendo bot pausado`);
         }
       }
     } else {
       console.log(`✅ Nenhuma conversa encontrada para reativação automática`);
+    }
+
+    // Verificar bots ativos há mais de 24 horas de inatividade para reinicialização silenciosa
+    console.log(`🕐 Verificando bots ativos há mais de 24 horas de inatividade para reinicialização automática...`);
+    
+    const inactiveBotsResult = await pool.query(`
+      SELECT conversation_id, contact_id, last_interaction_at
+      FROM bot_conversation_status 
+      WHERE bot_active = true 
+        AND last_interaction_at < NOW() - INTERVAL '24 hours'
+    `);
+    
+    if (inactiveBotsResult.rows.length > 0) {
+      console.log(`🔄 Encontrados ${inactiveBotsResult.rows.length} bots inativos há mais de 24 horas para reinicialização automática`);
+      
+      for (const row of inactiveBotsResult.rows) {
+        const { conversation_id, contact_id, last_interaction_at } = row;
+        
+        console.log(`🔄 Reinicializando bot para conversa ${conversation_id} após 24h de inatividade (última interação em: ${last_interaction_at})`);
+        
+        // Buscar o accountId da conversa no banco de dados
+        let accountId = CHATWOOT_ACCOUNT_ID;
+        try {
+          const conversationResult = await pool.query(
+            'SELECT account_id FROM workflow_conversations WHERE conversation_id = $1',
+            [conversation_id]
+          );
+          if (conversationResult.rows.length > 0 && conversationResult.rows[0].account_id) {
+            accountId = conversationResult.rows[0].account_id;
+          }
+        } catch (err) {
+          console.log(`⚠️ Não foi possível obter accountId para conversa ${conversation_id}, usando padrão`);
+        }
+        
+        // Reinicializar o bot silenciosamente (sem enviar mensagem para o usuário)
+        try {
+          // Atualizar a data da última interação para agora
+          await pool.query(`
+            UPDATE bot_conversation_status 
+            SET last_interaction_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP 
+            WHERE conversation_id = $1
+          `, [conversation_id]);
+          
+          console.log(`✅ Bot reinicializado silenciosamente para conversa ${conversation_id} após 24h de inatividade`);
+        } catch (resetError) {
+          console.error(`❌ Erro ao reinicializar bot para conversa ${conversation_id}:`, resetError);
+        }
+      }
+    } else {
+      console.log(`✅ Nenhum bot inativo há mais de 24 horas encontrado para reinicialização`);
     }
   } catch (error) {
     console.error(`❌ Erro ao verificar reativação automática de bots:`, error);
@@ -3619,11 +4056,11 @@ app.get('/api/accounts', authenticateToken, async (req, res) => {
       console.warn('⚠️ Nenhuma conta encontrada no perfil, usando conta padrão...');
       
       // Fallback para conta padrão se não encontrar no perfil
-      const accountId = CHATWOOT_ACCOUNT_ID;
-      let accountName = `Conta ${accountId}`;
+      const defaultAccountId = CHATWOOT_ACCOUNT_ID;
+      let accountName = `Conta ${defaultAccountId}`;
       
       try {
-        const fallbackResponse = await axios.get(`${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}`, {
+        const fallbackResponse = await axios.get(`${CHATWOOT_BASE_URL}/api/v1/accounts/${defaultAccountId}`, {
           headers: {
             'api_access_token': CHATWOOT_API_TOKEN
           }
@@ -3636,7 +4073,7 @@ app.get('/api/accounts', authenticateToken, async (req, res) => {
       }
       
       allAccounts = [{
-        id: parseInt(accountId),
+        id: parseInt(defaultAccountId),
         name: accountName,
         domain: CHATWOOT_BASE_URL.replace(/^https?:\/\//, ''),
         status: 'active'
@@ -4397,7 +4834,7 @@ app.post('/api/campaigns', authenticateToken, authorizeAccount, async (req, res)
         console.log(`🔍 Buscando informações do template: ${template_name}`);
         
         // Buscar caixas de entrada WhatsApp
-        const inboxesResponse = await axios.get(`${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/inboxes`, {
+        const inboxesResponse = await axios.get(`${CHATWOOT_BASE_URL}/api/v1/accounts/${chatwoot_account_id}/inboxes`, {
           headers: { 'api_access_token': CHATWOOT_API_TOKEN }
         });
         
@@ -4408,7 +4845,7 @@ app.post('/api/campaigns', authenticateToken, authorizeAccount, async (req, res)
         // Buscar templates de cada caixa para encontrar o selecionado
         for (const inbox of whatsappInboxes) {
           try {
-            const inboxDetailsResponse = await axios.get(`${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/inboxes/${inbox.id}`, {
+            const inboxDetailsResponse = await axios.get(`${CHATWOOT_BASE_URL}/api/v1/accounts/${chatwoot_account_id}/inboxes/${inbox.id}`, {
               headers: { 'api_access_token': CHATWOOT_API_TOKEN }
             });
             
@@ -5026,7 +5463,8 @@ app.post('/api/campaigns/fix-stuck', authenticateToken, async (req, res) => {
 // Buscar tags disponíveis via API do Chatwoot
 app.get('/api/chatwoot/tags', authenticateToken, async (req, res) => {
   try {
-    const response = await axios.get(`${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/labels`, {
+    const accountId = req.query.accountId || CHATWOOT_ACCOUNT_ID;
+    const response = await axios.get(`${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/labels`, {
       headers: { 'api_access_token': CHATWOOT_API_TOKEN }
     });
     res.json(response.data.payload || []);
@@ -5039,7 +5477,8 @@ app.get('/api/chatwoot/tags', authenticateToken, async (req, res) => {
 // Buscar agentes disponíveis via API do Chatwoot
 app.get('/api/chatwoot/agents', authenticateToken, async (req, res) => {
   try {
-    const agents = await getChatwootAgents();
+    const accountId = req.query.accountId || CHATWOOT_ACCOUNT_ID;
+    const agents = await getChatwootAgents(accountId);
     res.json(agents);
   } catch (error) {
     console.error('Erro ao buscar agentes do Chatwoot:', error);
@@ -5050,7 +5489,8 @@ app.get('/api/chatwoot/agents', authenticateToken, async (req, res) => {
 // Buscar times disponíveis via API do Chatwoot
 app.get('/api/chatwoot/teams', authenticateToken, async (req, res) => {
   try {
-    const teams = await getChatwootTeams();
+    const accountId = req.query.accountId || CHATWOOT_ACCOUNT_ID;
+    const teams = await getChatwootTeams(accountId);
     res.json(teams);
   } catch (error) {
     console.error('Erro ao buscar times do Chatwoot:', error);
@@ -5072,9 +5512,11 @@ app.post('/api/chatwoot/labels', authenticateToken, [
 
     const { title, description, color } = req.body;
     
+    const accountId = req.query.accountId || CHATWOOT_ACCOUNT_ID;
+    
     // Verificar se o label já existe
     const existingLabelsResponse = await axios.get(
-      `${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/labels`,
+      `${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/labels`,
       { headers: { 'api_access_token': CHATWOOT_API_TOKEN } }
     );
     
@@ -5087,7 +5529,7 @@ app.post('/api/chatwoot/labels', authenticateToken, [
     
     // Criar o label
     const response = await axios.post(
-      `${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/labels`,
+      `${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/labels`,
       { 
         title,
         description: description || `Label criado via API: ${title}`,

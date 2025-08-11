@@ -777,6 +777,53 @@ GET /public-preview/1705123456789
 - **Função**: Listar workflows disponíveis
 - **Resposta**: Lista de todos os workflows no cache
 
+### Comandos para Agentes (Atendentes)
+
+Os agentes (atendentes) agora podem usar comandos especiais diretamente nas conversas do Chatwoot. Os comandos devem ser enviados como mensagens normais e começam com `!`.
+
+#### `!reset`
+- **Função**: Reiniciar fluxo completo
+- **Ação**: Remove conversa, labels e reativa bot
+- **Resposta**: "🔄 **Comando de Agente Executado**\n\nFluxo reiniciado com sucesso..."
+
+#### `!activebot`
+- **Função**: Reativar bot manualmente
+- **Ação**: Remove pausa do bot
+- **Resposta**: "🔄 **Comando de Agente Executado**\n\n▶️ Bot reativado com sucesso..."
+
+#### `!pausebot`
+- **Função**: Pausar bot manualmente
+- **Ação**: Pausa bot para atendimento humano
+- **Resposta**: "🔄 **Comando de Agente Executado**\n\n⏸️ Bot pausado com sucesso..."
+
+#### `!botstatus`
+- **Função**: Verificar status do bot
+- **Resposta**: Status atual e lista de comandos disponíveis para agentes
+
+#### `!reload`
+- **Função**: Recarregar workflows do banco
+- **Ação**: Atualiza cache de workflows
+- **Resposta**: "🔄 **Comando de Agente Executado**\n\n✅ Workflows recarregados..."
+
+#### `!workflows`
+- **Função**: Listar workflows disponíveis
+- **Resposta**: Lista de todos os workflows no cache
+
+### Como Usar os Comandos de Agente
+
+1. **Acesse a conversa** no Chatwoot
+2. **Digite o comando** na caixa de mensagem (ex: `!reset`)
+3. **Envie a mensagem** normalmente
+4. **Aguarde a confirmação** do sistema
+
+### Características dos Comandos de Agente
+
+- **Identificação**: Mensagens de agentes são identificadas automaticamente
+- **Logs**: Todos os comandos são registrados com o ID do agente
+- **Feedback**: Confirmação visual com prefixo "🔄 **Comando de Agente Executado**"
+- **Segurança**: Apenas mensagens que começam com `!` são processadas como comandos
+- **Compatibilidade**: Funciona em todas as conversas onde o bot está ativo
+
 ### Comandos Administrativos
 
 #### Via API

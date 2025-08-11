@@ -68,7 +68,8 @@ media: <arquivo>
   "media": {
     "attachment": {
       "file_id": "1703123456789"
-    }
+    },
+    "delay": 3000
   },
   "buttons": [
     { "text": "Entendi!", "next_block": "proximo" },
@@ -91,6 +92,57 @@ Authorization: Bearer <seu_token>
 }
 ```
 
+## ⏰ Sistema de Delay
+
+### **Delay em Anexos de Mídia**
+
+O sistema suporta **delay customizável** entre o envio da mensagem e a exibição dos botões:
+
+```json
+{
+  "media": {
+    "attachment": {
+      "file_id": "1703123456789"
+    },
+    "delay": 3000
+  }
+}
+```
+
+**Configurações de Delay:**
+- **Vídeos**: Delay padrão de 3 segundos (3000ms)
+- **Imagens/Áudios**: Delay padrão de 1 segundo (1000ms)
+- **Customizável**: Você pode definir qualquer valor em milissegundos
+
+### **Auto Follow-up com Delay**
+
+O sistema suporta **follow-ups automáticos** com delay configurável:
+
+```json
+{
+  "auto_followup": {
+    "bloco_7": {
+      "delay": 1800000,
+      "condition": "inactive"
+    },
+    "bloco_8": {
+      "delay": 72000000,
+      "condition": "inactive"
+    }
+  }
+}
+```
+
+**Configurações:**
+- **`delay`**: Tempo em milissegundos (ex: 1800000 = 30 minutos)
+- **`condition`**: Condição para execução (`inactive` = quando usuário não responde)
+
+**Exemplos de Delay:**
+- `1800000` = 30 minutos
+- `3600000` = 1 hora  
+- `7200000` = 2 horas
+- `72000000` = 24 horas
+
 ## 🔄 Duas Formas de Usar Mídia
 
 ### **Método 1: URLs Externas (já existente)**
@@ -108,7 +160,8 @@ Authorization: Bearer <seu_token>
 "media": {
   "attachment": {
     "file_id": "1703123456789"
-  }
+  },
+  "delay": 3000
 }
 ```
 
@@ -194,7 +247,7 @@ curl -X POST \
   http://localhost:3008/api/upload-media
 ```
 
-### 2. **Usar no Workflow**
+### 2. **Usar no Workflow com Delay**
 ```json
 {
   "bloco_video": {
@@ -204,7 +257,8 @@ curl -X POST \
     "media": {
       "attachment": {
         "file_id": "1703123456789"
-      }
+      },
+      "delay": 5000
     },
     "buttons": [
       { "text": "Quero saber mais", "next_block": "contato" },
@@ -214,10 +268,28 @@ curl -X POST \
 }
 ```
 
-### 3. **Resultado no Chatwoot**
+### 3. **Configurar Auto Follow-up**
+```json
+{
+  "auto_followup": {
+    "bloco_7": {
+      "delay": 1800000,
+      "condition": "inactive"
+    },
+    "bloco_8": {
+      "delay": 72000000,
+      "condition": "inactive"
+    }
+  }
+}
+```
+
+### 4. **Resultado no Chatwoot**
 - Mensagem de texto: "Veja como funciona na prática!"
 - Arquivo de vídeo anexado
+- **Delay de 5 segundos** antes de mostrar os botões
 - Botões interativos funcionais
+- **Follow-up automático** após 30 minutos se usuário não responder
 
 ## ⚠️ Importantes Considerações
 
@@ -226,6 +298,8 @@ curl -X POST \
 3. **Limite de Tamanho:** Máximo 16MB por arquivo
 4. **Formatos:** Apenas tipos MIME permitidos são aceitos
 5. **Armazenamento:** Arquivos ficam em `uploads/media/`
+6. **Delay:** Configurável por anexo, com valores padrão inteligentes
+7. **Auto Follow-up:** Execução automática baseada em inatividade
 
 ## 🔧 Troubleshooting
 
@@ -245,6 +319,10 @@ curl -X POST \
 - Verifique se o `file_id` existe na base
 - Confirme se o arquivo não foi deletado
 
+### **Delay não funcionando**
+- Verifique se o valor está em milissegundos
+- Confirme se a propriedade `delay` está no nível correto do JSON
+
 ## 🎉 Pronto para Usar!
 
-Agora você pode enviar **vídeos, imagens e áudios diretamente** nos seus workflows do Chatwoot, proporcionando uma experiência muito mais rica e interativa para seus usuários! 📱✨ 
+Agora você pode enviar **vídeos, imagens e áudios diretamente** nos seus workflows do Chatwoot, com **delay customizável** e **follow-ups automáticos**, proporcionando uma experiência muito mais rica e interativa para seus usuários! 📱✨ 
