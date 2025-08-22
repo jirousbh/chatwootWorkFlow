@@ -170,6 +170,12 @@
     "bloco_13": {
       "id": "bloco_13",
       "name": "Metodologia Wizard",
+      "media": {
+        "attachment": {
+          "file_id": "1754921368676"
+        },
+        "delay": 20000
+      },
       "buttons": [
         {
           "text": "Tudo certo!",
@@ -177,7 +183,7 @@
         },
         {
           "tag": "duvida_metodologia",
-          "text": "Tenho dúvidas!",
+          "text": "Estou com dúvidas!",
           "next_block": "atendimento_humano",
           "assign_labels": [
             "duvida_metodologia",
@@ -185,7 +191,7 @@
           ]
         }
       ],
-      "message": "Antes de te mostrar os planos, deixa eu te explicar como funciona nosso método.\n\n📘 CONNECTIONS: aula em turma, mesmo nível, professor conduz\n📱 INTERACTIVE: autonomia, diferentes níveis, professor mentor\n\nAgora vamos entender como a metodologia da Wizard realmente funciona? Dá o play nesse vídeo 😉\n🎥 https://youtu.be/MN8vncZ8Iok?si=Q9orpQMaKXs3gvXS\n\nE com qual dessas experiências você se identifica mais? Connections ou Interactive?\n\nTudo certo até aqui? Qualquer dúvida me chama!\n\n📌 OBS: Método Wizard trabalha fala, escuta, leitura e escrita desde a primeira aula – aprendizado 3x mais rápido e fluência em até 2 anos!"
+      "message": "*PERFEITO!!!* Estamos aqui pra te ajudar a realizar seus sonhos….Mas antes de te mostrar os planos, vamos entender como a metodologia da Wizard realmente funciona?\n\nDá o play no vídeo 😉.\n\nE aí me fala... Tudo certo até aqui? \n\nOBS: Método Wizard trabalha fala,escuta, leitura e escrita desde a primeira aula - aprendizado 3x mais rápido e fluência em até 2 anos!"
     },
     "bloco_14": {
       "id": "bloco_14",
@@ -237,6 +243,10 @@
           ]
         },
         {
+          "text": "Voltar ao menu anterior",
+          "next_block": "bloco_14"
+        },
+        {
           "tag": "precisa_ajuda",
           "text": "Tenho dúvidas",
           "next_block": "atendimento_humano",
@@ -273,6 +283,10 @@
             "plano_on_light",
             "modalidade_virtual"
           ]
+        },
+        {
+          "text": "Voltar ao menu anterior",
+          "next_block": "bloco_14"
         },
         {
           "tag": "precisa_ajuda",
@@ -362,6 +376,11 @@
       "id": "bloco_12a",
       "tag": "objetivo_viagem",
       "name": "Objetivo - Viagem",
+      "media": {
+        "attachment": {
+          "file_id": "1754921347981"
+        }
+      },
       "message": "Show! Já sabe o país que quer visitar?",
       "next_block": "bloco_13",
       "assign_labels": [
@@ -375,6 +394,11 @@
       "id": "bloco_12b",
       "tag": "objetivo_carreira",
       "name": "Objetivo - Carreira",
+      "media": {
+        "attachment": {
+          "file_id": "1754921355972"
+        }
+      },
       "message": "Bacana! Em qual área você atua? Podemos focar nisso.",
       "next_block": "bloco_13",
       "assign_labels": [
@@ -388,6 +412,11 @@
       "id": "bloco_12c",
       "tag": "objetivo_faculdade",
       "name": "Objetivo - Faculdade/Intercâmbio",
+      "media": {
+        "attachment": {
+          "file_id": "1754921362460"
+        }
+      },
       "message": "Legal! Já tem destino de intercâmbio ou curso em mente?",
       "next_block": "bloco_13",
       "assign_labels": [
@@ -439,7 +468,7 @@
       "type": "end",
       "message": "Obrigado por conversar comigo! Se precisar de mais alguma coisa, é só chamar. Tenha um ótimo dia! 😊",
       "assign_labels": [
-        "conversa_finalizada"
+        "conversa_encaminhada"
       ]
     },
     "atendimento_humano": {

@@ -124,7 +124,7 @@
           ]
         }
       ],
-      "message": "Oi {{nome}}, aqui é o Rafa da Wizard BH Buritis! 🌟\nVi que você se interessou pelos nossos cursos de inglês. Tem vontade de aprender com a gente?",
+      "message": "Que bom que você está aqui, {{nome}}! 😄\nAqui é o Rafa, assistente da Wizard BH Buritis.\nTô animado pra gente conversar sobre como o inglês pode abrir portas pra você. Bora começar essa trajetória juntos? 🏁",
       "assign_labels": [
         "novo_lead"
       ],
@@ -170,6 +170,12 @@
     "bloco_13": {
       "id": "bloco_13",
       "name": "Metodologia Wizard",
+      "media": {
+        "delay": 20000,
+        "attachment": {
+          "file_id": "1754921368676"
+        }
+      },
       "buttons": [
         {
           "text": "Tudo certo!",
@@ -177,7 +183,7 @@
         },
         {
           "tag": "duvida_metodologia",
-          "text": "Tenho dúvidas!",
+          "text": "Estou com dúvidas!",
           "next_block": "atendimento_humano",
           "assign_labels": [
             "duvida_metodologia",
@@ -185,7 +191,7 @@
           ]
         }
       ],
-      "message": "Antes de te mostrar os planos, deixa eu te explicar como funciona nosso método.\n\n📘 CONNECTIONS: aula em turma, mesmo nível, professor conduz\n📱 INTERACTIVE: autonomia, diferentes níveis, professor mentor\n\nAgora vamos entender como a metodologia da Wizard realmente funciona? Dá o play nesse vídeo 😉\n🎥 https://youtu.be/MN8vncZ8Iok?si=Q9orpQMaKXs3gvXS\n\nE com qual dessas experiências você se identifica mais? Connections ou Interactive?\n\nTudo certo até aqui? Qualquer dúvida me chama!\n\n📌 OBS: Método Wizard trabalha fala, escuta, leitura e escrita desde a primeira aula – aprendizado 3x mais rápido e fluência em até 2 anos!"
+      "message": "*PERFEITO!!!* Estamos aqui pra te ajudar a realizar seus sonhos….Mas antes de te mostrar os planos, vamos entender como a metodologia da Wizard realmente funciona?\n\nDá o play no vídeo 😉.\n\nE aí me fala... Tudo certo até aqui? \n\nOBS: Método Wizard trabalha fala,escuta, leitura e escrita desde a primeira aula - aprendizado 3x mais rápido e fluência em até 2 anos!"
     },
     "bloco_14": {
       "id": "bloco_14",
@@ -209,85 +215,6 @@
       "message": "Legal! Aqui estão os nossos planos disponíveis hoje 👇\nVocê pode escolher com base na sua rotina e objetivo.\n(Em seguida vou te perguntar com qual deles você mais se identifica!) 😉\n\nVocê prefere suas aulas Presenciais ou Virtuais?",
       "assign_labels": [
         "visualizou_planos"
-      ]
-    },
-    "bloco_14_presencial": {
-      "id": "bloco_14_presencial",
-      "name": "Planos Presenciais",
-      "buttons": [
-        {
-          "tag": "interesse_signature",
-          "text": "Signature",
-          "next_block": "bloco_15a",
-          "assign_labels": [
-            "plano_signature",
-            "modalidade_presencial"
-          ],
-          "contact_labels": [
-            "alto_valor"
-          ]
-        },
-        {
-          "tag": "interesse_essential",
-          "text": "Essential",
-          "next_block": "bloco_15a",
-          "assign_labels": [
-            "plano_essential",
-            "modalidade_presencial"
-          ]
-        },
-        {
-          "tag": "precisa_ajuda",
-          "text": "Tenho dúvidas",
-          "next_block": "atendimento_humano",
-          "assign_team": 1,
-          "assign_labels": [
-            "precisa_consultoria",
-            "modalidade_presencial"
-          ]
-        }
-      ],
-      "message": "Perfeito, esses são nossos planos de aulas presenciais. No final você me diz por qual você se interessou mais:\n\n🔷 **Plano Signature**\n\nDiferenciais:\n✅ Monitoria ilimitada\n✅ Reposição de aulas sem custo (10 por ano)\n✅ Revisão de conteúdo nas férias\n✅ Isenção da matrícula no segundo idioma\n✅ Todos os benefícios Wizard (plataforma, eventos, certificação etc)\n💡 Ideal pra quem quer suporte total e resultado rápido.\n\n**Investimento:** Entrada R$399,00 + 12x R$432,25\n\n🔶 **Plano Essential**\n\nDiferenciais:\n✅ 2 monitorias/mês (30 min cada)\n✅ 3 reposições gratuitas/ano – demais por R$50\n✅ Isenção da matrícula no segundo idioma\n✅ Todos os benefícios Wizard\n💡 Equilíbrio entre valor e qualidade.\n\n**Investimento:** Entrada R$399,00 + 12x R$392,35",
-      "assign_labels": [
-        "planos_presenciais_apresentados"
-      ]
-    },
-    "bloco_14_virtual": {
-      "id": "bloco_14_virtual",
-      "name": "Planos Virtuais",
-      "buttons": [
-        {
-          "tag": "interesse_on_plus",
-          "text": "ON Plus",
-          "next_block": "bloco_15a",
-          "assign_labels": [
-            "plano_on_plus",
-            "modalidade_virtual"
-          ]
-        },
-        {
-          "tag": "interesse_on_light",
-          "text": "ON Light",
-          "next_block": "bloco_15a",
-          "assign_labels": [
-            "plano_on_light",
-            "modalidade_virtual"
-          ]
-        },
-        {
-          "tag": "precisa_ajuda",
-          "text": "Ainda tenho dúvidas",
-          "next_block": "atendimento_humano",
-          "assign_team": 1,
-          "assign_labels": [
-            "precisa_consultoria",
-            "modalidade_virtual"
-          ]
-        }
-      ],
-      "message": "Great! Esses planos são próprios para que você faça as aulas diretamente da sua casa com toda a estrutura e suporte Wizard! No final me fala qual se encaixa melhor na sua realidade!\n\n🟢 **Plano ON Plus**\n\nDiferenciais:\n✅ Curso 100% online ao vivo\n✅ Modalidade Connections ou Interactive\n✅ 3 reposições gratuitas/ano – demais R$50\n✅ 2 monitorias/mês (30 min cada)\n💡 Flexibilidade com qualidade!\n\n**Investimento:** Entrada R$399,00 + 12x R$372,40\n\n🟢 **Plano ON Light (Promo)**\n\nDiferenciais:\n✅ Curso online ao vivo com menor custo\n✅ Experiência INTERACTIVE\n❌ Não inclui reposição e monitoria\n💡 Ideal pra começar investindo menos\n\n**Investimento:** Entrada R$399,00 + 12x R$329,90",
-      "assign_labels": [
-        "planos_virtuais_apresentados"
       ]
     },
     "bloco_16": {
@@ -362,6 +289,11 @@
       "id": "bloco_12a",
       "tag": "objetivo_viagem",
       "name": "Objetivo - Viagem",
+      "media": {
+        "attachment": {
+          "file_id": "1754921347981"
+        }
+      },
       "message": "Show! Já sabe o país que quer visitar?",
       "next_block": "bloco_13",
       "assign_labels": [
@@ -375,6 +307,11 @@
       "id": "bloco_12b",
       "tag": "objetivo_carreira",
       "name": "Objetivo - Carreira",
+      "media": {
+        "attachment": {
+          "file_id": "1754921355972"
+        }
+      },
       "message": "Bacana! Em qual área você atua? Podemos focar nisso.",
       "next_block": "bloco_13",
       "assign_labels": [
@@ -388,6 +325,11 @@
       "id": "bloco_12c",
       "tag": "objetivo_faculdade",
       "name": "Objetivo - Faculdade/Intercâmbio",
+      "media": {
+        "attachment": {
+          "file_id": "1754921362460"
+        }
+      },
       "message": "Legal! Já tem destino de intercâmbio ou curso em mente?",
       "next_block": "bloco_13",
       "assign_labels": [
@@ -439,7 +381,49 @@
       "type": "end",
       "message": "Obrigado por conversar comigo! Se precisar de mais alguma coisa, é só chamar. Tenha um ótimo dia! 😊",
       "assign_labels": [
-        "conversa_finalizada"
+        "conversa_encaminhada"
+      ]
+    },
+    "bloco_14_virtual": {
+      "id": "bloco_14_virtual",
+      "name": "Planos Virtuais",
+      "buttons": [
+        {
+          "tag": "interesse_on_plus",
+          "text": "ON Plus",
+          "next_block": "bloco_15a",
+          "assign_labels": [
+            "plano_on_plus",
+            "modalidade_virtual"
+          ]
+        },
+        {
+          "tag": "interesse_on_light",
+          "text": "ON Light",
+          "next_block": "bloco_15a",
+          "assign_labels": [
+            "plano_on_light",
+            "modalidade_virtual"
+          ]
+        },
+        {
+          "text": "Voltar ao menu anterior",
+          "next_block": "bloco_14"
+        },
+        {
+          "tag": "precisa_ajuda",
+          "text": "Ainda tenho dúvidas",
+          "next_block": "atendimento_humano",
+          "assign_team": 1,
+          "assign_labels": [
+            "precisa_consultoria",
+            "modalidade_virtual"
+          ]
+        }
+      ],
+      "message": "Great! Esses planos são próprios para que você faça as aulas diretamente da sua casa com toda a estrutura e suporte Wizard! No final me fala qual se encaixa melhor na sua realidade!\n\n🟢 **Plano ON Plus**\n\nDiferenciais:\n✅ Curso 100% online ao vivo\n✅ Modalidade Connections ou Interactive\n✅ 3 reposições gratuitas/ano – demais R$50\n✅ 2 monitorias/mês (30 min cada)\n💡 Flexibilidade com qualidade!\n\n**Investimento:** Entrada R$399,00 + 12x R$372,40\n\n🟢 **Plano ON Light (Promo)**\n\nDiferenciais:\n✅ Curso online ao vivo com menor custo\n✅ Experiência INTERACTIVE\n❌ Não inclui reposição e monitoria\n💡 Ideal pra começar investindo menos\n\n**Investimento:** Entrada R$399,00 + 12x R$329,90",
+      "assign_labels": [
+        "planos_virtuais_apresentados"
       ]
     },
     "atendimento_humano": {
@@ -457,19 +441,54 @@
       "contact_labels": [
         "atendimento_especializado"
       ]
+    },
+    "bloco_14_presencial": {
+      "id": "bloco_14_presencial",
+      "name": "Planos Presenciais",
+      "buttons": [
+        {
+          "tag": "interesse_signature",
+          "text": "Signature",
+          "next_block": "bloco_15a",
+          "assign_labels": [
+            "plano_signature",
+            "modalidade_presencial"
+          ],
+          "contact_labels": [
+            "alto_valor"
+          ]
+        },
+        {
+          "tag": "interesse_essential",
+          "text": "Essential",
+          "next_block": "bloco_15a",
+          "assign_labels": [
+            "plano_essential",
+            "modalidade_presencial"
+          ]
+        },
+        {
+          "text": "Voltar ao menu anterior",
+          "next_block": "bloco_14"
+        },
+        {
+          "tag": "precisa_ajuda",
+          "text": "Tenho dúvidas",
+          "next_block": "atendimento_humano",
+          "assign_team": 1,
+          "assign_labels": [
+            "precisa_consultoria",
+            "modalidade_presencial"
+          ]
+        }
+      ],
+      "message": "Perfeito, esses são nossos planos de aulas presenciais. No final você me diz por qual você se interessou mais:\n\n🔷 **Plano Signature**\n\nDiferenciais:\n✅ Monitoria ilimitada\n✅ Reposição de aulas sem custo (10 por ano)\n✅ Revisão de conteúdo nas férias\n✅ Isenção da matrícula no segundo idioma\n✅ Todos os benefícios Wizard (plataforma, eventos, certificação etc)\n💡 Ideal pra quem quer suporte total e resultado rápido.\n\n**Investimento:** Entrada R$399,00 + 12x R$432,25\n\n🔶 **Plano Essential**\n\nDiferenciais:\n✅ 2 monitorias/mês (30 min cada)\n✅ 3 reposições gratuitas/ano – demais por R$50\n✅ Isenção da matrícula no segundo idioma\n✅ Todos os benefícios Wizard\n💡 Equilíbrio entre valor e qualidade.\n\n**Investimento:** Entrada R$399,00 + 12x R$392,35",
+      "assign_labels": [
+        "planos_presenciais_apresentados"
+      ]
     }
   },
   "triggers": [
     "*"
-  ],
-  "auto_followup": {
-    "bloco_16": {
-      "delay": 1800000,
-      "condition": "inactive"
-    },
-    "bloco_17": {
-      "delay": 72000000,
-      "condition": "inactive"
-    }
-  }
+  ]
 }

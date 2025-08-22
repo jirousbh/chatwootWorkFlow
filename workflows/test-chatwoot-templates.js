@@ -1,9 +1,30 @@
 const axios = require('axios');
+require('dotenv').config();
 
 // Configurações do Chatwoot
 const CHATWOOT_BASE_URL = process.env.CHATWOOT_BASE_URL || 'https://crm.inovaianalytics.com.br';
 const CHATWOOT_API_TOKEN = process.env.CHATWOOT_API_TOKEN;
 const CHATWOOT_ACCOUNT_ID = process.env.CHATWOOT_ACCOUNT_ID || '1';
+
+// Função utilitária para identificar caixas da EvolutionAPI
+function isEvolutionAPIInbox(inbox) {
+  return inbox.channel_type === 'Channel::Api' || 
+         inbox.channel_type === 'Channel::Webhook' ||
+         (inbox.name && inbox.name.toLowerCase().includes('evolution')) ||
+         (inbox.name && inbox.name.toLowerCase().includes('evo')) ||
+         (inbox.provider_config && inbox.provider_config.webhook_url && 
+          inbox.provider_config.webhook_url.includes('evolution'));
+}
+
+// Função utilitária para identificar caixas do WhatsApp API
+function isWhatsAppAPIInbox(inbox) {
+  return inbox.channel_type === 'Channel::Whatsapp';
+}
+
+// Função utilitária para verificar se uma caixa é suportada
+function isSupportedInbox(inbox) {
+  return isWhatsAppAPIInbox(inbox) || isEvolutionAPIInbox(inbox);
+}
 
 async function testChatwootTemplates() {
   console.log('🔍 TESTANDO BUSCA DE TEMPLATES VIA CHATWOOT\n');
@@ -30,7 +51,7 @@ async function testChatwootTemplates() {
     });
     
     const allInboxes = inboxesResponse.data.payload || [];
-    const whatsappInboxes = allInboxes.filter(i => i.channel_type === 'Channel::Whatsapp');
+    const whatsappInboxes = allInboxes.filter(i => isSupportedInbox(i));
     
     console.log(`📦 Total de caixas de entrada: ${allInboxes.length}`);
     console.log(`📱 Caixas WhatsApp: ${whatsappInboxes.length}`);

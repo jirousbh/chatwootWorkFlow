@@ -1,13 +1,13 @@
 {
   "name": "Fluxo Técnico Wizard BH Buritis - Triagem e Atendimento",
   "blocks": {
-    "bloco_1": {
-      "id": "bloco_1",
+    "bloco_01": {
+      "id": "bloco_01",
       "name": "Boas-vindas",
       "buttons": [
         {
           "text": "Já sou aluno",
-          "next_block": "bloco_2",
+          "next_block": "bloco_02",
           "assign_labels": [
             "aluno_existente"
           ],
@@ -31,13 +31,13 @@
         "inicio_atendimento"
       ]
     },
-    "bloco_2": {
-      "id": "bloco_2",
+    "bloco_02": {
+      "id": "bloco_02",
       "name": "Escolha de Setor",
       "buttons": [
         {
           "text": "📚 Pedagógico",
-          "next_block": "bloco_3",
+          "next_block": "bloco_03",
           "assign_team": 2,
           "assign_labels": [
             "setor_pedagogico"
@@ -48,7 +48,7 @@
         },
         {
           "text": "💰 Financeiro",
-          "next_block": "bloco_4",
+          "next_block": "bloco_04",
           "assign_team": 3,
           "assign_labels": [
             "setor_financeiro"
@@ -59,7 +59,7 @@
         },
         {
           "text": "💼 Comercial",
-          "next_block": "bloco_5",
+          "next_block": "bloco_05",
           "assign_team": 1,
           "assign_labels": [
             "setor_comercial"
@@ -71,34 +71,31 @@
       ],
       "message": "Como posso te ajudar hoje? Escolha o setor que precisa:"
     },
-    "bloco_3": {
-      "id": "bloco_3",
+    "bloco_03": {
+      "id": "bloco_03",
       "name": "Transferir para Pedagógico",
       "message": "Perfeito! Vou te conectar agora mesmo com nossa equipe pedagógica que vai te ajudar com todas as suas dúvidas sobre aulas, metodologia e conteúdo! 📚\n\nEm instantes você receberá o contato de um de nossos especialistas pedagógicos.",
       "pause_bot": true,
-      "next_block": "finalizar",
       "assign_team": 2,
       "assign_labels": [
         "transferido_pedagogico"
       ]
     },
-    "bloco_4": {
-      "id": "bloco_4",
+    "bloco_04": {
+      "id": "bloco_04",
       "name": "Transferir para Financeiro",
       "message": "Perfeito! Vou te conectar agora mesmo com nossa equipe financeira que vai te ajudar com todas as suas dúvidas sobre pagamentos, mensalidades e questões financeiras! 💰\n\nEm instantes você receberá o contato de um de nossos especialistas financeiros.",
       "pause_bot": true,
-      "next_block": "finalizar",
       "assign_team": 3,
       "assign_labels": [
         "transferido_financeiro"
       ]
     },
-    "bloco_5": {
-      "id": "bloco_5",
+    "bloco_05": {
+      "id": "bloco_05",
       "name": "Transferir para Comercial",
       "message": "Perfeito! Vou te conectar agora mesmo com nossa equipe comercial que vai te ajudar com informações sobre cursos, planos e matrículas! 💼\n\nEm instantes você receberá o contato de um de nossos especialistas comerciais.",
       "pause_bot": true,
-      "next_block": "finalizar",
       "assign_team": 1,
       "assign_labels": [
         "transferido_comercial"
@@ -124,7 +121,7 @@
           ]
         }
       ],
-      "message": "Oi {{nome}}, aqui é o Rafa da Wizard BH Buritis! 🌟\nVi que você se interessou pelos nossos cursos de inglês. Tem vontade de aprender com a gente?",
+      "message": "Que bom que você está aqui, {{nome}}! 😄\nAqui é o Rafa, assistente da Wizard BH Buritis.\nTô animado pra gente conversar sobre como o inglês pode abrir portas pra você. Bora começar essa trajetória juntos? 🏁",
       "assign_labels": [
         "novo_lead"
       ],
@@ -167,13 +164,143 @@
       ],
       "message": "Legal! Qual o seu principal objetivo com o inglês?"
     },
+    "bloco_11b": {
+      "id": "bloco_11b",
+      "name": "Objetivo do Aluno - Atendimento",
+      "buttons": [
+        {
+          "text": "✈️ Viagem",
+          "next_block": "bloco_12a"
+        },
+        {
+          "text": "💼 Carreira",
+          "next_block": "bloco_12b"
+        },
+        {
+          "text": "📚 Faculdade/intercâmbio",
+          "next_block": "bloco_12c"
+        },
+        {
+          "text": "Outro",
+          "next_block": "bloco_12d"
+        }
+      ],
+      "message": "Legal! Que bom ter você aqui! E conta pra gente como podemos te ajudar… Qual o seu principal objetivo com o inglês?"
+    },
+    "bloco_12a": {
+      "id": "bloco_12a",
+      "tag": "objetivo_viagem",
+      "name": "Objetivo - Viagem",
+      "media": {
+        "attachment": {
+          "file_id": "1754921347981"
+        }
+      },
+      "message": "Show! Já sabe o país que quer visitar?",
+      "next_block": "bloco_13",
+      "assign_labels": [
+        "objetivo_viagem"
+      ],
+      "contact_labels": [
+        "viajante"
+      ]
+    },
+    "bloco_12b": {
+      "id": "bloco_12b",
+      "tag": "objetivo_carreira",
+      "name": "Objetivo - Carreira",
+      "media": {
+        "attachment": {
+          "file_id": "1754921355972"
+        }
+      },
+      "message": "Bacana! Em qual área você atua? Podemos focar nisso.",
+      "next_block": "bloco_13",
+      "assign_labels": [
+        "objetivo_carreira"
+      ],
+      "contact_labels": [
+        "profissional"
+      ]
+    },
+    "bloco_12c": {
+      "id": "bloco_12c",
+      "tag": "objetivo_faculdade",
+      "name": "Objetivo - Faculdade/Intercâmbio",
+      "media": {
+        "attachment": {
+          "file_id": "1754921362460"
+        }
+      },
+      "message": "Legal! Já tem destino de intercâmbio ou curso em mente?",
+      "next_block": "bloco_13",
+      "assign_labels": [
+        "objetivo_intercambio"
+      ],
+      "contact_labels": [
+        "estudante"
+      ]
+    },
+    "bloco_12d": {
+      "id": "bloco_12d",
+      "tag": "objetivo_outro",
+      "name": "Objetivo - Outro",
+      "message": "Conta pra mim o que você espera do inglês, quero te ajudar!",
+      "next_block": "bloco_13",
+      "assign_labels": [
+        "objetivo_personalizado"
+      ]
+    },
     "bloco_13": {
       "id": "bloco_13",
       "name": "Metodologia Wizard",
+      "media": {
+        "delay": 20000,
+        "attachment": {
+          "file_id": "1754921368676"
+        }
+      },
       "buttons": [
         {
-          "text": "Tudo certo!",
+          "text": "É inglês mesmo!",
           "next_block": "bloco_14"
+        },
+        {
+            "text": "Outros idiomas",
+            "next_block": "bloco_13c",
+            "assign_labels": [
+              "outros_idiomas"
+            ]
+        },
+        {
+          "tag": "duvida_metodologia",
+          "text": "Estou com dúvidas!",
+          "next_block": "atendimento_humano",
+          "assign_labels": [
+            "duvida_metodologia",
+            "precisa_atendimento"
+          ]
+        }
+      ],
+      "message": "*PERFEITO!!!* Estamos aqui pra te ajudar a realizar seus sonhos….E pra isso quero falar um pouquinho sobre as experiências CONNECTIONS e INTERACTIVE, e saber qual delas se encaixa melhor no seu perfil.\n\nVamos entender qual experiência da Wizard realmente funciona pra você?\n\nDá o play no vídeo lá em cima!😉👆🏻🎧\n\nOBS: No método Wizard você FALA inglês desde o primeiro momento, aprende 3x mais rápido, e traz a fluência nos primeiros 18 meses!\nAhhh! E também temos os seguintes idiomas disponíveis na Wizard BH Buritis: 🇪🇸🇫🇷🇮🇹🇩🇪\n\nE aí me fala... Tudo certo até aqui? O idioma de interesse é o inglês msm?"
+    },
+    "bloco_13b": {
+      "id": "bloco_13b",
+      "name": "Metodologia Wizard - Inglês sem Vídeo",
+      "buttons": [
+        {
+          "text": "É inglês mesmo!",
+          "next_block": "bloco_14",
+          "assign_labels": [
+            "ingles_mesmo"
+          ]
+        },
+        {
+          "text": "Outros idiomas",
+          "next_block": "bloco_13c",
+          "assign_labels": [
+            "outros_idiomas"
+          ]
         },
         {
           "tag": "duvida_metodologia",
@@ -185,7 +312,53 @@
           ]
         }
       ],
-      "message": "Antes de te mostrar os planos, deixa eu te explicar como funciona nosso método.\n\n📘 CONNECTIONS: aula em turma, mesmo nível, professor conduz\n📱 INTERACTIVE: autonomia, diferentes níveis, professor mentor\n\nAgora vamos entender como a metodologia da Wizard realmente funciona? Dá o play nesse vídeo 😉\n🎥 https://youtu.be/MN8vncZ8Iok?si=Q9orpQMaKXs3gvXS\n\nE com qual dessas experiências você se identifica mais? Connections ou Interactive?\n\nTudo certo até aqui? Qualquer dúvida me chama!\n\n📌 OBS: Método Wizard trabalha fala, escuta, leitura e escrita desde a primeira aula – aprendizado 3x mais rápido e fluência em até 2 anos!"
+      "message": "Temos os seguintes idiomas disponíveis na Wizard BH Buritis: 🇪🇸🇫🇷🇮🇹🇩🇪\n\nE aí me fala... Tudo certo até aqui? O idioma de interesse é o inglês msm?"
+    },
+    "bloco_13c": {
+      "id": "bloco_13c",
+      "name": "Metodologia Wizard - Outros Idiomas",
+      "buttons": [
+        {
+          "text": "🇪🇸 Espanhol",
+          "next_block": "atendimento_humano",
+          "assign_labels": [
+            "espanhol"
+          ]
+        },
+        {
+          "text": "🇫🇷 Francês",
+          "next_block": "atendimento_humano",
+          "assign_labels": [
+            "frances"
+          ]
+        },
+        {
+          "text": "🇮🇹 Italiano",
+          "next_block": "atendimento_humano",
+          "assign_labels": [
+            "italiano"
+          ]
+        },
+        {
+          "text": "🇩🇪 Alemão",
+          "next_block": "atendimento_humano",
+          "assign_labels": [
+            "alemao"
+          ]
+        },
+        {
+          "text": "🇧🇷 Port. p/ Estrangeiros",
+          "next_block": "atendimento_humano",
+          "assign_labels": [
+            "portugues_estrangeiro"
+          ]
+        },
+        {
+          "text": "Voltar ao menu anterior",
+          "next_block": "bloco_13b"
+        }
+      ],
+      "message": "*Legal!* E me fala, qual outro idioma te chamou mais atenção:"
     },
     "bloco_14": {
       "id": "bloco_14",
@@ -218,7 +391,7 @@
         {
           "tag": "interesse_signature",
           "text": "Signature",
-          "next_block": "bloco_15a",
+          "next_block": "atendimento_humano",
           "assign_labels": [
             "plano_signature",
             "modalidade_presencial"
@@ -230,11 +403,15 @@
         {
           "tag": "interesse_essential",
           "text": "Essential",
-          "next_block": "bloco_15a",
+          "next_block": "atendimento_humano",
           "assign_labels": [
             "plano_essential",
             "modalidade_presencial"
           ]
+        },
+        {
+          "text": "Voltar ao menu anterior",
+          "next_block": "bloco_14"
         },
         {
           "tag": "precisa_ajuda",
@@ -259,7 +436,7 @@
         {
           "tag": "interesse_on_plus",
           "text": "ON Plus",
-          "next_block": "bloco_15a",
+          "next_block": "atendimento_humano",
           "assign_labels": [
             "plano_on_plus",
             "modalidade_virtual"
@@ -268,11 +445,15 @@
         {
           "tag": "interesse_on_light",
           "text": "ON Light",
-          "next_block": "bloco_15a",
+          "next_block": "atendimento_humano",
           "assign_labels": [
             "plano_on_light",
             "modalidade_virtual"
           ]
+        },
+        {
+          "text": "Voltar ao menu anterior",
+          "next_block": "bloco_14"
         },
         {
           "tag": "precisa_ajuda",
@@ -288,6 +469,32 @@
       "message": "Great! Esses planos são próprios para que você faça as aulas diretamente da sua casa com toda a estrutura e suporte Wizard! No final me fala qual se encaixa melhor na sua realidade!\n\n🟢 **Plano ON Plus**\n\nDiferenciais:\n✅ Curso 100% online ao vivo\n✅ Modalidade Connections ou Interactive\n✅ 3 reposições gratuitas/ano – demais R$50\n✅ 2 monitorias/mês (30 min cada)\n💡 Flexibilidade com qualidade!\n\n**Investimento:** Entrada R$399,00 + 12x R$372,40\n\n🟢 **Plano ON Light (Promo)**\n\nDiferenciais:\n✅ Curso online ao vivo com menor custo\n✅ Experiência INTERACTIVE\n❌ Não inclui reposição e monitoria\n💡 Ideal pra começar investindo menos\n\n**Investimento:** Entrada R$399,00 + 12x R$329,90",
       "assign_labels": [
         "planos_virtuais_apresentados"
+      ]
+    },
+    "bloco_15a": {
+      "id": "bloco_15a",
+      "tag": "lead_quente",
+      "name": "Ajuda para Escolher - Plano Escolhido",
+      "message": "Perfeito! Vamos agora encaminhar para nosso especialista que vai organizar com você todos os outros detalhes do seu curso! Muito Obrigado e seja bem vindo à Wizard BH Buritis!",
+      "next_block": "finalizar",
+      "assign_team": 1,
+      "assign_labels": [
+        "lead_quente",
+        "plano_escolhido"
+      ],
+      "contact_labels": [
+        "cliente_potencial"
+      ]
+    },
+    "bloco_15b": {
+      "id": "bloco_15b",
+      "tag": "precisa_ajuda",
+      "name": "Ajuda para Escolher - Precisa de Ajuda",
+      "message": "Então não se preocupe que nosso especialista continuará seu Atendimento e vai tirar todas as suas dúvidas! Desde já agradeço e qualquer coisa é só chamar!",
+      "next_block": "atendimento_humano",
+      "assign_team": 1,
+      "assign_labels": [
+        "consultoria_necessaria"
       ]
     },
     "bloco_16": {
@@ -335,111 +542,13 @@
         "follow_up_promocao"
       ]
     },
-    "bloco_11b": {
-      "id": "bloco_11b",
-      "name": "Objetivo do Aluno - Atendimento",
-      "buttons": [
-        {
-          "text": "✈️ Viagem",
-          "next_block": "bloco_12a"
-        },
-        {
-          "text": "💼 Carreira",
-          "next_block": "bloco_12b"
-        },
-        {
-          "text": "📚 Faculdade/intercâmbio",
-          "next_block": "bloco_12c"
-        },
-        {
-          "text": "Outro",
-          "next_block": "bloco_12d"
-        }
-      ],
-      "message": "Legal! Que bom ter você aqui! E conta pra gente como podemos te ajudar… Qual o seu principal objetivo com o inglês?"
-    },
-    "bloco_12a": {
-      "id": "bloco_12a",
-      "tag": "objetivo_viagem",
-      "name": "Objetivo - Viagem",
-      "message": "Show! Já sabe o país que quer visitar?",
-      "next_block": "bloco_13",
-      "assign_labels": [
-        "objetivo_viagem"
-      ],
-      "contact_labels": [
-        "viajante"
-      ]
-    },
-    "bloco_12b": {
-      "id": "bloco_12b",
-      "tag": "objetivo_carreira",
-      "name": "Objetivo - Carreira",
-      "message": "Bacana! Em qual área você atua? Podemos focar nisso.",
-      "next_block": "bloco_13",
-      "assign_labels": [
-        "objetivo_carreira"
-      ],
-      "contact_labels": [
-        "profissional"
-      ]
-    },
-    "bloco_12c": {
-      "id": "bloco_12c",
-      "tag": "objetivo_faculdade",
-      "name": "Objetivo - Faculdade/Intercâmbio",
-      "message": "Legal! Já tem destino de intercâmbio ou curso em mente?",
-      "next_block": "bloco_13",
-      "assign_labels": [
-        "objetivo_intercambio"
-      ],
-      "contact_labels": [
-        "estudante"
-      ]
-    },
-    "bloco_12d": {
-      "id": "bloco_12d",
-      "tag": "objetivo_outro",
-      "name": "Objetivo - Outro",
-      "message": "Conta pra mim o que você espera do inglês, quero te ajudar!",
-      "next_block": "bloco_13",
-      "assign_labels": [
-        "objetivo_personalizado"
-      ]
-    },
-    "bloco_15a": {
-      "id": "bloco_15a",
-      "tag": "lead_quente",
-      "name": "Ajuda para Escolher - Plano Escolhido",
-      "message": "Perfeito! Vamos agora encaminhar para nosso especialista que vai organizar com você todos os outros detalhes do seu curso! Muito Obrigado e seja bem vindo à Wizard BH Buritis!",
-      "next_block": "finalizar",
-      "assign_team": 1,
-      "assign_labels": [
-        "lead_quente",
-        "plano_escolhido"
-      ],
-      "contact_labels": [
-        "cliente_potencial"
-      ]
-    },
-    "bloco_15b": {
-      "id": "bloco_15b",
-      "tag": "precisa_ajuda",
-      "name": "Ajuda para Escolher - Precisa de Ajuda",
-      "message": "Então não se preocupe que nosso especialista continuará seu Atendimento e vai tirar todas as suas dúvidas! Desde já agradeço e qualquer coisa é só chamar!",
-      "next_block": "atendimento_humano",
-      "assign_team": 1,
-      "assign_labels": [
-        "consultoria_necessaria"
-      ]
-    },
     "finalizar": {
       "id": "finalizar",
       "name": "Encerramento",
       "type": "end",
       "message": "Obrigado por conversar comigo! Se precisar de mais alguma coisa, é só chamar. Tenha um ótimo dia! 😊",
       "assign_labels": [
-        "conversa_finalizada"
+        "conversa_encaminhada"
       ]
     },
     "atendimento_humano": {
@@ -448,7 +557,6 @@
       "name": "Encaminhar para Atendimento Humano",
       "message": "Perfeito! Vou te conectar agora mesmo com nossa equipe especializada que vai te ajudar com todas as suas dúvidas e organizar seu curso! 😊\n\nEm instantes você receberá o contato de um de nossos especialistas.",
       "pause_bot": true,
-      "next_block": "finalizar",
       "assign_team": 1,
       "assign_labels": [
         "atendimento_humano",
@@ -461,15 +569,5 @@
   },
   "triggers": [
     "*"
-  ],
-  "auto_followup": {
-    "bloco_16": {
-      "delay": 1800000,
-      "condition": "inactive"
-    },
-    "bloco_17": {
-      "delay": 72000000,
-      "condition": "inactive"
-    }
-  }
+  ]
 }

@@ -1,0 +1,182 @@
+{
+    "name": "Fluxo Comercial - Chatbot Soluções Digitais",
+    "blocks": {
+      "bloco_01": {
+        "id": "bloco_01",
+        "name": "Início - Menu Principal",
+        "buttons": [
+          {
+            "text": "📊 CRM",
+            "next_block": "bloco_02"
+          },
+          {
+            "text": "💬 Chat Inteligente",
+            "next_block": "bloco_03"
+          },
+          {
+            "text": "🤖 Chat IA",
+            "next_block": "bloco_04"
+          }
+        ],
+        "message": "Olá {{nome}}! 👋 Conheça nossas soluções digitais:",
+        "assign_labels": [
+          "inicio_fluxo"
+        ]
+      },
+      "bloco_02": {
+        "id": "bloco_02",
+        "name": "Apresentação CRM",
+        "buttons": [
+          {
+            "text": "✅ Quero saber mais",
+            "next_block": "bloco_05",
+            "assign_labels": [
+              "interesse_crm"
+            ]
+          },
+          {
+            "text": "⬅️ Voltar ao menu",
+            "next_block": "bloco_01"
+          }
+        ],
+        "message": "Sistema completo para gerenciar seus clientes, organizar leads e automatizar seu processo de vendas.\n\nQuer saber mais sobre o CRM?",
+        "assign_labels": [
+          "visualizou_crm"
+        ]
+      },
+      "bloco_03": {
+        "id": "bloco_03",
+        "name": "Apresentação Chat Inteligente",
+        "buttons": [
+          {
+            "text": "✅ Quero saber mais",
+            "next_block": "bloco_06",
+            "assign_labels": [
+              "interesse_chat_inteligente"
+            ]
+          },
+          {
+            "text": "⬅️ Voltar ao menu",
+            "next_block": "bloco_01"
+          }
+        ],
+        "message": "Chatbot automatizado que responde seus clientes 24/7, resolve dúvidas frequentes e direciona para sua equipe quando necessário.\n\nQuer saber mais sobre o Chat Inteligente?",
+        "assign_labels": [
+          "visualizou_chat_inteligente"
+        ]
+      },
+      "bloco_04": {
+        "id": "bloco_04",
+        "name": "Apresentação Chat IA",
+        "buttons": [
+          {
+            "text": "✅ Quero saber mais",
+            "next_block": "bloco_07",
+            "assign_labels": [
+              "interesse_chat_ia"
+            ]
+          },
+          {
+            "text": "⬅️ Voltar ao menu",
+            "next_block": "bloco_01"
+          }
+        ],
+        "message": "Assistente inteligente com IA que entende perguntas complexas, aprende com as conversas e oferece respostas personalizadas para seus clientes.\n\nQuer saber mais sobre o Chat IA?",
+        "assign_labels": [
+          "visualizou_chat_ia"
+        ]
+      },
+      "bloco_05": {
+        "id": "bloco_05",
+        "name": "Interesse Confirmado - CRM",
+        "buttons": [
+          {
+            "text": "⬅️ Ver outros serviços",
+            "next_block": "bloco_01",
+            "assign_labels": [
+              "menu_principal"
+            ]
+          },
+          {
+            "text": "✅ Finalizar",
+            "next_block": "bloco_08"
+          }
+        ],
+        "message": "Perfeito! Em breve um de nossos especialistas entrará em contato com você. Obrigado pelo interesse!",
+        "assign_labels": [
+          "interesse_confirmado_crm"
+        ]
+      },
+      "bloco_06": {
+        "id": "bloco_06",
+        "name": "Interesse Confirmado - Chat Inteligente",
+        "buttons": [
+          {
+            "text": "⬅️ Ver outros serviços",
+            "next_block": "bloco_01"
+          },
+          {
+            "text": "✅ Finalizar",
+            "next_block": "bloco_08"
+          }
+        ],
+        "message": "Perfeito! Em breve um de nossos especialistas entrará em contato com você.\n\nObrigado pelo interesse! 😊",
+        "assign_labels": [
+          "lead_chat_inteligente",
+          "interesse_confirmado"
+        ],
+        "contact_labels": [
+          "prospect_chat_inteligente"
+        ]
+      },
+      "bloco_07": {
+        "id": "bloco_07",
+        "name": "Interesse Confirmado - Chat IA",
+        "buttons": [
+          {
+            "text": "⬅️ Ver outros serviços",
+            "next_block": "bloco_01"
+          },
+          {
+            "text": "✅ Finalizar",
+            "next_block": "bloco_08"
+          }
+        ],
+        "message": "Perfeito! Em breve um de nossos especialistas entrará em contato com você.\n\nObrigado pelo interesse! 😊",
+        "assign_labels": [
+          "lead_chat_ia",
+          "interesse_confirmado"
+        ],
+        "contact_labels": [
+          "prospect_chat_ia"
+        ]
+      },
+      "bloco_08": {
+        "id": "bloco_08",
+        "name": "Finalização",
+        "type": "end",
+        "message": "Obrigado pela visita! Até logo! 👋",
+        "assign_labels": [
+          "conversa_finalizada"
+        ]
+      }
+    },
+    "followup": {
+      "buttons": [
+        {
+          "text": "Sim, quero conhecer",
+          "next_block": "bloco_01"
+        },
+        {
+          "text": "Não, obrigado",
+          "next_block": "bloco_08"
+        }
+      ],
+      "enabled": true,
+      "message": "Oi! Gostaria de conhecer nossas soluções digitais?",
+      "delay_minutes": 5
+    },
+    "triggers": [
+      "*"
+    ]
+  }

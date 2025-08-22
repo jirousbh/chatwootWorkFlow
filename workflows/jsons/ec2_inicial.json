@@ -1,0 +1,258 @@
+{
+    "name": "Fluxo Técnico Grupo Telecom+ - Soluções Empresariais",
+    "blocks": {
+      "bloco_1": {
+        "id": "bloco_1",
+        "name": "Apresentação Inicial",
+        "buttons": [
+          {
+            "text": "Pode falar",
+            "next_block": "bloco_2",
+            "assign_labels": [
+              "interesse_confirmado"
+            ],
+            "contact_labels": [
+              "prospect_ativo"
+            ]
+          },
+          {
+            "text": "Não tenho interesse",
+            "next_block": "bloco_verificacao",
+            "assign_labels": [
+              "sem_interesse_inicial"
+            ]
+          }
+        ],
+        "message": "Olá {{nome}}! Me chamo Maria e falo da Grupo Telecom+. Aqui na empresa oferecemos soluções bem completas para deixar seu negócio mais seguro e conectado, e com um valor super acessível. Posso falar mais sobre as soluções? 🚀",
+        "assign_labels": [
+          "inicio_atendimento"
+        ]
+      },
+      "bloco_2": {
+        "id": "bloco_2",
+        "name": "Apresentação de Soluções",
+        "buttons": [
+          {
+            "text": "Link Dedicado",
+            "next_block": "bloco_link_dedicado",
+            "assign_labels": [
+              "interesse_link_dedicado"
+            ]
+          },
+          {
+            "text": "Link Semi-Dedicado",
+            "next_block": "bloco_link_semi_dedicado",
+            "assign_labels": [
+              "interesse_link_semi_dedicado"
+            ]
+          },
+          {
+            "text": "Banda Larga Empresarial",
+            "next_block": "bloco_banda_larga",
+            "assign_labels": [
+              "interesse_banda_larga"
+            ]
+          },
+          {
+            "text": "Tel. Móvel Empresarial",
+            "next_block": "bloco_telefonia_movel",
+            "assign_labels": [
+              "interesse_telefonia_movel"
+            ]
+          },
+          {
+            "text": "Segurança Digital",
+            "next_block": "bloco_seguranca_digital",
+            "assign_labels": [
+              "interesse_seguranca_digital"
+            ]
+          }
+        ],
+        "message": "Show! Então, posso te ajudar com as soluções disponíveis 😉",
+        "assign_labels": [
+          "solucoes_apresentadas"
+        ]
+      },
+      "finalizar": {
+        "id": "finalizar",
+        "name": "Encerramento",
+        "type": "end",
+        "message": "Obrigada por conversar comigo! Se precisar de mais alguma informação sobre nossas soluções, é só chamar. Tenha um ótimo dia! 😊",
+        "assign_labels": [
+          "conversa_finalizada"
+        ]
+      },
+      "bloco_backup": {
+        "id": "bloco_backup",
+        "name": "Backup em Nuvem",
+        "message": "Protege contra perda de dados por ataques, falhas ou erros humanos.\nArmazenamento seguro e criptografado com recuperação rápida.\nAcesso garantido de qualquer lugar com total segurança.\n\nPara que você entenda melhor, vou te encaminhar para o nosso especialista. 😉",
+        "pause_bot": true,
+        "next_block": "atendimento_humano",
+        "assign_agent": 2,
+        "assign_labels": [
+          "backup_interesse"
+        ],
+        "contact_labels": [
+          "prospect_backup"
+        ]
+      },
+      "bloco_antivirus": {
+        "id": "bloco_antivirus",
+        "name": "Antivírus com IA",
+        "message": "Bloqueia ameaças em tempo real antes de infectar seus dispositivos.\nProteção avançada contra ransomware e phishing.\nMonitoramento contínuo para evitar ataques.\n\nPara que você entenda melhor, vou te encaminhar para o nosso especialista. 😉",
+        "pause_bot": true,
+        "next_block": "atendimento_humano",
+        "assign_agent": 2,
+        "assign_labels": [
+          "antivirus_interesse"
+        ],
+        "contact_labels": [
+          "prospect_antivirus"
+        ]
+      },
+      "bloco_banda_larga": {
+        "id": "bloco_banda_larga",
+        "name": "Banda Larga Empresarial",
+        "message": "A banda larga é uma opção de conexão compartilhada, com velocidades variáveis e menor custo. Ideal para empresas menores ou com uso mais básico de internet (e-mails, navegação, acesso a sistemas leves). Sujeita a oscilações de velocidade conforme o tráfego da rede.\n\nVocê pode me passar o CNPJ da sua empresa? Assim, já vou te transferir pra um consultor que vai te ajudar! 📞 ✨",
+        "pause_bot": true,
+        "next_block": "atendimento_humano",
+        "assign_agent": 2,
+        "assign_labels": [
+          "banda_larga_interesse",
+          "aguardando_cnpj"
+        ],
+        "contact_labels": [
+          "prospect_banda_larga"
+        ]
+      },
+      "bloco_verificacao": {
+        "id": "bloco_verificacao",
+        "name": "Verif. de Representante",
+        "buttons": [
+          {
+            "text": "Sim",
+            "next_block": "atendimento_humano",
+            "assign_labels": [
+              "representante_confirmado"
+            ]
+          },
+          {
+            "text": "Não",
+            "next_block": "finalizar",
+            "assign_labels": [
+              "nao_representante"
+            ]
+          }
+        ],
+        "message": "Por este contato eu consigo falar com o representante?"
+      },
+      "atendimento_humano": {
+        "id": "atendimento_humano",
+        "name": "Encaminhar para Especialista",
+        "message": "Perfeito! Vou te conectar agora mesmo com nossa equipe especializada que vai te ajudar com todas as informações e elaborar a melhor proposta para sua empresa! 😊\n\nEm instantes você receberá o contato de um de nossos consultores.",
+        "pause_bot": true,
+        "next_block": "finalizar",
+        "assign_agent": 2,
+        "assign_labels": [
+          "transferido_especialista"
+        ],
+        "contact_labels": [
+          "atendimento_especializado"
+        ]
+      },
+      "bloco_link_dedicado": {
+        "id": "bloco_link_dedicado",
+        "name": "Link Dedicado",
+        "message": "O Link Dedicado é uma conexão exclusiva para sua empresa, com 100% da banda contratada garantida. Ideal para negócios que utilizam sistemas em nuvem, videoconferências, VoIP e outras aplicações que exigem estabilidade e baixa latência. Oferece IP fixo e suporte prioritário.\n\nVocê pode me passar o CNPJ da sua empresa? Assim, já vou te transferir pra um consultor que vai te ajudar! 📞 ✨",
+        "pause_bot": true,
+        "next_block": "atendimento_humano",
+        "assign_agent": 2,
+        "assign_labels": [
+          "link_dedicado_interesse",
+          "aguardando_cnpj"
+        ],
+        "contact_labels": [
+          "prospect_link_dedicado"
+        ]
+      },
+      "bloco_protecao_dados": {
+        "id": "bloco_protecao_dados",
+        "name": "Proteção de Dados",
+        "message": "Cumprimento da LGPD e normas de segurança.\nRecuperação rápida após incidentes para evitar paralisações.\nMonitoramento contínuo para evitar invasões.\n\nPara que você entenda melhor, vou te encaminhar para o nosso especialista. 😉",
+        "pause_bot": true,
+        "next_block": "atendimento_humano",
+        "assign_agent": 2,
+        "assign_labels": [
+          "protecao_dados_interesse"
+        ],
+        "contact_labels": [
+          "prospect_protecao_dados"
+        ]
+      },
+      "bloco_telefonia_movel": {
+        "id": "bloco_telefonia_movel",
+        "name": "Telefonia Móvel Empresarial",
+        "message": "Soluções corporativas com planos de dados, voz ilimitada e gestão centralizada. Indicada para equipes externas, comerciais ou executivas que precisam de conectividade e mobilidade com suporte diferenciado e fatura unificada.\n\nVocê pode me passar o CNPJ da sua empresa? Assim, já vou te transferir pra um consultor que vai te ajudar! 📞 ✨",
+        "pause_bot": true,
+        "next_block": "atendimento_humano",
+        "assign_agent": 2,
+        "assign_labels": [
+          "telefonia_movel_interesse",
+          "aguardando_cnpj"
+        ],
+        "contact_labels": [
+          "prospect_telefonia_movel"
+        ]
+      },
+      "bloco_seguranca_digital": {
+        "id": "bloco_seguranca_digital",
+        "name": "Segurança Digital",
+        "buttons": [
+          {
+            "text": "Antivírus com IA",
+            "next_block": "bloco_antivirus",
+            "assign_labels": [
+              "interesse_antivirus"
+            ]
+          },
+          {
+            "text": "Backup em Nuvem",
+            "next_block": "bloco_backup",
+            "assign_labels": [
+              "interesse_backup"
+            ]
+          },
+          {
+            "text": "Proteção de Dados",
+            "next_block": "bloco_protecao_dados",
+            "assign_labels": [
+              "interesse_protecao_dados"
+            ]
+          }
+        ],
+        "message": "✅ Antivírus com IA\nBloqueia vírus e ameaças em tempo real.\nProtege contra ransomwares e golpes por e-mail.\n\n✅ Backup em Nuvem\nEvita perda de dados por falhas ou ataques.\nArmazenamento seguro com recuperação rápida.\n\n✅ Proteção de Dados\nCumpre a LGPD e evita invasões.\nGarante continuidade mesmo após incidentes.\n\nQual opção você quer saber mais? ☺️",
+        "assign_labels": [
+          "seguranca_digital_apresentada"
+        ]
+      },
+      "bloco_link_semi_dedicado": {
+        "id": "bloco_link_semi_dedicado",
+        "name": "Link Semi-Dedicado",
+        "message": "Mais econômico que o link dedicado, o semi-dedicado garante uma parte da banda contratada mesmo em horários de pico. Recomendado para empresas que precisam de mais estabilidade que a banda larga comum, mas não exigem exclusividade total. Entrega garantida conforme regras da Anatel.\n\nVocê pode me passar o CNPJ da sua empresa? Assim, já vou te transferir pra um consultor que vai te ajudar! 📞 ✨",
+        "pause_bot": true,
+        "next_block": "atendimento_humano",
+        "assign_agent": 2,
+        "assign_labels": [
+          "link_semi_dedicado_interesse",
+          "aguardando_cnpj"
+        ],
+        "contact_labels": [
+          "prospect_link_semi_dedicado"
+        ]
+      }
+    },
+    "triggers": [
+      "*"
+    ],
+    "auto_followup": {}
+  }

@@ -1,0 +1,31 @@
+{
+  "name": "Teste Next Block Visualization",
+  "description": "Workflow para testar a exibição do next_block em blocos sem botões",
+  "blocks": {
+    "bloco_1": {
+      "id": "bloco_1",
+      "name": "Início",
+      "message": "Olá! Este é um teste para verificar a visualização do next_block.",
+      "buttons": [
+        {
+          "text": "Continuar",
+          "next_block": "bloco_2"
+        }
+      ]
+    },
+    "bloco_2": {
+      "id": "bloco_2",
+      "name": "Bloco sem Botões",
+      "message": "Este bloco não tem botões, mas tem next_block definido. Deve aparecer na visualização.",
+      "next_block": "bloco_3",
+      "assign_labels": ["teste_next_block"],
+      "contact_labels": ["usuario_teste"]
+    },
+    "bloco_3": {
+      "id": "bloco_3",
+      "name": "Bloco Final",
+      "message": "Este é o bloco final do teste.",
+      "type": "end"
+    }
+  }
+}

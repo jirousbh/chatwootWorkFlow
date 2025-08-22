@@ -67,6 +67,24 @@ function formatDateScheduled(date, options = {}) {
     return result;
 }
 
+// Funções utilitárias globais para identificação de caixas
+function isWhatsAppAPIInbox(inbox) {
+    return inbox.channel_type === 'Channel::Whatsapp';
+}
+
+function isEvolutionAPIInbox(inbox) {
+    return inbox.channel_type === 'Channel::Api' || 
+           inbox.channel_type === 'Channel::Webhook' ||
+           (inbox.name && inbox.name.toLowerCase().includes('evolution')) ||
+           (inbox.name && inbox.name.toLowerCase().includes('evo')) ||
+           (inbox.provider_config && inbox.provider_config.webhook_url && 
+            inbox.provider_config.webhook_url.includes('evolution'));
+}
+
+function isSupportedInbox(inbox) {
+    return isWhatsAppAPIInbox(inbox) || isEvolutionAPIInbox(inbox);
+}
+
 // Chatwoot Workflows Frontend Application
 class ChatwootWorkflowsApp {
     constructor() {
@@ -81,6 +99,8 @@ class ChatwootWorkflowsApp {
         
         this.init();
     }
+
+
 
     async init() {
         if (this.token) {
@@ -305,9 +325,9 @@ class ChatwootWorkflowsApp {
             return false;
         }
         
-        // Validar se a caixa de entrada é uma API oficial do WhatsApp
+        // Validar se a caixa de entrada é uma API oficial do WhatsApp ou EvolutionAPI
         try {
-            console.log('🔍 Validando se a caixa de entrada é uma API oficial do WhatsApp...');
+            console.log('🔍 Validando se a caixa de entrada é uma API oficial do WhatsApp ou EvolutionAPI...');
             
             // Buscar informações da caixa de entrada
             const inboxes = this.inboxes || [];
@@ -325,27 +345,41 @@ class ChatwootWorkflowsApp {
                     return false;
                 }
                 
-                if (inboxInfo.channel_type !== 'Channel::Whatsapp') {
-                    console.warn(`⚠️ Caixa de entrada não é uma API oficial do WhatsApp: ${inboxInfo.channel_type}`);
-                    this.showAlert(`Esta caixa de entrada (${inboxInfo.name}) não é uma API oficial do WhatsApp. Apenas caixas do WhatsApp são suportadas para campanhas.`, 'warning');
-                    return false;
-                }
-            } else {
-                if (selectedInboxInfo.channel_type !== 'Channel::Whatsapp') {
-                    console.warn(`⚠️ Caixa de entrada não é uma API oficial do WhatsApp: ${selectedInboxInfo.channel_type}`);
-                    this.showAlert(`Esta caixa de entrada (${selectedInboxInfo.name}) não é uma API oficial do WhatsApp. Apenas caixas do WhatsApp são suportadas para campanhas.`, 'warning');
-                    return false;
-                }
-            }
+                                 // Verificar se é uma caixa suportada (WhatsApp API ou EvolutionAPI)
+                 if (!isSupportedInbox(inboxInfo)) {
+                     console.warn(`⚠️ Caixa de entrada não é suportada: ${inboxInfo.channel_type}`);
+                     this.showAlert(`Esta caixa de entrada (${inboxInfo.name}) não é suportada. Apenas caixas do WhatsApp API e Evolution API são suportadas para campanhas.`, 'warning');
+                     return false;
+                 }
+                 
+                 if (isEvolutionAPIInbox(inboxInfo)) {
+                     console.log('✅ Caixa de entrada é uma Evolution API');
+                 } else {
+                     console.log('✅ Caixa de entrada é uma API oficial do WhatsApp');
+                 }
+                         } else {
+                 // Verificar se é uma caixa suportada (WhatsApp API ou EvolutionAPI)
+                 if (!isSupportedInbox(selectedInboxInfo)) {
+                     console.warn(`⚠️ Caixa de entrada não é suportada: ${selectedInboxInfo.channel_type}`);
+                     this.showAlert(`Esta caixa de entrada (${selectedInboxInfo.name}) não é suportada. Apenas caixas do WhatsApp API e Evolution API são suportadas para campanhas.`, 'warning');
+                     return false;
+                 }
+                 
+                 if (isEvolutionAPIInbox(selectedInboxInfo)) {
+                     console.log('✅ Caixa de entrada é uma Evolution API');
+                 } else {
+                     console.log('✅ Caixa de entrada é uma API oficial do WhatsApp');
+                 }
+             }
             
-            console.log('✅ Caixa de entrada é uma API oficial do WhatsApp');
+            console.log('✅ Caixa de entrada é uma API oficial do WhatsApp ou EvolutionAPI');
         } catch (error) {
             console.error('❌ Erro ao validar tipo da caixa de entrada:', error);
             this.showAlert('Erro ao validar caixa de entrada. Tente novamente.', 'danger');
             return false;
         }
         
-        console.log(`✅ Validação aprovada: Conta ${selectedAccount}, Caixa ${selectedInbox} (WhatsApp API)`);
+        console.log(`✅ Validação aprovada: Conta ${selectedAccount}, Caixa ${selectedInbox} (WhatsApp API ou EvolutionAPI)`);
         return true;
     }
 
@@ -917,10 +951,14 @@ class ChatwootWorkflowsApp {
                     const option = document.createElement('option');
                     option.value = inbox.id;
                     
-                    // Adicionar indicador visual para caixas do WhatsApp
-                    if (inbox.channel_type === 'Channel::Whatsapp') {
+                    // Adicionar indicador visual para diferentes tipos de caixas
+                    // Usar funções utilitárias globais
+                    if (isWhatsAppAPIInbox(inbox)) {
                         option.textContent = `📱 ${inbox.name} (WhatsApp API)`;
                         console.log(`📋 Caixa WhatsApp adicionada: ${inbox.name} (ID: ${inbox.id})`);
+                    } else if (isEvolutionAPIInbox(inbox)) {
+                        option.textContent = `🔄 ${inbox.name} (Evolution API)`;
+                        console.log(`📋 Caixa Evolution API adicionada: ${inbox.name} (ID: ${inbox.id})`);
                     } else {
                         option.textContent = `❌ ${inbox.name} (Não suportado)`;
                         option.disabled = true;
@@ -1810,13 +1848,18 @@ class ChatwootWorkflowsApp {
         
         select.innerHTML = '<option value="">Selecione uma caixa de entrada...</option>';
         
+
+        
         this.inboxes.forEach(inbox => {
             const option = document.createElement('option');
             option.value = inbox.id;
             
-            // Adicionar indicador visual para caixas do WhatsApp
-            if (inbox.channel_type === 'Channel::Whatsapp') {
+            // Adicionar indicador visual para diferentes tipos de caixas
+            // Usar funções utilitárias globais
+            if (isWhatsAppAPIInbox(inbox)) {
                 option.textContent = `📱 ${inbox.name} (WhatsApp API)`;
+            } else if (isEvolutionAPIInbox(inbox)) {
+                option.textContent = `🔄 ${inbox.name} (Evolution API)`;
             } else {
                 option.textContent = `❌ ${inbox.name} (Não suportado)`;
                 option.disabled = true;
@@ -2099,26 +2142,62 @@ class ChatwootWorkflowsApp {
 
         let html = '<div class="workflow-preview">';
         
+        // Renderizar seção de Auto Follow-up se existir
+        if (config.auto_followup) {
+            html += this.renderAutoFollowupSection(config.auto_followup, config.blocks);
+        }
+
+        // Renderizar seção de Pause Bot se existir
+        const blocksWithPauseBot = Object.values(config.blocks).filter(block => block.pause_bot === true);
+        if (blocksWithPauseBot.length > 0) {
+            html += this.renderPauseBotSection(blocksWithPauseBot);
+        }
+        
+        // Função para detectar bloco inicial
+        const getInitialBlock = (blocks) => {
+            if (blocks.bloco_1) return 'bloco_1';
+            if (blocks.bloco_01) return 'bloco_01';
+            
+            const blockKeys = Object.keys(blocks);
+            const initialBlockPatterns = [
+                'bloco_1', 'bloco_01', 'bloco_001',
+                'inicio', 'start', 'welcome', 'boas_vindas'
+            ];
+            
+            for (const pattern of initialBlockPatterns) {
+                if (blockKeys.includes(pattern)) {
+                    return pattern;
+                }
+            }
+            
+            return blockKeys[0] || null;
+        };
+
+        const initialBlockName = getInitialBlock(config.blocks);
+        
         Object.entries(config.blocks).forEach(([blockId, block]) => {
-            const isStart = blockId === 'bloco_1';
+            const isStart = blockId === initialBlockName;
             const isEnd = block.type === 'end';
             
             html += `
-                <div class="workflow-block ${isStart ? 'start' : ''} ${isEnd ? 'end' : ''}">
+                <div class="workflow-block ${isStart ? 'start' : ''} ${isEnd ? 'end' : ''} ${block.pause_bot ? 'pause-bot' : ''}">
                     <div class="block-header">
                         <h6 class="block-title">${block.name || blockId}</h6>
                         <span class="block-type ${isStart ? 'start' : ''} ${isEnd ? 'end' : ''} default">
                             ${isStart ? 'Início' : isEnd ? 'Fim' : blockId}
                         </span>
+                        ${block.pause_bot ? '<span class="pause-bot-indicator"><i class="fas fa-pause-circle"></i> Pause Bot</span>' : ''}
                     </div>
                     <div class="block-message">${block.message || ''}</div>
                     ${this.renderBlockMedia(block)}
                     ${this.renderBlockActions(block)}
+                    ${this.renderBlockAutoFollowup(blockId, config.auto_followup)}
                     ${block.buttons ? `
                         <div class="block-buttons">
                             ${block.buttons.map(btn => this.renderButtonWithTooltip(btn, config.blocks)).join('')}
                         </div>
                     ` : ''}
+                    ${!block.buttons && block.next_block ? this.renderBlockNextBlock(block, config.blocks) : ''}
                 </div>
             `;
         });
@@ -2253,14 +2332,165 @@ class ChatwootWorkflowsApp {
         return actions.length > 0 ? `<div class="block-actions">${actions.join('')}</div>` : '';
     }
 
+    renderAutoFollowupSection(autoFollowupConfig, blocks) {
+        if (!autoFollowupConfig || Object.keys(autoFollowupConfig).length === 0) {
+            return '';
+        }
+
+        let html = `
+            <div class="auto-followup-section">
+                <div class="auto-followup-header">
+                    <h6 class="auto-followup-title">
+                        <i class="fas fa-clock me-2"></i>Auto Follow-up
+                    </h6>
+                    <span class="auto-followup-badge">Configurado</span>
+                </div>
+                <div class="auto-followup-content">
+        `;
+
+        Object.entries(autoFollowupConfig).forEach(([blockId, followup]) => {
+            const block = blocks[blockId];
+            const blockName = block ? (block.name || blockId) : blockId;
+            const delayMinutes = Math.round(followup.delay / 60);
+            const delayHours = Math.round(followup.delay / 3600);
+            
+            let delayText = '';
+            if (delayHours >= 1) {
+                delayText = `${delayHours}h ${Math.round((followup.delay % 3600) / 60)}min`;
+            } else {
+                delayText = `${delayMinutes}min`;
+            }
+
+            html += `
+                <div class="auto-followup-item">
+                    <div class="auto-followup-block-info">
+                        <i class="fas fa-arrow-right me-2"></i>
+                        <strong>${blockName}</strong>
+                        <span class="auto-followup-delay">(${delayText})</span>
+                    </div>
+                    <div class="auto-followup-details">
+                        <small class="text-muted">
+                            <i class="fas fa-info-circle me-1"></i>
+                            Delay: ${followup.delay} segundos
+                            ${followup.condition ? `| Condição: ${followup.condition}` : ''}
+                        </small>
+                    </div>
+                </div>
+            `;
+        });
+
+        html += `
+                </div>
+            </div>
+        `;
+
+        return html;
+    }
+
+    renderBlockAutoFollowup(blockId, autoFollowupConfig) {
+        if (!autoFollowupConfig || !autoFollowupConfig[blockId]) {
+            return '';
+        }
+
+        const followup = autoFollowupConfig[blockId];
+        const delayMinutes = Math.round(followup.delay / 60);
+        const delayHours = Math.round(followup.delay / 3600);
+        
+        let delayText = '';
+        if (delayHours >= 1) {
+            delayText = `${delayHours}h ${Math.round((followup.delay % 3600) / 60)}min`;
+        } else {
+            delayText = `${delayMinutes}min`;
+        }
+
+        return `
+            <div class="block-auto-followup">
+                <div class="auto-followup-indicator">
+                    <i class="fas fa-clock me-2"></i>
+                    <span class="auto-followup-text">
+                        Auto Follow-up: ${delayText}
+                    </span>
+                    <small class="text-muted ms-2">
+                        (${followup.delay}s)
+                    </small>
+                </div>
+            </div>
+        `;
+    }
+
+    renderBlockNextBlock(block, allBlocks) {
+        if (!block.next_block) {
+            return '';
+        }
+
+        const nextBlock = allBlocks[block.next_block];
+        const nextBlockName = nextBlock ? (nextBlock.name || block.next_block) : block.next_block;
+        
+        let nextBlockText = '';
+        if (block.next_block === 'finalizar') {
+            nextBlockText = '🏁 Finalizar conversa';
+        } else {
+            nextBlockText = `➡️ Próximo bloco: ${nextBlockName}`;
+        }
+
+        return `
+            <div class="block-next-block">
+                <div class="next-block-indicator">
+                    <i class="fas fa-arrow-right me-2"></i>
+                    <span class="next-block-text">
+                        ${nextBlockText}
+                    </span>
+                </div>
+            </div>
+        `;
+    }
+
+    renderPauseBotSection(blocksWithPauseBot) {
+        return `
+            <div class="pause-bot-section">
+                <div class="pause-bot-header">
+                    <i class="fas fa-pause-circle"></i>
+                    <span>Pause Bot</span>
+                    <span class="pause-bot-badge">${blocksWithPauseBot.length}</span>
+                </div>
+                <div class="pause-bot-content">
+                    <div class="pause-bot-description">
+                        Blocos que pausam o bot e transferem para atendimento humano:
+                    </div>
+                    ${blocksWithPauseBot.map(block => `
+                        <div class="pause-bot-item">
+                            <div class="pause-bot-block-info">
+                                <i class="fas fa-handshake"></i>
+                                <span class="pause-bot-block-name">${block.name || block.id}</span>
+                            </div>
+                            ${block.assign_team ? `
+                                <div class="pause-bot-team">
+                                    <i class="fas fa-users"></i>
+                                    <span>Equipe: ${block.assign_team}</span>
+                                </div>
+                            ` : ''}
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+    }
+
     renderButtonWithTooltip(button, allBlocks) {
         const tooltipInfo = this.generateButtonTooltip(button, allBlocks);
         
+        // Verificar se o botão tem configuração de auto_followup
+        const hasAutoFollowupConfig = button.auto_followup_disabled !== undefined;
+        const autoFollowupIcon = hasAutoFollowupConfig 
+            ? (button.auto_followup_disabled ? '🚫' : '✅')
+            : '';
+        
         return `
-            <span class="block-button" 
+            <span class="block-button ${hasAutoFollowupConfig ? 'has-auto-followup' : ''}" 
                   data-tooltip="${tooltipInfo.replace(/"/g, '&quot;')}" 
                   title="${tooltipInfo.replace(/"/g, '&quot;')}">
                 ${button.text}
+                ${autoFollowupIcon ? `<span class="auto-followup-icon">${autoFollowupIcon}</span>` : ''}
             </span>
         `;
     }
@@ -2307,6 +2537,15 @@ class ChatwootWorkflowsApp {
         
         if (button.assign_team) {
             tooltipParts.push(`👥 Atribuir ao time: ${button.assign_team}`);
+        }
+        
+        // Auto Follow-up settings
+        if (button.auto_followup_disabled !== undefined) {
+            if (button.auto_followup_disabled) {
+                tooltipParts.push(`🚫 Desativar Auto Follow-up`);
+            } else {
+                tooltipParts.push(`✅ Ativar Auto Follow-up`);
+            }
         }
         
         // Se não há nenhuma informação além do fluxo, mostrar mensagem
@@ -2864,6 +3103,8 @@ class ChatwootWorkflowsApp {
         if (methodType === 'tag') {
             tagDetails.style.display = 'block';
             csvDetails.style.display = 'none';
+            // Carregar tags quando o método tag for selecionado
+            this.loadUnifiedTags();
         } else if (methodType === 'csv') {
             tagDetails.style.display = 'none';
             csvDetails.style.display = 'block';
@@ -2907,9 +3148,10 @@ class ChatwootWorkflowsApp {
             await this.loadUnifiedAccounts();
         }
         
-        // Carregar templates e outros dados
+        // Carregar templates
         await this.loadUnifiedTemplates(selectedAccountId, selectedInboxId);
-        await this.loadUnifiedTags();
+        
+        // Tags serão carregadas apenas quando o método "tag" for selecionado
     }
 
     // Carregar tags para o formulário unificado
@@ -2926,7 +3168,7 @@ class ChatwootWorkflowsApp {
             const tags = await response.json();
             
             // Implementar autocomplete simples ou datalist
-            const input = document.getElementById('tagNome');
+            const input = document.getElementById('tagName');
             if (!input) {
                 console.log('Input de tags não encontrado');
                 return;
@@ -3245,9 +3487,12 @@ class ChatwootWorkflowsApp {
                 const option = document.createElement('option');
                 option.value = inbox.id;
                 
-                // Adicionar indicador visual para caixas do WhatsApp
-                if (inbox.channel_type === 'Channel::Whatsapp') {
+                // Adicionar indicador visual para diferentes tipos de caixas
+                // Usar funções utilitárias globais
+                if (isWhatsAppAPIInbox(inbox)) {
                     option.textContent = `📱 ${inbox.name} (WhatsApp API)`;
+                } else if (isEvolutionAPIInbox(inbox)) {
+                    option.textContent = `🔄 ${inbox.name} (Evolution API)`;
                 } else {
                     option.textContent = `❌ ${inbox.name} (Não suportado)`;
                     option.disabled = true;
@@ -4099,7 +4344,7 @@ async function loadTags() {
         const tags = await response.json();
         
         // Implementar autocomplete simples ou datalist
-        const input = document.getElementById('tagNome');
+        const input = document.getElementById('tagName');
         if (!input) {
             console.log('Input de tags não encontrado');
             return;

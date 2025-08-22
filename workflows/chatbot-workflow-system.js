@@ -284,77 +284,60 @@ let lastMessageId = 0;
 let isPolling = false;
 const POLLING_INTERVAL = 5000; // 5 segundos
 
-// Carregar workflow personalizado como padrão
-const workflowPath = path.join(__dirname, 'wizard-bh-buritis-workflow.json');
-const wizardWorkflow = JSON.parse(fs.readFileSync(workflowPath, 'utf8'));
+// Função utilitária para identificar caixas da EvolutionAPI
+function isEvolutionAPIInbox(inbox) {
+  return inbox.channel_type === 'Channel::Api' || 
+         inbox.channel_type === 'Channel::Webhook' ||
+         (inbox.name && inbox.name.toLowerCase().includes('evolution')) ||
+         (inbox.name && inbox.name.toLowerCase().includes('evo')) ||
+         (inbox.provider_config && inbox.provider_config.webhook_url && 
+          inbox.provider_config.webhook_url.includes('evolution'));
+}
 
-// Exemplo de workflow com atribuição inteligente de membros do time
-const teamAssignmentWorkflow = {
-  name: "Atendimento com Atribuição Inteligente",
-  description: "Workflow que demonstra atribuição automática para membros do time",
-  blocks: [
-    {
-      id: "welcome",
-      name: "Boas-vindas",
-      message: "Olá! Bem-vindo ao nosso atendimento. Como posso ajudá-lo hoje?",
-      buttons: [
-        {
-          text: "Suporte Técnico",
-          next_block: "technical_support",
-          assign_team: 1, // ID do time de suporte técnico
-          assign_team_member: true, // Ativar atribuição para membro específico
-          assignment_strategy: "round_robin" // Estratégia de distribuição
-        },
-        {
-          text: "Vendas",
-          next_block: "sales",
-          assign_team: 2, // ID do time de vendas
-          assign_team_member: true,
-          assignment_strategy: "least_busy" // Atribuir ao menos ocupado
-        },
-        {
-          text: "Financeiro",
-          next_block: "financial",
-          assign_team: 3, // ID do time financeiro
-          assign_team_member: true,
-          assignment_strategy: "random" // Atribuição aleatória
-        }
-      ]
-    },
-    {
-      id: "technical_support",
-      name: "Suporte Técnico",
-      message: "Você será direcionado para um especialista técnico. Por favor, aguarde um momento...",
-      assign_team: 1,
-      assign_team_member: true,
-      assignment_strategy: "round_robin",
-      pause_bot: true // Pausar bot após atribuição
-    },
-    {
-      id: "sales",
-      name: "Vendas",
-      message: "Você será direcionado para um consultor de vendas. Por favor, aguarde um momento...",
-      assign_team: 2,
-      assign_team_member: true,
-      assignment_strategy: "least_busy",
-      pause_bot: true
-    },
-    {
-      id: "financial",
-      name: "Financeiro",
-      message: "Você será direcionado para um especialista financeiro. Por favor, aguarde um momento...",
-      assign_team: 3,
-      assign_team_member: true,
-      assignment_strategy: "random",
-      pause_bot: true
+// Função utilitária para identificar caixas do WhatsApp API
+function isWhatsAppAPIInbox(inbox) {
+  return inbox.channel_type === 'Channel::Whatsapp';
+}
+
+// Função utilitária para verificar se uma caixa é suportada
+function isSupportedInbox(inbox) {
+  return isWhatsAppAPIInbox(inbox) || isEvolutionAPIInbox(inbox);
+}
+
+// Sistema sem workflows padrão - apenas fluxos configurados explicitamente por conta/caixa
+
+// Função para detectar o bloco inicial do workflow
+function getInitialBlock(workflow) {
+  if (!workflow || !workflow.blocks) {
+    return null;
+  }
+  
+  // Tentar bloco_1 primeiro
+  if (workflow.blocks.bloco_1) {
+    return 'bloco_1';
+  }
+  
+  // Tentar bloco_01
+  if (workflow.blocks.bloco_01) {
+    return 'bloco_01';
+  }
+  
+  // Se não encontrar, procurar por padrões de bloco inicial
+  const blockKeys = Object.keys(workflow.blocks);
+  const initialBlockPatterns = [
+    'bloco_1', 'bloco_01', 'bloco_001',
+    'inicio', 'start', 'welcome', 'boas_vindas'
+  ];
+  
+  for (const pattern of initialBlockPatterns) {
+    if (blockKeys.includes(pattern)) {
+      return pattern;
     }
-  ]
-};
-
-const defaultWorkflows = {
-  [wizardWorkflow.name]: wizardWorkflow.config,
-  [teamAssignmentWorkflow.name]: teamAssignmentWorkflow
-};
+  }
+  
+  // Se ainda não encontrar, retornar o primeiro bloco
+  return blockKeys[0] || null;
+}
 
 // Inicializar tabelas do sistema de workflows
 async function initializeDatabase() {
@@ -372,12 +355,6 @@ async function initializeDatabase() {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
-    `);
-
-    // Atualizar tabela existente se necessário (adicionar coluna assigned_accounts)
-    await pool.query(`
-      ALTER TABLE system_users 
-      ADD COLUMN IF NOT EXISTS assigned_accounts JSONB DEFAULT '[]'
     `);
 
     // Criar tabela de configurações de workflow
@@ -409,17 +386,11 @@ async function initializeDatabase() {
       )
     `);
 
-    // Adicionar coluna account_id se não existir
-    await pool.query(`
-      ALTER TABLE workflow_conversations 
-      ADD COLUMN IF NOT EXISTS account_id INTEGER DEFAULT 1
-    `);
-
     // Criar tabela de interações do workflow
     await pool.query(`
       CREATE TABLE IF NOT EXISTS workflow_interactions (
         id SERIAL PRIMARY KEY,
-        conversation_id INTEGER NOT NULL,
+        wf_conversation_id INTEGER NOT NULL,
         contact_id VARCHAR(255) NOT NULL,
         block_name VARCHAR(255) NOT NULL,
         user_response TEXT,
@@ -428,6 +399,24 @@ async function initializeDatabase() {
         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
+
+    // Adicionar foreign key com ON DELETE CASCADE para workflow_interactions
+    try {
+      await pool.query(`
+        ALTER TABLE workflow_interactions 
+        ADD CONSTRAINT workflow_interactions_wf_conversation_id_fkey 
+        FOREIGN KEY (wf_conversation_id) 
+        REFERENCES workflow_conversations(id) 
+        ON DELETE CASCADE
+      `);
+      console.log('✅ Foreign key com CASCADE criada para workflow_interactions');
+    } catch (error) {
+      if (error.message.includes('already exists')) {
+        console.log('ℹ️ Foreign key workflow_interactions_wf_conversation_id_fkey já existe');
+      } else {
+        console.log('⚠️ Erro ao criar foreign key para workflow_interactions:', error.message);
+      }
+    }
 
     // Criar tabela de mensagens processadas
     await pool.query(`
@@ -487,12 +476,6 @@ async function initializeDatabase() {
       )
     `);
 
-    // Atualizar tabela de campanhas existente se necessário
-    await pool.query(`
-      ALTER TABLE campaigns 
-      ADD COLUMN IF NOT EXISTS created_by INTEGER REFERENCES system_users(id)
-    `);
-
     // Criar tabela de execuções de campanhas
     await pool.query(`
       CREATE TABLE IF NOT EXISTS campaign_executions (
@@ -532,6 +515,9 @@ async function initializeDatabase() {
         reactivated_at TIMESTAMP,
         last_agent_check TIMESTAMP,
         has_human_agent BOOLEAN DEFAULT false,
+        auto_followup_disabled BOOLEAN DEFAULT true,
+        followup_disabled_by VARCHAR(255),
+        followup_disabled_at TIMESTAMP,
         agent_id INTEGER,
         last_interaction_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -705,6 +691,47 @@ async function createInitialUser() {
     }
   } catch (error) {
     console.error('Erro ao criar usuário inicial:', error);
+  }
+}
+
+// Função auxiliar para obter accountId de uma conversa
+async function getAccountIdForConversation(conversationId) {
+  try {
+    // Primeiro, tentar buscar na tabela workflow_conversations
+    const conversationResult = await pool.query(
+      'SELECT account_id FROM workflow_conversations WHERE conversation_id = $1',
+      [conversationId]
+    );
+    
+    if (conversationResult.rows.length > 0 && conversationResult.rows[0].account_id) {
+      return conversationResult.rows[0].account_id;
+    }
+    
+    // Se não encontrar, tentar buscar na tabela bot_conversation_status usando contact_id
+    const botStatusResult = await pool.query(
+      'SELECT contact_id FROM bot_conversation_status WHERE conversation_id = $1',
+      [conversationId]
+    );
+    
+    if (botStatusResult.rows.length > 0) {
+      const contactId = botStatusResult.rows[0].contact_id;
+      
+      // Buscar na tabela workflow_conversations usando contact_id
+      const contactResult = await pool.query(
+        'SELECT account_id FROM workflow_conversations WHERE contact_id = $1 AND status = $2',
+        [contactId, 'active']
+      );
+      
+      if (contactResult.rows.length > 0 && contactResult.rows[0].account_id) {
+        return contactResult.rows[0].account_id;
+      }
+    }
+    
+    // Se ainda não encontrar, retornar o padrão
+    return CHATWOOT_ACCOUNT_ID;
+  } catch (error) {
+    console.error(`❌ Erro ao buscar accountId para conversa ${conversationId}:`, error);
+    return CHATWOOT_ACCOUNT_ID;
   }
 }
 
@@ -1350,12 +1377,7 @@ class ConversationManager {
   // Carregar workflows do banco de dados
   async loadWorkflows() {
     try {
-      // Carregar workflows do arquivo JSON
-      for (const [name, config] of Object.entries(defaultWorkflows)) {
-        this.workflows.set(name, config);
-      }
-      
-      // Carregar também workflows salvos no banco
+      // Carregar apenas workflows salvos no banco (sem padrões)
       await this.loadWorkflowsFromDatabase();
     } catch (error) {
       console.error('Erro ao carregar workflows:', error);
@@ -1367,11 +1389,11 @@ class ConversationManager {
     try {
       console.log('🔍 Carregando workflows salvos no banco de dados...');
       
-      // Buscar em workflow_configs
-      const configResult = await pool.query('SELECT workflow_name, config FROM workflow_configs');
+      // Buscar em workflow_configs (apenas ativos)
+      const configResult = await pool.query('SELECT workflow_name, config FROM workflow_configs WHERE is_active = true');
       
-      // Buscar em inbox_workflows
-      const inboxResult = await pool.query('SELECT DISTINCT workflow_name, workflow_config FROM inbox_workflows');
+      // Buscar em inbox_workflows (apenas ativos)
+      const inboxResult = await pool.query('SELECT DISTINCT workflow_name, workflow_config FROM inbox_workflows WHERE is_active = true');
       
       let loadedCount = 0;
       
@@ -1406,17 +1428,17 @@ class ConversationManager {
     try {
       console.log(`🔍 Buscando workflow '${workflowName}' no banco de dados...`);
       
-      // Primeiro tentar buscar por nome exato
+      // Primeiro tentar buscar por nome exato (apenas ativos)
       let result = await pool.query(
-        'SELECT * FROM workflow_configs WHERE workflow_name = $1',
+        'SELECT * FROM workflow_configs WHERE workflow_name = $1 AND is_active = true',
         [workflowName]
       );
       
-      // Se não encontrar, tentar buscar em inbox_workflows
+      // Se não encontrar, tentar buscar em inbox_workflows (apenas ativos)
       if (result.rows.length === 0) {
         console.log(`🔍 Não encontrado em workflow_configs, buscando em inbox_workflows...`);
         result = await pool.query(
-          'SELECT workflow_name, workflow_config as config FROM inbox_workflows WHERE workflow_name = $1',
+          'SELECT workflow_name, workflow_config as config FROM inbox_workflows WHERE workflow_name = $1 AND is_active = true',
           [workflowName]
         );
       }
@@ -1486,19 +1508,27 @@ class ConversationManager {
         [contactId, 'active']
       );
 
+      // Carregar workflow para determinar o bloco inicial
+      const workflowConfig = await this.loadWorkflowFromDatabase(workflowName);
+      const initialBlock = getInitialBlock(workflowConfig);
+      
+      if (!initialBlock) {
+        throw new Error(`Não foi possível determinar o bloco inicial para o workflow '${workflowName}'`);
+      }
+      
       if (existingResult.rows.length > 0) {
         // Atualizar conversa existente
         await pool.query(
-          'UPDATE workflow_conversations SET workflow_name = $1, current_block = $2, data = $3, account_id = $4, last_activity = CURRENT_TIMESTAMP WHERE id = $5',
-          [workflowName, 'bloco_1', JSON.stringify(initialData), accountId, existingResult.rows[0].id]
+          'UPDATE workflow_conversations SET workflow_name = $1, current_block = $2, data = $3, account_id = $4, conversation_id = $5, last_activity = CURRENT_TIMESTAMP WHERE id = $6',
+          [workflowName, initialBlock, JSON.stringify(initialData), accountId, initialData.conversation_id || null, existingResult.rows[0].id]
         );
         return existingResult.rows[0];
       }
 
       // Criar nova conversa
       const result = await pool.query(
-        'INSERT INTO workflow_conversations (contact_id, workflow_name, current_block, data, account_id) VALUES ($1, $2, $3, $4, $5) RETURNING *',
-        [contactId, workflowName, 'bloco_1', JSON.stringify(initialData), accountId]
+        'INSERT INTO workflow_conversations (contact_id, workflow_name, current_block, data, account_id, conversation_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
+        [contactId, workflowName, initialBlock, JSON.stringify(initialData), accountId, initialData.conversation_id || null]
       );
 
       return result.rows[0];
@@ -1653,7 +1683,7 @@ class ConversationManager {
   async saveInteraction(conversationId, contactId, blockName, userResponse, botMessage, buttons) {
     try {
       await pool.query(
-        'INSERT INTO workflow_interactions (conversation_id, contact_id, block_name, user_response, bot_message, buttons) VALUES ($1, $2, $3, $4, $5, $6)',
+        'INSERT INTO workflow_interactions (wf_conversation_id, contact_id, block_name, user_response, bot_message, buttons) VALUES ($1, $2, $3, $4, $5, $6)',
         [conversationId, contactId, blockName, userResponse, botMessage, JSON.stringify(buttons)]
       );
     } catch (error) {
@@ -1788,6 +1818,15 @@ class ConversationManager {
         console.log(`⏸️ Botão "${button.text}" solicita pausa do bot - pausando automaticamente`);
         await pauseBotForConversation(conversationId, contactId, 'button_action', 'system');
       }
+
+      // Processar auto_followup baseado no botão
+      if (button.auto_followup_disabled === true) {
+        console.log(`🚫 Botão "${button.text}" solicita desativação do auto_followup - desativando automaticamente`);
+        await disableAutoFollowupForConversation(conversationId, contactId, 'button_action');
+      } else if (button.auto_followup_disabled === false) {
+        console.log(`✅ Botão "${button.text}" solicita ativação do auto_followup - ativando automaticamente`);
+        await enableAutoFollowupForConversation(conversationId, contactId, 'button_action');
+      }
     } catch (error) {
       console.error(`❌ Erro ao processar ações do botão "${button.text}":`, error);
     }
@@ -1835,6 +1874,15 @@ class ConversationManager {
       if (block.pause_bot === true) {
         console.log(`⏸️ Bloco "${block.name || block.id}" solicita pausa do bot - pausando automaticamente`);
         await pauseBotForConversation(conversationId, contactId, 'sector_transfer', 'system');
+      }
+
+      // Desativar auto_followup se solicitado no bloco
+      if (block.auto_followup_disabled === true) {
+        console.log(`🚫 Bloco "${block.name || block.id}" solicita desativação do auto_followup - desativando automaticamente`);
+        await disableAutoFollowupForConversation(conversationId, contactId);
+      } else if (block.auto_followup_disabled === false) {
+        console.log(`✅ Bloco "${block.name || block.id}" solicita ativação do auto_followup - ativando automaticamente`);
+        await enableAutoFollowupForConversation(conversationId, contactId, 'block_action');
       }
     } catch (error) {
       console.error(`❌ Erro ao processar ações do bloco "${block.name || block.id}":`, error);
@@ -1964,10 +2012,13 @@ async function initializeSystem() {
     startChatwootPolling();
     
     // Iniciar verificador de reativação automática
-startBotReactivationScheduler();
+    startBotReactivationScheduler();
 
-// Iniciar verificador de campanhas agendadas
-startCampaignScheduler();
+    // Iniciar verificador de campanhas agendadas
+    startCampaignScheduler();
+
+    // Iniciar verificador de auto followup
+    startAutoFollowupScheduler();
   } catch (error) {
     console.error('❌ Erro ao inicializar sistema:', error);
     process.exit(1);
@@ -2028,6 +2079,510 @@ function startCampaignScheduler() {
   }, 5 * 60 * 1000); // 5 minutos
   
   console.log('✅ Verificador de campanhas agendadas configurado (verificação a cada 5 minutos)');
+}
+
+// Iniciador do scheduler de auto followup
+function startAutoFollowupScheduler() {
+  console.log('🔄 Iniciando verificador de auto followup...');
+  
+  // Executar primeira verificação após 1 minuto
+  setTimeout(() => {
+    checkAndExecuteAutoFollowups();
+  }, 60000);
+  
+  // Executar verificação a cada 2 minutos
+  setInterval(async () => {
+    try {
+      await checkAndExecuteAutoFollowups();
+    } catch (error) {
+      console.error('❌ Erro na verificação de auto followup:', error);
+    }
+  }, 2 * 60 * 1000); // 2 minutos
+  
+  console.log('✅ Verificador de auto followup configurado (verificação a cada 2 minutos)');
+}
+
+// Verificar e executar auto followups
+async function checkAndExecuteAutoFollowups() {
+  try {
+    console.log(`🔄 Verificando auto followups... Horário atual: ${getTimestamp()}`);
+    
+    // Primeiro: buscar workflows com auto_followup
+    const workflowsWithFollowup = await getWorkflowsWithAutoFollowup();
+    
+    if (workflowsWithFollowup.length === 0) {
+      console.log(`🔄 Nenhum workflow com auto_followup configurado encontrado`);
+      return;
+    }
+    
+    console.log(`🔄 Encontrados ${workflowsWithFollowup.length} workflow(s) com auto_followup configurado`);
+    
+    // Segundo: buscar conversas ativas apenas dos workflows que têm auto_followup
+    const workflowNames = workflowsWithFollowup.map(w => w.workflow_name);
+    const activeConversations = await pool.query(`
+      SELECT 
+        wc.id,
+        wc.contact_id,
+        wc.workflow_name,
+        wc.current_block,
+        wc.data,
+        wc.last_activity,
+        wc.created_at,
+        EXTRACT(EPOCH FROM (NOW() - wc.last_activity)) as seconds_inactive
+      FROM workflow_conversations wc
+      WHERE wc.status = 'active'
+        AND wc.last_activity IS NOT NULL
+        AND wc.workflow_name = ANY($1)
+      ORDER BY wc.last_activity ASC
+    `, [workflowNames]);
+    
+    if (activeConversations.rows.length === 0) {
+      console.log(`🔄 Nenhuma conversa ativa encontrada nos workflows com auto_followup`);
+      return;
+    }
+    
+    console.log(`🔄 Verificando ${activeConversations.rows.length} conversa(s) em workflows com auto_followup`);
+    
+    // Usar o cálculo do PostgreSQL que está correto
+    const conversationsWithInactivity = activeConversations.rows.map(conversation => {
+      const secondsInactive = Math.floor(parseFloat(conversation.seconds_inactive));
+
+      //console.log('Conversation:', JSON.stringify(conversation, null, 2));
+      
+      console.log(`🔍 Conversa ${conversation.data.conversation_id} (${conversation.contact_id}):`);
+      console.log(`   Última atividade: ${conversation.last_activity}`);
+      console.log(`   Segundos inativos (PostgreSQL): ${secondsInactive}`);
+      
+      return {
+        ...conversation,
+        seconds_inactive: secondsInactive
+      };
+    });
+    
+    // Terceiro: processar conversas agrupadas por workflow
+    const conversationsByWorkflow = {};
+    for (const conversation of conversationsWithInactivity) {
+      if (!conversationsByWorkflow[conversation.workflow_name]) {
+        conversationsByWorkflow[conversation.workflow_name] = [];
+      }
+      conversationsByWorkflow[conversation.workflow_name].push(conversation);
+    }
+    
+    // Quarto: processar cada workflow
+    for (const [workflowName, conversations] of Object.entries(conversationsByWorkflow)) {
+      try {
+        // Obter workflow do cache ou carregar do banco
+        let workflow = conversationManager.workflows.get(workflowName);
+        if (!workflow) {
+          workflow = await conversationManager.loadWorkflowFromDatabase(workflowName);
+        }
+        
+        if (!workflow || !workflow.auto_followup) {
+          continue;
+        }
+        
+        console.log(`📋 Processando workflow '${workflowName}' com ${conversations.length} conversa(s)`);
+        
+        // Processar todas as conversas deste workflow
+        for (const conversation of conversations) {
+          try {
+            await processAutoFollowupForConversationWithWorkflow(conversation, workflow);
+          } catch (error) {
+            console.error(`❌ Erro ao processar followup para conversa ${conversation.id}:`, error);
+          }
+        }
+      } catch (error) {
+        console.error(`❌ Erro ao processar workflow ${workflowName}:`, error);
+      }
+    }
+    
+  } catch (error) {
+    console.error('❌ Erro na verificação de auto followups:', error);
+  }
+}
+
+// Buscar workflows que têm auto_followup configurado
+async function getWorkflowsWithAutoFollowup() {
+  try {
+    const workflows = [];
+    
+    // Buscar em workflow_configs
+    const result1 = await pool.query(`
+      SELECT workflow_name, config 
+      FROM workflow_configs 
+      WHERE is_active = true 
+        AND config::text LIKE '%auto_followup%'
+    `);
+    
+    for (const row of result1.rows) {
+      try {
+        const config = typeof row.config === 'string' ? JSON.parse(row.config) : row.config;
+        if (config.auto_followup && Object.keys(config.auto_followup).length > 0) {
+          workflows.push({
+            workflow_name: row.workflow_name,
+            source: 'workflow_configs'
+          });
+        }
+      } catch (e) {
+        // Ignorar workflows com JSON inválido
+      }
+    }
+    
+    // Buscar em inbox_workflows
+    const result2 = await pool.query(`
+      SELECT workflow_name, workflow_config as config 
+      FROM inbox_workflows 
+      WHERE is_active = true 
+        AND workflow_config::text LIKE '%auto_followup%'
+    `);
+    
+    for (const row of result2.rows) {
+      try {
+        const config = typeof row.config === 'string' ? JSON.parse(row.config) : row.config;
+        if (config.auto_followup && Object.keys(config.auto_followup).length > 0) {
+          workflows.push({
+            workflow_name: row.workflow_name,
+            source: 'inbox_workflows'
+          });
+        }
+      } catch (e) {
+        // Ignorar workflows com JSON inválido
+      }
+    }
+    
+    return workflows;
+  } catch (error) {
+    console.error('❌ Erro ao buscar workflows com auto_followup:', error);
+    return [];
+  }
+}
+
+// Processar auto followup para uma conversa específica (versão otimizada)
+async function processAutoFollowupForConversationWithWorkflow(conversation, workflow) {
+  const { id, contact_id, workflow_name, current_block, data, last_activity, seconds_inactive } = conversation;
+  
+  try {
+    if (!workflow || !workflow.auto_followup) {
+      return; // Sem configuração de auto followup
+    }
+    
+    // Verificar cada bloco configurado para auto followup
+    for (const [blockName, followupConfig] of Object.entries(workflow.auto_followup)) {
+      const { delay, condition } = followupConfig;
+      
+      // Delay já está em segundos (nova implementação)
+      const delaySeconds = delay;
+
+      console.log(`🔄 Delay em segundos: ${delaySeconds}`); 
+      console.log(`🔄 Segundos inativos: ${seconds_inactive}`);
+       
+      // Verificar se o tempo de inatividade atingiu o delay configurado
+      if (seconds_inactive >= delaySeconds) {
+        console.log(`⏰ Followup ativado para conversa ${id} - Bloco ${blockName} - Inativo há ${Math.round(seconds_inactive / 60)} minutos`);
+        
+        // Verificar condição
+        if (condition === 'inactive') {
+          // Verificar se o auto_followup está desativado para esta conversa
+          const isFollowupDisabled = await isAutoFollowupDisabledForConversation(conversation.data.conversation_id, contact_id);
+          
+          if (isFollowupDisabled) {
+            console.log(`🚫 Auto_followup desativado para conversa ${id}, pulando followup ${blockName}`);
+            return;
+          }
+          
+          // Verificar se o bot está ativo para esta conversa
+          const isBotActive = await isBotActiveForConversation(conversation.data.conversation_id, contact_id, CHATWOOT_ACCOUNT_ID);
+          
+          if (isBotActive) {
+            // Verificar se o bloco já foi executado recentemente
+            const alreadyExecuted = await checkIfFollowupAlreadyExecuted(conversation.id, blockName, delaySeconds);
+            
+            if (!alreadyExecuted) {
+              await executeAutoFollowup(conversation.id, contact_id, workflow, blockName, data);
+            } else {
+              console.log(`⏭️ Followup para bloco ${blockName} já foi executado recentemente`);
+            }
+          } else {
+            console.log(`⏸️ Bot pausado para conversa ${id}, pulando followup ${blockName}`);
+          }
+        }
+      }
+    }
+    
+  } catch (error) {
+    console.error(`❌ Erro ao processar followup para conversa ${conversation.data.conversation_id}:`, error);
+  }
+}
+
+// Obter ID da conversa do Chatwoot baseado no contact_id
+async function getChatwootConversationId(contactId, accountId = CHATWOOT_ACCOUNT_ID) {
+  try {
+    // Primeiro, buscar o account_id correto na tabela workflow_conversations
+    const conversationResult = await pool.query(`
+      SELECT account_id 
+      FROM workflow_conversations 
+      WHERE contact_id = $1 
+        AND status = 'active'
+      ORDER BY last_activity DESC 
+      LIMIT 1
+    `, [contactId]);
+    
+    if (conversationResult.rows.length === 0) {
+      console.log(`⚠️ Conversa de workflow não encontrada para contact ${contactId}`);
+      return null;
+    }
+    
+    const correctAccountId = conversationResult.rows[0].account_id;
+    console.log(`🔍 Buscando conversa do Chatwoot para contact ${contactId} na conta ${correctAccountId}`);
+    
+    // Usar a API do Chatwoot para buscar conversas na conta correta
+    const response = await axios.get(`${CHATWOOT_BASE_URL}/api/v1/accounts/${correctAccountId}/conversations`, {
+      headers: {
+        'api_access_token': CHATWOOT_API_TOKEN,
+        'Content-Type': 'application/json'
+      },
+      params: {
+        status: 'open'
+      }
+    });
+
+    // Verificar se a resposta tem a estrutura esperada
+    if (!response.data || !response.data.data || !response.data.data.payload || !Array.isArray(response.data.data.payload)) {
+      console.log(`⚠️ Resposta inesperada da API do Chatwoot para conta ${correctAccountId}:`, JSON.stringify(response.data, null, 2));
+      return null;
+    }
+
+    console.log(`📋 Encontradas ${response.data.data.payload.length} conversas abertas na conta ${correctAccountId}`);
+
+    // Mostrar todas as conversas para debug
+    response.data.data.payload.forEach((conv, index) => {
+      const phoneNumber = conv.meta?.sender?.phone_number;
+      console.log(`📞 Conversa ${index + 1}: ID ${conv.id}, Telefone: ${phoneNumber}`);
+    });
+
+    // Procurar conversa com o contact_id
+    const conversation = response.data.data.payload.find(conv => {
+      const phoneNumber = conv.meta?.sender?.phone_number;
+      console.log(`🔍 Verificando conversa ${conv.id}: ${phoneNumber} vs ${contactId}`);
+      return phoneNumber === contactId;
+    });
+
+    if (conversation) {
+      console.log(`✅ Conversa encontrada: ID ${conversation.id} na conta ${correctAccountId}`);
+    } else {
+      console.log(`❌ Conversa não encontrada para contact ${contactId} na conta ${correctAccountId}`);
+    }
+
+    return conversation ? conversation.id : null;
+  } catch (error) {
+    console.error('❌ Erro ao obter ID da conversa do Chatwoot:', error);
+    return null;
+  }
+}
+
+// Verificar se uma conversa está inativa (sem atividade do usuário)
+async function isConversationInactive(contactId, accountId = CHATWOOT_ACCOUNT_ID) {
+  try {
+    // Verificar se a conversa de workflow está inativa baseada no last_activity
+    const conversationResult = await pool.query(`
+      SELECT 
+        id,
+        last_activity,
+        EXTRACT(EPOCH FROM (NOW() - last_activity)) as seconds_inactive
+      FROM workflow_conversations 
+      WHERE contact_id = $1 
+        AND status = 'active'
+      ORDER BY last_activity DESC 
+      LIMIT 1
+    `, [contactId]);
+    
+    if (conversationResult.rows.length === 0) {
+      console.log(`⚠️ Conversa de workflow não encontrada para contact ${contactId}`);
+      return false;
+    }
+    
+    const conversation = conversationResult.rows[0];
+    const secondsInactive = Math.floor(parseFloat(conversation.seconds_inactive));
+    const minutesInactive = Math.floor(secondsInactive / 60);
+    
+    // Verificar se houve interações recentes do usuário (últimas 2 horas)
+    const recentInteractions = await pool.query(`
+      SELECT COUNT(*) as count
+      FROM workflow_interactions 
+      WHERE wf_conversation_id = $1 
+        AND user_response != 'AUTO_FOLLOWUP'  -- Excluir followups automáticos
+        AND timestamp > NOW() - INTERVAL '2 hours'
+    `, [conversation.id]);
+    
+    const hasRecentUserActivity = recentInteractions.rows[0].count > 0;
+    
+    // Considerar inativa se:
+    // 1. Não houve atividade nas últimas 2 horas (7200 segundos) E
+    // 2. Não houve interações do usuário nas últimas 2 horas
+    const isInactive = secondsInactive >= 7200 && !hasRecentUserActivity;
+    
+    console.log(`🔍 Verificação de inatividade para ${contactId}:`);
+    console.log(`   Última atividade: ${conversation.last_activity}`);
+    console.log(`   Segundos inativos: ${secondsInactive} (${minutesInactive} minutos)`);
+    console.log(`   Interações usuário (2h): ${recentInteractions.rows[0].count}`);
+    console.log(`   Considerada inativa: ${isInactive ? '✅ SIM' : '❌ NÃO'}`);
+    
+    return isInactive;
+  } catch (error) {
+    console.error('❌ Erro ao verificar inatividade da conversa:', error);
+    return false;
+  }
+}
+
+// Verificar se o followup já foi executado recentemente
+async function checkIfFollowupAlreadyExecuted(conversationId, blockName, delaySeconds) {
+  try {
+    // Verificar se há uma interação com este bloco desde que o delay foi atingido
+    const recentInteraction = await pool.query(`
+      SELECT timestamp 
+      FROM workflow_interactions 
+      WHERE wf_conversation_id = $1 
+        AND block_name = $2 
+        AND timestamp > NOW() - INTERVAL '1 day'
+      ORDER BY timestamp DESC 
+      LIMIT 1
+    `, [conversationId, blockName]);
+    
+    if (recentInteraction.rows.length > 0) {
+      const lastExecution = recentInteraction.rows[0].timestamp;
+      const timeSinceExecution = (Date.now() - new Date(lastExecution).getTime()) / 1000;
+      
+      // Se foi executado há menos tempo que o delay, considerar como já executado
+      if (timeSinceExecution < delaySeconds) {
+        console.log(`⏭️ Followup ${blockName} executado há ${Math.round(timeSinceExecution / 60)} minutos, aguardando mais ${Math.round((delaySeconds - timeSinceExecution) / 60)} minutos`);
+        return true;
+      }
+    }
+    
+    // Verificar se já foi executado um followup para este bloco (independente do tempo)
+    const followupExecuted = await pool.query(`
+      SELECT timestamp 
+      FROM workflow_interactions 
+      WHERE wf_conversation_id = $1 
+        AND block_name = $2 
+        AND user_response = 'AUTO_FOLLOWUP'
+      ORDER BY timestamp DESC 
+      LIMIT 1
+    `, [conversationId, blockName]);
+    
+    if (followupExecuted.rows.length > 0) {
+      console.log(`⏭️ Followup ${blockName} já foi executado anteriormente para esta conversa`);
+      return true;
+    }
+    
+    return false;
+  } catch (error) {
+    console.error('❌ Erro ao verificar execução recente de followup:', error);
+    return false;
+  }
+}
+
+// Executar auto followup
+async function executeAutoFollowup(conversationId, contactId, workflow, blockName, conversationData) {
+  try {
+    console.log(`🚀 Executando auto followup: ${blockName} para conversa ${conversationId}`);
+    
+    // Obter o account_id correto da tabela workflow_conversations
+    const accountResult = await pool.query(`
+      SELECT account_id 
+      FROM workflow_conversations 
+      WHERE id = $1
+    `, [conversationId]);
+    
+    if (accountResult.rows.length === 0) {
+      console.error(`❌ Conversa ${conversationId} não encontrada`);
+      return;
+    }
+    
+    const correctAccountId = accountResult.rows[0].account_id;
+    console.log(`🔍 Usando conta ${correctAccountId} para conversa ${conversationId}`);
+    
+    // Obter o ID da conversa do Chatwoot
+    const chatwootConversationId = await getChatwootConversationId(contactId, correctAccountId);
+    if (!chatwootConversationId) {
+      console.error(`❌ Não foi possível encontrar conversa do Chatwoot para contact ${contactId}`);
+      return;
+    }
+    
+    // VERIFICAÇÃO ADICIONAL: Verificar se a conversa atual está em uma caixa com fluxo ativo
+    try {
+      const conversationResponse = await axios.get(`${CHATWOOT_BASE_URL}/api/v1/accounts/${correctAccountId}/conversations/${chatwootConversationId}`, {
+        headers: {
+          'api_access_token': CHATWOOT_API_TOKEN,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      const inboxId = conversationResponse.data.payload.inbox_id;
+      const currentInboxWorkflow = await inboxWorkflowManager.getInboxWorkflow(correctAccountId, inboxId);
+      if (!currentInboxWorkflow) {
+        console.log(`🚫 Auto followup cancelado: conversa ${conversationId} está em caixa sem fluxo ativo (Inbox: ${inboxId})`);
+        return;
+      }
+    } catch (error) {
+      console.log(`⚠️ Não foi possível verificar inbox da conversa, continuando com followup:`, error.message);
+    }
+    
+    // Obter o bloco de followup
+    const followupBlock = workflow.blocks[blockName];
+    if (!followupBlock) {
+      console.error(`❌ Bloco de followup ${blockName} não encontrado no workflow`);
+      return;
+    }
+    
+    // Processar dados da conversa
+    let data = {};
+    if (conversationData) {
+      try {
+        data = typeof conversationData === 'string' ? JSON.parse(conversationData) : conversationData;
+      } catch (e) {
+        console.error('❌ Erro ao processar dados da conversa:', e);
+      }
+    }
+    
+    // Processar mensagem com variáveis
+    const processedMessage = conversationManager.processMessage(followupBlock.message, data);
+    
+    // ATUALIZAR O BLOCO ATUAL PARA O BLOCO DE FOLLOWUP ANTES DE ENVIAR
+    await pool.query(
+      'UPDATE workflow_conversations SET current_block = $1, last_activity = CURRENT_TIMESTAMP WHERE id = $2',
+      [blockName, conversationId]
+    );
+    console.log(`🔄 Atualizando conversa ${conversationId} para bloco ${blockName} antes do followup`);
+    
+    // Enviar mensagem de followup
+    const buttons = followupBlock.buttons || [];
+    await sendChatwootMessage(chatwootConversationId, processedMessage, buttons, null, correctAccountId);
+    
+    // Salvar interação - usar o id da tabela workflow_conversations, não o conversation_id do Chatwoot
+    await conversationManager.saveInteraction(
+      conversationData.id || conversationId, 
+      contactId, 
+      blockName, 
+      'AUTO_FOLLOWUP', 
+      processedMessage, 
+      buttons
+    );
+    
+    // Aplicar ações do bloco (tags, labels, etc.)
+    await conversationManager.processBlockActions(followupBlock, conversationData?.conversation_id || conversationId, contactId, correctAccountId);
+    
+    console.log(`✅ Followup executado para bloco: ${blockName}`);
+    
+    // Se o bloco tem pause_bot, pausar o bot
+    if (followupBlock.pause_bot) {
+      await pauseBotForConversation(conversationData?.conversation_id || conversationId, contactId, 'Auto followup executado', 'system');
+      console.log(`⏸️ Bot pausado após followup para conversa ${conversationData?.conversation_id || conversationId}`);
+    }
+    
+  } catch (error) {
+    console.error(`❌ Erro ao executar auto followup ${blockName}:`, error);
+  }
 }
 
 // Verificar e executar campanhas agendadas
@@ -2160,15 +2715,32 @@ async function getChatwootConversations(accountId = CHATWOOT_ACCOUNT_ID) {
 // Processar conversa do Chatwoot
 async function processChatwootConversation(conversation, accountId = CHATWOOT_ACCOUNT_ID) {
   try {
+    const conversationId = conversation.id;
+    const inboxId = conversation.inbox_id; // Detectar automaticamente o inbox_id
+    
+    // VERIFICAÇÃO: Ignorar conversas de grupo
+    if (
+        conversation.phone_number === null ||
+        conversation.conversation_type === 'group' || 
+        conversation.conversation_type === 'team' ||
+        conversation.conversation_type === 'multiple' ||
+        conversation.meta?.channel_type === 'group' ||
+        conversation.meta?.channel_type === 'team' ||
+        conversation.meta?.channel_type === 'multiple' ||
+        conversation.meta?.sender?.phone_number === null ||
+        (conversation.meta?.sender?.name && conversation.meta.sender.name.toLowerCase().includes('(group)')) ||
+        (conversation.meta?.sender?.identifier && conversation.meta.sender.identifier.includes('@g.us'))) {
+      //console.log(`👥 Ignorando conversa de grupo/team - ID: ${conversationId}, Name: ${conversation.meta?.sender?.name}`);
+      return;
+    }
+    
     // Novo formato: pegar o número do contato de conversation.meta.sender.phone_number
     const contactId = conversation.meta && conversation.meta.sender && conversation.meta.sender.phone_number
       ? conversation.meta.sender.phone_number
       : null;
-    const conversationId = conversation.id;
-    const inboxId = conversation.inbox_id; // Detectar automaticamente o inbox_id
     
     if (!contactId) {
-      console.error('❌ Não foi possível extrair o contactId da conversa:', conversation);
+      console.error('❌ Não foi possível extrair o contactId da conversa:', JSON.stringify(conversation));
       return;
     }
     
@@ -2495,10 +3067,11 @@ async function processUserMessage(contactId, conversationId, userMessage, inboxI
           console.log(`✅ Conversa criada com sucesso:`, conversation);
           
           const workflow = inboxWorkflow.workflow_config;
-          const firstBlock = workflow.blocks.bloco_1;
+          const initialBlockName = getInitialBlock(workflow);
+          const firstBlock = workflow.blocks[initialBlockName];
           
           if (!firstBlock) {
-            console.error(`❌ Bloco 'bloco_1' não encontrado no workflow`, Object.keys(workflow.blocks));
+            console.error(`❌ Bloco inicial '${initialBlockName}' não encontrado no workflow`, Object.keys(workflow.blocks));
             return;
           }
           
@@ -2513,54 +3086,19 @@ async function processUserMessage(contactId, conversationId, userMessage, inboxI
             accountId
           );
         } else {
-          console.log(`⚠️ Nenhum fluxo configurado para a caixa de entrada ${inboxId}, usando fluxo padrão`);
-          
-          // Verificar se o workflow padrão existe
-          const defaultWorkflow = conversationManager.workflows.get('wizard_bh_buritis');
-          if (!defaultWorkflow) {
-            console.error(`❌ Workflow padrão 'wizard_bh_buritis' não encontrado! Workflows disponíveis:`, 
-              Array.from(conversationManager.workflows.keys()));
-            return;
-          }
-          
-          // Fallback para o fluxo padrão
-          try {
-          conversation = await conversationManager.startConversation(contactId, 'wizard_bh_buritis', {
-            conversation_id: conversationId,
-            nome: await getContactName(contactId, conversation, accountId)
-          }, accountId);
-            
-            if (!conversation) {
-              console.error(`❌ Falha ao criar conversa padrão para contato ${contactId}`);
-              return;
-            }
-          } catch (startError) {
-            console.error(`❌ Erro ao iniciar conversa padrão:`, startError.message);
-            return;
-          }
-          
-          const workflow = conversationManager.workflows.get('wizard_bh_buritis');
-          const firstBlock = workflow.blocks.bloco_1;
-          
-          if (!firstBlock) {
-            console.error(`❌ Bloco 'bloco_1' não encontrado no workflow padrão`, Object.keys(workflow.blocks));
-            return;
-          }
-          
-          // Aplicar ações do primeiro bloco
-          await conversationManager.processBlockActions(firstBlock, conversationId, contactId, accountId);
-          
-          await sendChatwootMessage(
-            conversationId,
-            conversationManager.processMessage(firstBlock.message, conversation.data),
-            firstBlock.buttons,
-            firstBlock.media,
-            accountId
-          );
+          console.log(`🚫 Nenhum fluxo configurado para a caixa de entrada ${inboxId}. Bot não responderá automaticamente.`);
+          return;
         }
       }
     } else {
       // Processar resposta na conversa existente
+      // VERIFICAÇÃO ADICIONAL: Verificar se a caixa de entrada atual tem fluxo ativo
+      const currentInboxWorkflow = await inboxWorkflowManager.getInboxWorkflow(accountId, inboxId);
+      if (!currentInboxWorkflow) {
+        console.log(`🚫 Conversa existente em caixa sem fluxo ativo (Inbox: ${inboxId}). Bot não responderá automaticamente.`);
+        return;
+      }
+      
       const result = await conversationManager.processResponse(contactId, userMessage, accountId);
       
       if (result && result.type) {
@@ -3655,6 +4193,28 @@ async function isBotActiveForConversation(conversationId, contactId, accountId =
   }
 }
 
+// Verificar se o auto_followup está desativado para uma conversa
+async function isAutoFollowupDisabledForConversation(conversationId, contactId) {
+  try {
+    console.log(`🚫 Verificando se auto_followup está desativado para conversa ${conversationId}`);
+    
+    // Buscar status do bot no banco
+    const botStatus = await getBotConversationStatus(conversationId, contactId);
+    
+    if (botStatus.auto_followup_disabled) {
+      console.log(`🚫 Auto_followup desativado para conversa ${conversationId}: ${botStatus.followup_disabled_by}`);
+      return true;
+    }
+    
+    console.log(`✅ Auto_followup ativo para conversa ${conversationId}`);
+    return false;
+  } catch (error) {
+    console.error(`❌ Erro ao verificar status do auto_followup para conversa ${conversationId}:`, error);
+    // Em caso de erro, permitir que o followup funcione (failsafe)
+    return false;
+  }
+}
+
 // Obter ou criar status do bot para uma conversa
 async function getBotConversationStatus(conversationId, contactId) {
   try {
@@ -3665,12 +4225,12 @@ async function getBotConversationStatus(conversationId, contactId) {
     );
     
     if (result.rows.length === 0) {
-      // Criar novo status se não existir
-      console.log(`📝 Criando novo status de bot para conversa ${conversationId}`);
+      // Criar novo status se não existir (auto_followup_disabled = true por padrão)
+      console.log(`📝 Criando novo status de bot para conversa ${conversationId} (auto_followup_disabled = true por padrão)`);
       result = await pool.query(`
         INSERT INTO bot_conversation_status 
-        (conversation_id, contact_id, bot_active, last_interaction_at, created_at, updated_at) 
-        VALUES ($1, $2, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) 
+        (conversation_id, contact_id, bot_active, auto_followup_disabled, last_interaction_at, created_at, updated_at) 
+        VALUES ($1, $2, true, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) 
         RETURNING *
       `, [conversationId, contactId]);
     }
@@ -3678,11 +4238,12 @@ async function getBotConversationStatus(conversationId, contactId) {
     return result.rows[0];
   } catch (error) {
     console.error(`❌ Erro ao obter status do bot para conversa ${conversationId}:`, error);
-    // Retornar status padrão ativo em caso de erro
+    // Retornar status padrão ativo em caso de erro (auto_followup_disabled = true por padrão)
     return {
       conversation_id: conversationId,
       contact_id: contactId,
       bot_active: true,
+      auto_followup_disabled: true,
       paused_reason: null,
       paused_by: null,
       has_human_agent: false
@@ -3691,9 +4252,10 @@ async function getBotConversationStatus(conversationId, contactId) {
 }
 
 // Verificar se há atendente humano ativo no Chatwoot
-async function checkHumanAgentActive(conversationId, accountId = CHATWOOT_ACCOUNT_ID) {
+async function checkHumanAgentActive(conversationId, accountId) {
   try {
     console.log(`🔍 Verificando atendente humano para conversa ${conversationId}`);
+    console.log(`🔍 url: ${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/conversations/${conversationId}`);
     
     const response = await axios.get(
       `${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/conversations/${conversationId}`,
@@ -3701,6 +4263,7 @@ async function checkHumanAgentActive(conversationId, accountId = CHATWOOT_ACCOUN
         headers: { 'api_access_token': CHATWOOT_API_TOKEN }
       }
     );
+    
     
     const conversation = response.data;
     
@@ -3788,6 +4351,56 @@ async function pauseBotForConversation(conversationId, contactId, reason, paused
   }
 }
 
+// Desativar auto_followup para uma conversa específica
+async function disableAutoFollowupForConversation(conversationId, contactId, disabledBy = 'system') {
+  try {
+    console.log(`🚫 Desativando auto_followup para conversa ${conversationId}`);
+    
+    await pool.query(`
+      INSERT INTO bot_conversation_status 
+      (conversation_id, contact_id, auto_followup_disabled, followup_disabled_by, followup_disabled_at, last_interaction_at, updated_at) 
+      VALUES ($1, $2, true, $3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      ON CONFLICT (conversation_id) 
+      DO UPDATE SET 
+        auto_followup_disabled = true, 
+        followup_disabled_by = $3, 
+        followup_disabled_at = CURRENT_TIMESTAMP,
+        updated_at = CURRENT_TIMESTAMP
+    `, [conversationId, contactId, disabledBy]);
+    
+    console.log(`✅ Auto_followup desativado com sucesso para conversa ${conversationId}`);
+    return true;
+  } catch (error) {
+    console.error(`❌ Erro ao desativar auto_followup para conversa ${conversationId}:`, error);
+    return false;
+  }
+}
+
+// Ativar auto_followup para uma conversa específica
+async function enableAutoFollowupForConversation(conversationId, contactId, enabledBy = 'system') {
+  try {
+    console.log(`✅ Ativando auto_followup para conversa ${conversationId}`);
+    
+    await pool.query(`
+      INSERT INTO bot_conversation_status 
+      (conversation_id, contact_id, auto_followup_disabled, followup_disabled_by, followup_disabled_at, last_interaction_at, updated_at) 
+      VALUES ($1, $2, false, $3, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      ON CONFLICT (conversation_id) 
+      DO UPDATE SET 
+        auto_followup_disabled = false, 
+        followup_disabled_by = $3, 
+        followup_disabled_at = NULL,
+        updated_at = CURRENT_TIMESTAMP
+    `, [conversationId, contactId, enabledBy]);
+    
+    console.log(`✅ Auto_followup ativado com sucesso para conversa ${conversationId}`);
+    return true;
+  } catch (error) {
+    console.error(`❌ Erro ao ativar auto_followup para conversa ${conversationId}:`, error);
+    return false;
+  }
+}
+
 // Reativar bot para uma conversa específica
 async function reactivateBotForConversation(conversationId, contactId, reactivatedBy = 'system') {
   try {
@@ -3795,11 +4408,12 @@ async function reactivateBotForConversation(conversationId, contactId, reactivat
     
     await pool.query(`
       INSERT INTO bot_conversation_status 
-      (conversation_id, contact_id, bot_active, paused_reason, paused_by, reactivated_at, last_interaction_at, updated_at) 
-      VALUES ($1, $2, true, NULL, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      (conversation_id, contact_id, bot_active, auto_followup_disabled, paused_reason, paused_by, reactivated_at, last_interaction_at, updated_at) 
+      VALUES ($1, $2, true, true, NULL, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
       ON CONFLICT (conversation_id) 
       DO UPDATE SET 
         bot_active = true, 
+        auto_followup_disabled = true,
         paused_reason = NULL, 
         paused_by = NULL, 
         reactivated_at = CURRENT_TIMESTAMP,
@@ -3807,7 +4421,7 @@ async function reactivateBotForConversation(conversationId, contactId, reactivat
         updated_at = CURRENT_TIMESTAMP
     `, [conversationId, contactId]);
     
-    console.log(`✅ Bot reativado com sucesso para conversa ${conversationId}`);
+    console.log(`✅ Bot reativado com sucesso para conversa ${conversationId} (auto_followup_disabled = true por padrão)`);
     return true;
   } catch (error) {
     console.error(`❌ Erro ao reativar bot para conversa ${conversationId}:`, error);
@@ -3848,19 +4462,8 @@ async function checkAndReactivateBotsAfter24Hours() {
       for (const row of result.rows) {
         const { conversation_id, contact_id, paused_reason, paused_at } = row;
         
-        // Buscar o accountId da conversa no banco de dados
-        let accountId = CHATWOOT_ACCOUNT_ID;
-        try {
-          const conversationResult = await pool.query(
-            'SELECT account_id FROM workflow_conversations WHERE conversation_id = $1',
-            [conversation_id]
-          );
-          if (conversationResult.rows.length > 0 && conversationResult.rows[0].account_id) {
-            accountId = conversationResult.rows[0].account_id;
-          }
-        } catch (err) {
-          console.log(`⚠️ Não foi possível obter accountId para conversa ${conversation_id}, usando padrão`);
-        }
+        // Buscar o accountId da conversa usando a função auxiliar
+        const accountId = await getAccountIdForConversation(conversation_id);
         
         // Verificar se ainda há agente humano ativo
         const hasActiveAgent = await checkHumanAgentActive(conversation_id, accountId);
@@ -3890,8 +4493,8 @@ async function checkAndReactivateBotsAfter24Hours() {
       console.log(`✅ Nenhuma conversa encontrada para reativação automática`);
     }
 
-    // Verificar bots ativos há mais de 24 horas de inatividade para reinicialização silenciosa
-    console.log(`🕐 Verificando bots ativos há mais de 24 horas de inatividade para reinicialização automática...`);
+    // Verificar bots ativos há mais de 24 horas de inatividade para reset completo silencioso
+    console.log(`🕐 Verificando bots ativos há mais de 24 horas de inatividade para reset completo automático...`);
     
     const inactiveBotsResult = await pool.query(`
       SELECT conversation_id, contact_id, last_interaction_at
@@ -3901,43 +4504,41 @@ async function checkAndReactivateBotsAfter24Hours() {
     `);
     
     if (inactiveBotsResult.rows.length > 0) {
-      console.log(`🔄 Encontrados ${inactiveBotsResult.rows.length} bots inativos há mais de 24 horas para reinicialização automática`);
+      console.log(`🔄 Encontrados ${inactiveBotsResult.rows.length} bots inativos há mais de 24 horas para reset completo automático`);
       
       for (const row of inactiveBotsResult.rows) {
         const { conversation_id, contact_id, last_interaction_at } = row;
         
-        console.log(`🔄 Reinicializando bot para conversa ${conversation_id} após 24h de inatividade (última interação em: ${last_interaction_at})`);
+        console.log(`🔄 Executando reset completo silencioso para conversa ${conversation_id} após 24h de inatividade (última interação em: ${last_interaction_at})`);
         
-        // Buscar o accountId da conversa no banco de dados
-        let accountId = CHATWOOT_ACCOUNT_ID;
-        try {
-          const conversationResult = await pool.query(
-            'SELECT account_id FROM workflow_conversations WHERE conversation_id = $1',
-            [conversation_id]
-          );
-          if (conversationResult.rows.length > 0 && conversationResult.rows[0].account_id) {
-            accountId = conversationResult.rows[0].account_id;
-          }
-        } catch (err) {
-          console.log(`⚠️ Não foi possível obter accountId para conversa ${conversation_id}, usando padrão`);
-        }
+        // Buscar o accountId da conversa usando a função auxiliar
+        const accountId = await getAccountIdForConversation(conversation_id);
         
-        // Reinicializar o bot silenciosamente (sem enviar mensagem para o usuário)
+        // Executar reset completo silenciosamente (igual ao comando !reset, mas sem enviar mensagem)
         try {
-          // Atualizar a data da última interação para agora
+          // 1. Deletar conversa do workflow (reset do estado)
+          await pool.query('DELETE FROM workflow_conversations WHERE contact_id = $1', [contact_id]);
+          
+          // 2. Remover todos os labels do contato
+          await removeAllLabelsFromContact(contact_id, accountId);
+          
+          // 3. Remover todos os labels da conversa
+          await removeAllLabelsFromConversation(conversation_id, accountId);
+          
+          // 4. Atualizar a data da última interação para agora
           await pool.query(`
             UPDATE bot_conversation_status 
             SET last_interaction_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP 
             WHERE conversation_id = $1
           `, [conversation_id]);
           
-          console.log(`✅ Bot reinicializado silenciosamente para conversa ${conversation_id} após 24h de inatividade`);
+          console.log(`✅ Reset completo silencioso executado para conversa ${conversation_id} após 24h de inatividade`);
         } catch (resetError) {
-          console.error(`❌ Erro ao reinicializar bot para conversa ${conversation_id}:`, resetError);
+          console.error(`❌ Erro ao executar reset completo para conversa ${conversation_id}:`, resetError);
         }
       }
     } else {
-      console.log(`✅ Nenhum bot inativo há mais de 24 horas encontrado para reinicialização`);
+      console.log(`✅ Nenhum bot inativo há mais de 24 horas encontrado para reset completo`);
     }
   } catch (error) {
     console.error(`❌ Erro ao verificar reativação automática de bots:`, error);
@@ -4197,17 +4798,19 @@ app.delete('/api/inbox-workflows/:accountId/:inboxId', authenticateToken, async 
   }
 });
 
-// Obter templates de workflows disponíveis
+// Obter templates de workflows disponíveis (apenas workflows ativos do banco)
 app.get('/api/workflow-templates', authenticateToken, async (req, res) => {
   try {
-    const templates = [
-      {
-        name: 'wizard_bh_buritis',
-        displayName: 'Wizard BH Buritis - Fluxo Completo',
-        description: 'Fluxo completo de automação para escola de inglês',
-        config: wizardWorkflow.config
-      }
-    ];
+    // Buscar apenas workflows ativos do banco
+    const result = await pool.query('SELECT workflow_name, config FROM workflow_configs WHERE is_active = true');
+    
+    const templates = result.rows.map(row => ({
+      name: row.workflow_name,
+      displayName: row.workflow_name,
+      description: `Workflow configurado: ${row.workflow_name}`,
+      config: row.config
+    }));
+    
     res.json(templates);
   } catch (error) {
     console.error('Erro ao obter templates:', error);
@@ -4503,7 +5106,414 @@ app.delete('/api/users/:id', authenticateToken, async (req, res) => {
   }
 });
 
+// Listar workflows com auto_followup configurado
+app.get('/api/workflows-with-followup', authenticateToken, async (req, res) => {
+  try {
+    const workflowsWithFollowup = await getWorkflowsWithAutoFollowup();
+    
+    const detailedWorkflows = [];
+    
+    for (const workflowInfo of workflowsWithFollowup) {
+      try {
+        // Carregar workflow completo para obter detalhes
+        let workflow = conversationManager.workflows.get(workflowInfo.workflow_name);
+        if (!workflow) {
+          workflow = await conversationManager.loadWorkflowFromDatabase(workflowInfo.workflow_name);
+        }
+        
+        if (workflow && workflow.auto_followup) {
+          const followupDetails = {};
+          for (const [blockName, config] of Object.entries(workflow.auto_followup)) {
+            const delayMinutes = Math.round(config.delay / 60000);
+            const delayHours = Math.round(config.delay / 3600000);
+            
+            followupDetails[blockName] = {
+              ...config,
+              delay_formatted: delayMinutes < 60 
+                ? `${delayMinutes} minutos` 
+                : `${delayHours} horas`,
+              block_info: workflow.blocks[blockName] ? {
+                name: workflow.blocks[blockName].name,
+                message: workflow.blocks[blockName].message.substring(0, 100) + '...'
+              } : null
+            };
+          }
+          
+          detailedWorkflows.push({
+            workflow_name: workflowInfo.workflow_name,
+            source: workflowInfo.source,
+            total_followup_blocks: Object.keys(workflow.auto_followup).length,
+            followup_blocks: followupDetails
+          });
+        }
+      } catch (error) {
+        console.error(`❌ Erro ao processar workflow ${workflowInfo.workflow_name}:`, error);
+      }
+    }
+    
+    res.json({ 
+      total_workflows: detailedWorkflows.length,
+      workflows: detailedWorkflows
+    });
+    
+  } catch (error) {
+    console.error('❌ Erro ao listar workflows com followup:', error);
+    res.status(500).json({ 
+      error: 'Erro interno do servidor',
+      details: error.message 
+    });
+  }
+});
+
+// Listar conversas aguardando followup
+app.get('/api/pending-followups', authenticateToken, async (req, res) => {
+  try {
+    const pendingFollowups = await getPendingFollowups();
+    res.json(pendingFollowups);
+  } catch (error) {
+    console.error('❌ Erro ao listar conversas aguardando followup:', error);
+    res.status(500).json({ 
+      error: 'Erro interno do servidor',
+      details: error.message 
+    });
+  }
+});
+
+// Forçar execução de um followup específico
+app.post('/api/force-followup', authenticateToken, async (req, res) => {
+  try {
+    const { contactId, workflowName, blockName } = req.body;
+    
+    if (!contactId || !workflowName || !blockName) {
+      return res.status(400).json({ error: 'Parâmetros inválidos' });
+    }
+    
+    const result = await forceFollowupExecution(contactId, workflowName, blockName);
+    res.json(result);
+  } catch (error) {
+    console.error('❌ Erro ao forçar execução de followup:', error);
+    res.status(500).json({ 
+      error: 'Erro interno do servidor',
+      details: error.message 
+    });
+  }
+});
+
+// Função para forçar execução de followup
+async function forceFollowupExecution(contactId, workflowName, blockName) {
+  try {
+    console.log(`🚀 Forçando execução de followup: ${blockName} para contact ${contactId} no workflow ${workflowName}`);
+    
+    // 1. Verificar se a conversa existe
+    const conversation = await conversationManager.getConversation(contactId);
+    if (!conversation) {
+      return {
+        error: 'Conversa não encontrada',
+        contact_id: contactId,
+        workflow_name: workflowName
+      };
+    }
+    
+    // 2. Carregar workflow
+    let workflow = conversationManager.workflows.get(workflowName);
+    if (!workflow) {
+      workflow = await conversationManager.loadWorkflowFromDatabase(workflowName);
+    }
+    
+    if (!workflow) {
+      return {
+        error: 'Workflow não encontrado',
+        contact_id: contactId,
+        workflow_name: workflowName
+      };
+    }
+    
+    // 3. Verificar se o bloco existe
+    if (!workflow.blocks[blockName]) {
+      return {
+        error: 'Bloco não encontrado no workflow',
+        block_name: blockName,
+        workflow_name: workflowName
+      };
+    }
+    
+    // 4. Executar followup
+    await executeAutoFollowup(conversation.id, contactId, workflow, blockName, conversation.data);
+    
+    return {
+      success: true,
+      message: `Followup ${blockName} executado com sucesso`,
+      contact_id: contactId,
+      workflow_name: workflowName,
+      block_name: blockName,
+      conversation_id: conversation.id
+    };
+    
+  } catch (error) {
+    console.error('❌ Erro ao forçar execução de followup:', error);
+    return {
+      error: 'Erro interno ao executar followup',
+      details: error.message,
+      contact_id: contactId,
+      workflow_name: workflowName,
+      block_name: blockName
+    };
+  }
+}
+
+// Testar funcionalidade de auto followup
+app.post('/api/test-auto-followup', authenticateToken, async (req, res) => {
+  try {
+    const { contactId, workflowName, blockName } = req.body;
+    
+    if (!contactId || !workflowName || !blockName) {
+      return res.status(400).json({ error: 'Parâmetros inválidos' });
+    }
+    
+    const result = await testAutoFollowup(contactId, workflowName, blockName);
+    res.json(result);
+  } catch (error) {
+    console.error('❌ Erro ao testar auto followup:', error);
+    res.status(500).json({ 
+      error: 'Erro interno do servidor',
+      details: error.message 
+    });
+  }
+});
+
 // ===== ROTAS DE CAMPANHAS DE WHATSAPP =====
+
+// Função de diagnóstico para investigar problemas com auto followup
+async function diagnoseAutoFollowup(contactId, workflowName) {
+  try {
+    console.log(`🔍 Iniciando diagnóstico de auto followup para contact ${contactId} no workflow ${workflowName}`);
+    
+    // 1. Verificar se a conversa existe
+    const conversation = await conversationManager.getConversation(contactId);
+    if (!conversation) {
+      return {
+        error: 'Conversa não encontrada',
+        contact_id: contactId,
+        workflow_name: workflowName
+      };
+    }
+    
+    console.log(`✅ Conversa encontrada: ID ${conversation.id}, Status: ${conversation.status}, Bloco atual: ${conversation.current_block}`);
+    
+    // 2. Verificar se o workflow tem auto_followup
+    let workflow = conversationManager.workflows.get(workflowName);
+    if (!workflow) {
+      workflow = await conversationManager.loadWorkflowFromDatabase(workflowName);
+    }
+    
+    if (!workflow) {
+      return {
+        error: 'Workflow não encontrado',
+        contact_id: contactId,
+        workflow_name: workflowName
+      };
+    }
+    
+    if (!workflow.auto_followup) {
+      return {
+        error: 'Workflow não possui configuração de auto_followup',
+        contact_id: contactId,
+        workflow_name: workflowName
+      };
+    }
+    
+    console.log(`✅ Workflow encontrado com ${Object.keys(workflow.auto_followup).length} bloco(s) de followup`);
+    
+    // 3. Calcular tempo de inatividade usando PostgreSQL
+    const inactivityResult = await pool.query(`
+      SELECT EXTRACT(EPOCH FROM (NOW() - last_activity)) as seconds_inactive
+      FROM workflow_conversations 
+      WHERE conversation_id = $1
+    `, [conversation.id]);
+    
+    const secondsInactive = Math.floor(parseFloat(inactivityResult.rows[0].seconds_inactive));
+    const minutesInactive = Math.floor(secondsInactive / 60);
+    
+    console.log(`⏰ Última atividade: ${conversation.last_activity}`);
+    console.log(`⏰ Tempo inativo (PostgreSQL): ${secondsInactive} segundos (${minutesInactive} minutos)`);
+    
+    // 4. Verificar cada bloco de followup
+    const followupAnalysis = {};
+    
+    for (const [blockName, followupConfig] of Object.entries(workflow.auto_followup)) {
+      const delaySeconds = followupConfig.delay / 1000;
+      const isReady = secondsInactive >= delaySeconds;
+      const timeRemaining = Math.max(0, delaySeconds - secondsInactive);
+      
+      console.log(`📋 Bloco ${blockName}: Delay ${delaySeconds}s, Pronto: ${isReady}, Tempo restante: ${timeRemaining}s`);
+      
+      // Verificar se o bloco existe no workflow
+      const blockExists = workflow.blocks[blockName];
+      
+      // Verificar se já foi executado recentemente
+      const alreadyExecuted = await checkIfFollowupAlreadyExecuted(conversation.id, blockName, delaySeconds);
+      
+      // Verificar se o bot está ativo
+      const isBotActive = await isBotActiveForConversation(conversation.id, contactId, CHATWOOT_ACCOUNT_ID);
+      
+      followupAnalysis[blockName] = {
+        delay_seconds: delaySeconds,
+        delay_formatted: `${Math.round(delaySeconds / 60)} minutos`,
+        is_ready: isReady,
+        time_remaining: timeRemaining,
+        block_exists: blockExists,
+        already_executed: alreadyExecuted,
+        bot_active: isBotActive,
+        can_execute: isReady && blockExists && !alreadyExecuted && isBotActive,
+        issues: []
+      };
+      
+      // Identificar problemas
+      if (!isReady) {
+        followupAnalysis[blockName].issues.push(`Ainda não atingiu o delay (${timeRemaining}s restantes)`);
+      }
+      if (!blockExists) {
+        followupAnalysis[blockName].issues.push('Bloco não existe no workflow');
+      }
+      if (alreadyExecuted) {
+        followupAnalysis[blockName].issues.push('Já foi executado recentemente');
+      }
+      if (!isBotActive) {
+        followupAnalysis[blockName].issues.push('Bot está pausado para esta conversa');
+      }
+    }
+    
+    return {
+      success: true,
+      contact_id: contactId,
+      workflow_name: workflowName,
+      conversation_id: conversation.id,
+      conversation_status: conversation.status,
+      current_block: conversation.current_block,
+      last_activity: conversation.last_activity,
+      seconds_inactive: secondsInactive,
+      minutes_inactive: minutesInactive,
+      followup_analysis: followupAnalysis,
+      can_execute_any: Object.values(followupAnalysis).some(f => f.can_execute)
+    };
+    
+  } catch (error) {
+    console.error('❌ Erro no diagnóstico de auto followup:', error);
+    return {
+      error: 'Erro interno no diagnóstico',
+      details: error.message,
+      contact_id: contactId,
+      workflow_name: workflowName
+    };
+  }
+}
+
+// Listar conversas aguardando followup
+async function getPendingFollowups() {
+  try {
+    // Buscar workflows com auto_followup
+    const workflowsWithFollowup = await getWorkflowsWithAutoFollowup();
+    
+    if (workflowsWithFollowup.length === 0) {
+      return {
+        total_conversations: 0,
+        conversations: []
+      };
+    }
+    
+    const workflowNames = workflowsWithFollowup.map(w => w.workflow_name);
+    
+    // Buscar conversas ativas nesses workflows
+    const activeConversations = await pool.query(`
+      SELECT 
+        wc.id as conversation_id,
+        wc.contact_id,
+        wc.workflow_name,
+        wc.current_block,
+        wc.last_activity,
+        EXTRACT(EPOCH FROM (NOW() - wc.last_activity)) as seconds_inactive
+      FROM workflow_conversations wc
+      WHERE wc.status = 'active'
+        AND wc.last_activity IS NOT NULL
+        AND wc.workflow_name = ANY($1)
+      ORDER BY wc.last_activity ASC
+    `, [workflowNames]);
+    
+    const pendingConversations = [];
+    
+    for (const conversation of activeConversations.rows) {
+      const workflow = await conversationManager.loadWorkflowFromDatabase(conversation.workflow_name);
+      if (!workflow || !workflow.auto_followup) continue;
+      
+      const secondsInactive = Math.floor(parseFloat(conversation.seconds_inactive));
+      
+      // Verificar quais followups estão prontos
+      const readyFollowups = [];
+      for (const [blockName, followupConfig] of Object.entries(workflow.auto_followup)) {
+        const delaySeconds = followupConfig.delay / 1000;
+        const isReady = secondsInactive >= delaySeconds;
+        
+        if (isReady) {
+          const alreadyExecuted = await checkIfFollowupAlreadyExecuted(conversation.id, blockName, delaySeconds);
+          const isBotActive = await isBotActiveForConversation(conversation.conversation_id, conversation.contact_id, CHATWOOT_ACCOUNT_ID);
+          
+          if (!alreadyExecuted && isBotActive) {
+            readyFollowups.push({
+              block_name: blockName,
+              delay_seconds: delaySeconds,
+              delay_formatted: `${Math.round(delaySeconds / 60)} minutos`,
+              seconds_inactive: secondsInactive,
+              minutes_inactive: Math.floor(secondsInactive / 60)
+            });
+          }
+        }
+      }
+      
+      if (readyFollowups.length > 0) {
+        pendingConversations.push({
+          conversation_id: conversation.conversation_id,
+          contact_id: conversation.contact_id,
+          workflow_name: conversation.workflow_name,
+          current_block: conversation.current_block,
+          last_activity: conversation.last_activity,
+          ready_followups: readyFollowups
+        });
+      }
+    }
+    
+    return {
+      total_conversations: pendingConversations.length,
+      conversations: pendingConversations
+    };
+    
+  } catch (error) {
+    console.error('❌ Erro ao listar followups pendentes:', error);
+    throw error;
+  }
+}
+
+// Endpoint para diagnóstico de auto followup
+app.get('/api/diagnose-auto-followup', authenticateToken, async (req, res) => {
+  try {
+    const { contactId, workflowName } = req.query;
+    
+    if (!contactId || !workflowName) {
+      return res.status(400).json({ 
+        error: 'contactId e workflowName são obrigatórios' 
+      });
+    }
+    
+    const diagnosis = await diagnoseAutoFollowup(contactId, workflowName);
+    res.json(diagnosis);
+    
+  } catch (error) {
+    console.error('❌ Erro no diagnóstico via API:', error);
+    res.status(500).json({ 
+      error: 'Erro interno do servidor',
+      details: error.message 
+    });
+  }
+});
 
 // Função para processar uma campanha (enviar mensagens via API do WhatsApp)
 async function processCampaign(campaignId) {
@@ -4838,9 +5848,7 @@ app.post('/api/campaigns', authenticateToken, authorizeAccount, async (req, res)
           headers: { 'api_access_token': CHATWOOT_API_TOKEN }
         });
         
-        const whatsappInboxes = (inboxesResponse.data.payload || []).filter(i => 
-          i.channel_type === 'Channel::Whatsapp'
-        );
+        const whatsappInboxes = (inboxesResponse.data.payload || []).filter(i => isSupportedInbox(i));
         
         // Buscar templates de cada caixa para encontrar o selecionado
         for (const inbox of whatsappInboxes) {
@@ -6094,455 +7102,6 @@ app.get('/public-preview/:id', async (req, res) => {
   }
 });
 
-// Testar envio de anexo via API
-app.post('/api/test-attachment', authenticateToken, async (req, res) => {
-  try {
-    const { conversationId, message, fileId } = req.body;
-    
-    if (!conversationId || !fileId) {
-      return res.status(400).json({ error: 'conversationId e fileId são obrigatórios' });
-    }
-    
-    // Buscar arquivo no banco
-    const result = await pool.query('SELECT * FROM media_files WHERE id = $1', [fileId]);
-    
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Arquivo não encontrado' });
-    }
-    
-    const file = result.rows[0];
-    
-    // Criar objeto de anexo
-    const attachment = {
-      path: file.file_path,
-      originalname: file.original_name,
-      mimetype: file.mimetype
-    };
-    
-    // Enviar mensagem com anexo
-    await sendChatwootMessageWithAttachment(conversationId, message || 'Aqui está o arquivo:', [], attachment);
-    
-    res.json({
-      success: true,
-      message: 'Anexo enviado com sucesso!'
-    });
-    
-  } catch (error) {
-    console.error('❌ Erro ao testar anexo:', error);
-    res.status(500).json({ error: 'Erro interno' });
-  }
-});
-
-// ===== ROTAS EXISTENTES =====
-
-// API para iniciar workflow manualmente
-app.post('/apiworkflow/workflow/start', async (req, res) => {
-  try {
-    const { contactId, workflowName, initialData } = req.body;
-    
-    const conversation = await conversationManager.startConversation(contactId, workflowName, initialData);
-    const workflow = conversationManager.workflows.get(workflowName);
-    const firstBlock = workflow.blocks.bloco_1;
-    
-    // Enviar mensagem inicial via Chatwoot se conversation_id estiver disponível
-    if (initialData.conversation_id) {
-      await sendChatwootMessage(initialData.conversation_id, firstBlock.message, firstBlock.buttons, firstBlock.media);
-    }
-    
-    res.json({ success: true, conversation });
-  } catch (error) {
-    console.error('Erro ao iniciar workflow:', error);
-    res.status(500).json({ error: 'Erro interno' });
-  }
-});
-
-// API para obter status da conversa
-app.get('/apiworkflow/conversation/:contactId', async (req, res) => {
-  try {
-    const conversation = await conversationManager.getConversation(req.params.contactId);
-    res.json(conversation || { error: 'Conversa não encontrada' });
-  } catch (error) {
-    res.status(500).json({ error: 'Erro interno' });
-  }
-});
-
-// API para obter estatísticas
-app.get('/apiworkflow/stats', async (req, res) => {
-  try {
-    const stats = await conversationManager.getStats();
-    res.json(stats);
-  } catch (error) {
-    res.status(500).json({ error: 'Erro interno' });
-  }
-});
-
-// API para gerenciar workflows
-app.post('/apiworkflow/workflows', async (req, res) => {
-  try {
-    const { name, config } = req.body;
-    await conversationManager.saveWorkflow(name, config);
-    res.json({ success: true });
-  } catch (error) {
-    res.status(500).json({ error: 'Erro interno' });
-  }
-});
-
-// API para obter lista de workflows
-app.get('/apiworkflow/workflows', async (req, res) => {
-  try {
-    const result = await pool.query('SELECT workflow_name, config, is_active FROM workflow_configs');
-    res.json(result.rows);
-  } catch (error) {
-    res.status(500).json({ error: 'Erro interno' });
-  }
-});
-
-// API para ativar/desativar workflow
-app.put('/apiworkflow/workflows/:name/toggle', async (req, res) => {
-  try {
-    const { name } = req.params;
-    const { is_active } = req.body;
-    
-    await pool.query(
-      'UPDATE workflow_configs SET is_active = $1, updated_at = CURRENT_TIMESTAMP WHERE workflow_name = $2',
-      [is_active, name]
-    );
-    
-    res.json({ success: true });
-  } catch (error) {
-    res.status(500).json({ error: 'Erro interno' });
-  }
-});
-
-// Endpoint para zerar o fluxo de uma conversa
-app.post('/apiworkflow/conversation/:contactId/reset', async (req, res) => {
-  try {
-    const { contactId } = req.params;
-    console.log(`🔄 Reset via API solicitado para ${contactId}`);
-    
-    // Buscar conversationId ativo antes de deletar
-    let conversationId = null;
-    try {
-      const activeConversation = await pool.query(
-        'SELECT * FROM workflow_conversations WHERE contact_id = $1 AND status = $2',
-        [contactId, 'active']
-      );
-      
-      if (activeConversation.rows.length > 0) {
-        const data = activeConversation.rows[0].data;
-        if (typeof data === 'string') {
-          const parsedData = JSON.parse(data);
-          conversationId = parsedData.conversation_id;
-        } else if (data && data.conversation_id) {
-          conversationId = data.conversation_id;
-        }
-        console.log(`📋 ConversationId encontrado: ${conversationId}`);
-      }
-    } catch (dbError) {
-      console.log(`⚠️ Erro ao buscar conversation_id: ${dbError.message}`);
-    }
-    
-    await pool.query('DELETE FROM workflow_conversations WHERE contact_id = $1', [contactId]);
-    
-    // Remover todos os labels do contato
-    await removeAllLabelsFromContact(contactId);
-    
-    // Remover todos os labels da conversa se encontramos o ID
-    if (conversationId) {
-      await removeAllLabelsFromConversation(conversationId);
-      res.json({ success: true, message: 'Fluxo zerado e todos os labels removidos (contato e conversa).' });
-    } else {
-      res.json({ success: true, message: 'Fluxo zerado e labels do contato removidos. ConversationId não encontrado para remover labels da conversa.' });
-    }
-    
-  } catch (error) {
-    console.error('Erro ao executar reset via API:', error);
-    res.status(500).json({ error: 'Erro ao zerar fluxo.' });
-  }
-});
-
-// Endpoint para atribuir conversa a membro do time
-app.post('/apiworkflow/conversations/:conversationId/assign-team-member', async (req, res) => {
-  try {
-    const { conversationId } = req.params;
-    const { teamId, strategy = 'round_robin' } = req.body;
-    
-    if (!teamId) {
-      return res.status(400).json({ success: false, error: 'TeamId é obrigatório' });
-    }
-    
-    const options = { strategy };
-    await assignConversationToTeamMember(conversationId, teamId, options);
-    
-    res.json({ success: true, message: 'Conversa atribuída com sucesso' });
-  } catch (error) {
-    console.error('Erro ao atribuir conversa a membro do time:', error);
-    res.status(500).json({ success: false, error: 'Erro interno do servidor' });
-  }
-});
-
-// Endpoint para obter agentes de um time
-app.get('/apiworkflow/teams/:teamId/agents', async (req, res) => {
-  try {
-    const { teamId } = req.params;
-    const allAgents = await getChatwootAgents();
-    
-    // Filtrar agentes que pertencem ao time e não são administradores
-    const teamMembers = allAgents.filter(agent => {
-      const belongsToTeam = agent.teams && agent.teams.some(team => team.id === parseInt(teamId));
-      const isNotAdmin = agent.role !== 'administrator';
-      const isActive = agent.available_name !== 'offline' && agent.status !== 'offline';
-      
-      return belongsToTeam && isNotAdmin && isActive;
-    });
-    
-    res.json({ success: true, data: teamMembers });
-  } catch (error) {
-    console.error('Erro ao obter agentes do time:', error);
-    res.status(500).json({ success: false, error: 'Erro interno do servidor' });
-  }
-});
-
-// Health check
-app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'OK', 
-    timestamp: new Date().toISOString(),
-    polling_active: isPolling,
-    last_message_id: lastMessageId
-  });
-});
-
-
-// Endpoint para testar webhook do WhatsApp +553133700909
-// Endpoint para webhook do WhatsApp +553133700909 (compatível com Meta)
-app.get('/test-webhook', async (req, res) => {
-  try {
-    const hub_mode = req.query['hub.mode'];
-    const hub_challenge = req.query['hub.challenge'];
-    const hub_verify_token = req.query['hub.verify_token'];
-    const timestamp = getTimestamp();
-    
-    console.log(`🔔 [WEBHOOK VERIFICATION] Recebida requisição de verificação`);
-    console.log(`📅 Timestamp: ${timestamp}`);
-    console.log(`🔍 Query params:`, { 
-      'hub.mode': hub_mode, 
-      'hub.challenge': hub_challenge, 
-      'hub.verify_token': hub_verify_token 
-    });
-    
-    // Verificar se é um desafio de verificação da Meta
-    if (hub_mode === 'subscribe' && hub_challenge && hub_verify_token) {
-      const expectedToken = 'd37e425f60d78187e521de0bc7e070c3';
-      
-      if (hub_verify_token === expectedToken) {
-        console.log(`✅ [VERIFICATION] Token válido, respondendo com challenge: ${hub_challenge}`);
-        res.status(200).send(hub_challenge);
-      } else {
-        console.log(`❌ [VERIFICATION] Token inválido. Esperado: ${expectedToken}, Recebido: ${hub_verify_token}`);
-        res.status(403).json({ error: 'Forbidden' });
-      }
-    } else {
-      console.log(`⚠️ [VERIFICATION] Parâmetros de verificação inválidos`);
-      console.log(`   hub_mode: ${hub_mode}`);
-      console.log(`   hub_challenge: ${hub_challenge}`);
-      console.log(`   hub_verify_token: ${hub_verify_token}`);
-      res.status(400).json({ error: 'Bad Request' });
-    }
-    
-  } catch (error) {
-    console.error(`❌ [VERIFICATION] Erro na verificação:`, error);
-    res.status(500).json({ error: 'Internal Server Error' });
-  }
-});
-
-app.post('/test-webhook', async (req, res) => {
-  try {
-    const timestamp = getTimestamp();
-    const payload = req.body;
-    
-    console.log(`🔔 [WEBHOOK PAYLOAD] Recebido webhook para +553133700909`);
-    console.log(`📅 Timestamp: ${timestamp}`);
-    console.log(`📦 Payload recebido:`, JSON.stringify(payload, null, 2));
-    
-    // Log detalhado do payload
-    if (payload.entry && payload.entry.length > 0) {
-      const entry = payload.entry[0];
-      console.log(`📋 Entry ID: ${entry.id}`);
-      
-      if (entry.changes && entry.changes.length > 0) {
-        const change = entry.changes[0];
-        console.log(`🔄 Field: ${change.field}`);
-        
-        if (change.value) {
-          const value = change.value;
-          console.log(`📱 Messaging Product: ${value.messaging_product}`);
-          
-          if (value.metadata) {
-            console.log(`📞 Display Phone Number: ${value.metadata.display_phone_number}`);
-            console.log(`🆔 Phone Number ID: ${value.metadata.phone_number_id}`);
-          }
-          
-          if (value.messages && value.messages.length > 0) {
-            const message = value.messages[0];
-            console.log(`💬 Message ID: ${message.id}`);
-            console.log(`👤 From: ${message.from}`);
-            console.log(`📝 Type: ${message.type}`);
-            console.log(`⏰ Timestamp: ${message.timestamp}`);
-            
-            if (message.text) {
-              console.log(`📄 Text: ${message.text.body}`);
-            }
-          }
-          
-          if (value.contacts && value.contacts.length > 0) {
-            const contact = value.contacts[0];
-            console.log(`👤 Contact WA ID: ${contact.wa_id}`);
-            if (contact.profile) {
-              console.log(`👤 Contact Name: ${contact.profile.name}`);
-            }
-          }
-        }
-      }
-    }
-    
-    // Verificar se é um teste da Meta
-    const isMetaTest = payload.entry && 
-                      payload.entry[0] && 
-                      payload.entry[0].changes && 
-                      payload.entry[0].changes[0] && 
-                      payload.entry[0].changes[0].value &&
-                      payload.entry[0].changes[0].value.metadata &&
-                      payload.entry[0].changes[0].value.metadata.display_phone_number === "16505551111";
-    
-    if (isMetaTest) {
-      console.log(`⚠️ [TESTE META] Este é um teste da Meta com dados fictícios`);
-    } else {
-      console.log(`✅ [MENSAGEM REAL] Este parece ser um webhook de mensagem real`);
-      
-      // Se for uma mensagem real, encaminhar para o Chatwoot
-      try {
-        const chatwootWebhookUrl = 'https://crm.inovaianalytics.com.br/webhooks/whatsapp/+553133700909';
-        console.log(`🔄 [FORWARD] Encaminhando para Chatwoot: ${chatwootWebhookUrl}`);
-        
-        const chatwootResponse = await axios.post(chatwootWebhookUrl, payload, {
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          timeout: 10000
-        });
-        
-        console.log(`✅ [FORWARD] Chatwoot respondeu com status: ${chatwootResponse.status}`);
-      } catch (forwardError) {
-        console.error(`❌ [FORWARD] Erro ao encaminhar para Chatwoot:`, forwardError.message);
-      }
-    }
-    
-    console.log(`🎯 [WEBHOOK] Processamento concluído com sucesso`);
-    
-    // Responder com status 200 para a Meta
-    res.status(200).json({ 
-      success: true, 
-      message: 'Webhook processado com sucesso',
-      timestamp: timestamp,
-      is_meta_test: isMetaTest
-    });
-    
-  } catch (error) {
-    console.error(`❌ [WEBHOOK] Erro ao processar webhook:`, error);
-    res.status(500).json({ 
-      success: false, 
-      error: 'Erro interno ao processar webhook',
-      message: error.message
-    });
-  }
-});
-
-// Endpoint para simular webhook do WhatsApp (para testes)
-app.post('/simulate-webhook-553133700909', async (req, res) => {
-  try {
-    const timestamp = getTimestamp();
-    
-    // Payload de simulação
-    const simulatedPayload = {
-      object: "whatsapp_business_account",
-      entry: [{
-        id: "1087815663310028",
-        changes: [{
-          value: {
-            messaging_product: "whatsapp",
-            metadata: {
-              display_phone_number: "+553133700909",
-              phone_number_id: "755748160947577"
-            },
-            contacts: [{
-              profile: {
-                name: "Usuário Teste"
-              },
-              wa_id: "5511999999999"
-            }],
-            messages: [{
-              from: "5511999999999",
-              id: `test_${Date.now()}`,
-              timestamp: Math.floor(Date.now() / 1000).toString(),
-              type: "text",
-              text: {
-                body: "Mensagem de teste simulada"
-              }
-            }]
-          },
-          field: "messages"
-        }]
-      }]
-    };
-    
-    console.log(`🎭 [SIMULAÇÃO] Enviando webhook simulado para +553133700909`);
-    console.log(`📅 Timestamp: ${timestamp}`);
-    console.log(`📦 Payload simulado:`, JSON.stringify(simulatedPayload, null, 2));
-    
-    // Fazer requisição para o webhook real
-    const webhookUrl = 'https://crm.inovaianalytics.com.br/webhooks/whatsapp/+553133700909';
-    
-    const response = await axios.post(webhookUrl, simulatedPayload, {
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      timeout: 10000
-    });
-    
-    console.log(`✅ [SIMULAÇÃO] Webhook simulado enviado com sucesso`);
-    console.log(`📊 Status Code: ${response.status}`);
-    console.log(`📄 Response:`, response.data);
-    
-    res.status(200).json({
-      success: true,
-      message: 'Webhook simulado enviado com sucesso',
-      timestamp: timestamp,
-      webhook_url: webhookUrl,
-      response_status: response.status,
-      response_data: response.data
-    });
-    
-  } catch (error) {
-    console.error(`❌ [SIMULAÇÃO] Erro ao enviar webhook simulado:`, error);
-    
-    let errorDetails = {
-      message: error.message
-    };
-    
-    if (error.response) {
-      errorDetails.status = error.response.status;
-      errorDetails.data = error.response.data;
-    }
-    
-    res.status(500).json({
-      success: false,
-      error: 'Erro ao enviar webhook simulado',
-      details: errorDetails
-    });
-  }
-});
-
 // Health check
 app.get('/health', (req, res) => {
   res.json({ 
@@ -6576,4 +7135,4 @@ initializeSystem().then(() => {
   process.exit(1);
 });
 
-module.exports = { ConversationManager, defaultWorkflows }; 
+module.exports = { ConversationManager }; 
