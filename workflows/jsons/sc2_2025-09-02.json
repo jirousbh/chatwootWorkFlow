@@ -1,0 +1,329 @@
+{
+    "name": "Fluxo Técnico Grupo Telecom+ - Soluções Empresariais",
+    "blocks": {
+      "bloco_01": {
+        "id": "bloco_01",
+        "name": "Mensagem Inicial",
+        "buttons": [
+          {
+            "text": "Link Dedicado",
+            "next_block": "bloco_02",
+            "assign_labels": [
+              "interesse_link_dedicado"
+            ]
+          },
+          {
+            "text": "Link Semi-Dedicado",
+            "next_block": "bloco_03",
+            "assign_labels": [
+              "interesse_link_semi_dedicado"
+            ]
+          },
+          {
+            "text": "Banda Larga Empresarial",
+            "next_block": "bloco_04",
+            "assign_labels": [
+              "interesse_banda_larga"
+            ]
+          },
+          {
+            "text": "Tel. Móvel Empresarial",
+            "next_block": "bloco_05",
+            "assign_labels": [
+              "interesse_telefonia_movel"
+            ]
+          },
+          {
+            "text": "Segurança Digital",
+            "next_block": "bloco_07",
+            "assign_labels": [
+              "interesse_seguranca_digital"
+            ]
+          }
+        ],
+        "message": " Me chamo Maria e falo da Grupo Telecom+.\n\nVi que você teve interesse em um dos nossos serviços, clique aqui e veja as nossas soluções?",
+        "assign_labels": [
+          "inicio_atendimento"
+        ]
+      },
+      "bloco_02": {
+        "id": "bloco_02",
+        "name": "Link Dedicado",
+        "message": "Olá! Trabalhamos com Link Dedicado de Internet, oferecendo conexão estável, 100% da banda contratada, baixa latência e suporte 24x7.\n\nEssa solução é indicada para empresas que precisam de alta disponibilidade e velocidade constante, sem quedas.\n\nMe informe, por favor, seu endereço para que eu verifique a viabilidade.",
+        "next_block": "atendimento_humano_02",
+        "assign_team": 5,
+        "assign_labels": [
+          "link_dedicado_interesse",
+          "aguardando_endereco"
+        ],
+        "contact_labels": [
+          "prospect_link_dedicado"
+        ]
+      },
+      "bloco_03": {
+        "id": "bloco_03",
+        "name": "Link Semi-Dedicado",
+        "message": "Olá! Oferecemos também o Link Semi-Dedicado, que garante alta performance com custo reduzido em relação ao Link Dedicado.\n\nEssa é uma opção indicada para empresas que precisam de velocidade e estabilidade, mas com maior flexibilidade de investimento.\n\nMe informe, por favor, seu endereço para que eu verifique a viabilidade.☺️",
+        "next_block": "atendimento_humano_02",
+        "assign_team": 5,
+        "assign_labels": [
+          "link_semi_dedicado_interesse",
+          "aguardando_endereco"
+        ],
+        "contact_labels": [
+          "prospect_link_semi_dedicado"
+        ]
+      },
+      "bloco_04": {
+        "id": "bloco_04",
+        "name": "Banda Larga Empresarial",
+        "message": "Olá! Temos também Banda Larga Empresarial, com planos de internet corporativa, suporte diferenciado e fatura unificada.\n\nEssa solução é ideal para empresas que precisam de boa velocidade e custo-benefício, sem abrir mão de confiabilidade.\n\nMe informe, por favor, seu endereço para que eu verifique a viabilidade.☺️",
+        "next_block": "atendimento_humano_02",
+        "assign_team": 5,
+        "assign_labels": [
+          "banda_larga_interesse",
+          "aguardando_endereco"
+        ],
+        "contact_labels": [
+          "prospect_banda_larga"
+        ]
+      },
+      "bloco_05": {
+        "id": "bloco_05",
+        "name": "Telefonia Móvel Empresarial",
+        "buttons": [
+          {
+            "text": "Vivo",
+            "next_block": "bloco_06",
+            "assign_labels": [
+              "operadora_vivo"
+            ]
+          },
+          {
+            "text": "TIM",
+            "next_block": "bloco_06",
+            "assign_labels": [
+              "operadora_tim"
+            ]
+          },
+          {
+            "text": "Claro",
+            "next_block": "bloco_06",
+            "assign_labels": [
+              "operadora_claro"
+            ]
+          },
+          {
+            "text": "Outros",
+            "next_block": "bloco_06",
+            "assign_labels": [
+              "operadora_outros"
+            ]
+          },
+          {
+            "text": "Menu Inicial",
+            "next_block": "bloco_01",
+            "assign_labels": [
+              "retorno_menu_inicial"
+            ]
+          }
+        ],
+        "message": "Olá! Trabalhamos com planos de dados, voz ilimitada e gestão centralizada para empresas.\n\nEssa solução é indicada para equipes externas, comerciais e executivas que precisam de mobilidade e suporte diferenciado.\n\nPor favor, qual dessas operadoras sua empresa utiliza?",
+        "assign_labels": [
+          "telefonia_movel_interesse"
+        ],
+        "contact_labels": [
+          "prospect_telefonia_movel"
+        ]
+      },
+      "bloco_06": {
+        "id": "bloco_06",
+        "name": "Solicitação CNPJ Telefonia",
+        "message": "Então me passe seu CNPJ, tenho uma super oferta para você.\n\nVou te transferir agora para nosso melhor consultor, foi muito bom falar com você.",
+        "next_block": "atendimento_humano_02",
+        "assign_team": 5,
+        "assign_labels": [
+          "telefonia_aguardando_cnpj"
+        ]
+      },
+      "bloco_07": {
+        "id": "bloco_07",
+        "name": "Segurança Digital",
+        "buttons": [
+          {
+            "text": "Antivírus com IA",
+            "next_block": "bloco_08",
+            "assign_labels": [
+              "interesse_antivirus"
+            ]
+          },
+          {
+            "text": "Backup em Nuvem",
+            "next_block": "bloco_09",
+            "assign_labels": [
+              "interesse_backup"
+            ]
+          },
+          {
+            "text": "Monitoramento Contínuo",
+            "next_block": "bloco_10",
+            "assign_labels": [
+              "interesse_monitoramento"
+            ]
+          },
+          {
+            "text": "Menu Inicial",
+            "next_block": "bloco_01",
+            "assign_labels": [
+              "retorno_menu_inicial"
+            ]
+          }
+        ],
+        "message": "✅ Antivírus com IA\nBloqueia vírus e ameaças em tempo real.\nProtege contra ransomwares e golpes por e-mail.\n\n✅ Backup em Nuvem\nEvita perda de dados por falhas ou ataques.\nArmazenamento seguro com recuperação rápida.\n\n✅ Monitoramento Contínuo\nMonitora todas as ações dos colaboradores.\nSoftware único e intuitivo.\n\nQual opção você quer saber mais? ☺️",
+        "assign_labels": [
+          "seguranca_digital_apresentada"
+        ]
+      },
+      "bloco_08": {
+        "id": "bloco_08",
+        "name": "Antivírus com IA",
+        "buttons": [
+          {
+            "text": "Fale Conosco",
+            "next_block": "atendimento_humano_01",
+            "assign_labels": [
+              "especialista_antivirus"
+            ]
+          },
+          {
+            "text": "Menu Anterior",
+            "next_block": "bloco_07",
+            "assign_labels": [
+              "retorno_menu_seguranca"
+            ]
+          },
+          {
+            "text": "Menu Inicial",
+            "next_block": "bloco_01",
+            "assign_labels": [
+              "retorno_menu_inicial"
+            ]
+          }
+        ],
+        "message": "Olá! Escolha uma das opções abaixo:",
+        "assign_labels": [
+          "antivirus_interesse"
+        ],
+        "contact_labels": [
+          "prospect_antivirus"
+        ]
+      },
+      "bloco_09": {
+        "id": "bloco_09",
+        "name": "Backup em Nuvem",
+        "buttons": [
+          {
+            "text": "Fale Conosco",
+            "next_block": "atendimento_humano_01",
+            "assign_labels": [
+              "especialista_backup"
+            ]
+          },
+          {
+            "text": "Menu Anterior",
+            "next_block": "bloco_07",
+            "assign_labels": [
+              "retorno_menu_seguranca"
+            ]
+          },
+          {
+            "text": "Menu Inicial",
+            "next_block": "bloco_01",
+            "assign_labels": [
+              "retorno_menu_inicial"
+            ]
+          }
+        ],
+        "message": "Olá! Escolha uma das opções abaixo:",
+        "assign_labels": [
+          "backup_interesse"
+        ],
+        "contact_labels": [
+          "prospect_backup"
+        ]
+      },
+      "bloco_10": {
+        "id": "bloco_10",
+        "name": "Monitoramento Contínuo",
+        "buttons": [
+          {
+            "text": "Fale Conosco",
+            "next_block": "atendimento_humano_01",
+            "assign_labels": [
+              "especialista_monitoramento"
+            ]
+          },
+          {
+            "text": "Menu Anterior",
+            "next_block": "bloco_07",
+            "assign_labels": [
+              "retorno_menu_seguranca"
+            ]
+          },
+          {
+            "text": "Menu Inicial",
+            "next_block": "bloco_01",
+            "assign_labels": [
+              "retorno_menu_inicial"
+            ]
+          }
+        ],
+        "message": "Olá! Escolha uma das opções abaixo:",
+        "assign_labels": [
+          "monitoramento_interesse"
+        ],
+        "contact_labels": [
+          "prospect_monitoramento"
+        ]
+      },
+      "atendimento_humano_01": {
+        "id": "atendimento_humano_01",
+        "name": "Atendimento Humano SC2",
+        "message": "Perfeito! Vou te conectar agora mesmo com nossa equipe especializada que vai te ajudar com todas as informações e elaborar a melhor proposta para sua empresa! 😊\n\nEm instantes você receberá o contato de um de nossos consultores.",
+        "pause_bot": true,
+        "assign_team": 4,
+        "assign_labels": [
+          "transferido_especialista"
+        ],
+        "contact_labels": [
+          "atendimento_especializado"
+        ]
+      },
+      "atendimento_humano_02": {
+        "id": "atendimento_humano_02",
+        "name": "Atendimento Humano GT+",
+        "message": "Perfeito! Vou te conectar agora mesmo com nossa equipe especializada que vai te ajudar com todas as informações e elaborar a melhor proposta para sua empresa! 😊\n\nEm instantes você receberá o contato de um de nossos consultores.",
+        "pause_bot": true,
+        "assign_team": 5,
+        "assign_labels": [
+          "transferido_especialista"
+        ],
+        "contact_labels": [
+          "atendimento_especializado"
+        ]
+      },
+      "finalizar": {
+        "id": "finalizar",
+        "name": "Encerramento",
+        "type": "end",
+        "message": "Obrigada por conversar comigo! Se precisar de mais alguma informação sobre nossas soluções, é só chamar. Tenha um ótimo dia! 😊",
+        "assign_labels": [
+          "conversa_finalizada"
+        ]
+      }
+    },
+    "triggers": [
+      "*"
+    ],
+    "auto_followup": {}
+  }

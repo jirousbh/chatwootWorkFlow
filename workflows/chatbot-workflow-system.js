@@ -8,6 +8,9 @@ const path = require('path');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const rateLimit = require('express-rate-limit');
+
+// Cache para mensagens enviadas pelo bot (evitar loop)
+const botSentMessages = new Map();
 const helmet = require('helmet');
 const { body, validationResult } = require('express-validator');
 const multer = require('multer');
@@ -194,11 +197,35 @@ cleanOldLogs();
 // Limpar logs antigos diariamente (a cada 24 horas)
 setInterval(cleanOldLogs, 24 * 60 * 60 * 1000);
 
+// Função para limpar registros antigos de debounce de botões
+async function cleanOldButtonDebounce() {
+  try {
+    // Limpar registros de debounce de mais de 1 hora
+    const oneHourAgo = new Date();
+    oneHourAgo.setHours(oneHourAgo.getHours() - 1);
+    
+    const result = await pool.query(`
+      DELETE FROM button_debounce 
+      WHERE processed_at < $1
+    `, [oneHourAgo]);
+    
+    if (result.rowCount > 0) {
+      console.log(`🧹 Limpeza de debounce: ${result.rowCount} registros antigos removidos`);
+    }
+  } catch (error) {
+    console.error('❌ Erro ao limpar registros antigos de debounce:', error);
+  }
+}
+
+// Limpar debounce de botões a cada 6 horas
+setInterval(cleanOldButtonDebounce, 6 * 60 * 60 * 1000);
+
 // Log de inicialização
 log.info('🚀 Sistema de logs duplo inicializado');
 log.info('📁 Logs salvos em:', logDir);
 log.info('🐳 Logs visíveis via: docker logs chatwoot-chatbot-workflows-1');
 log.info('🧹 Limpeza automática de logs antigos (>30 dias) ativada');
+log.info('🔒 Sistema de debounce de botões ativado (limpeza a cada 6h)');
 
 // ===== FIM DO SISTEMA DE LOGS =====
 
@@ -302,6 +329,90 @@ function isWhatsAppAPIInbox(inbox) {
 // Função utilitária para verificar se uma caixa é suportada
 function isSupportedInbox(inbox) {
   return isWhatsAppAPIInbox(inbox) || isEvolutionAPIInbox(inbox);
+}
+
+// Cache para informações de caixas (evitar chamadas repetidas à API)
+const inboxCache = new Map();
+
+// Função para buscar informações da caixa de entrada
+async function getInboxInfo(accountId, inboxId) {
+  const cacheKey = `${accountId}-${inboxId}`;
+  
+  // Verificar cache primeiro
+  if (inboxCache.has(cacheKey)) {
+    return inboxCache.get(cacheKey);
+  }
+  
+  try {
+    console.log(`🔍 Buscando informações da caixa ${inboxId} da conta ${accountId}`);
+    
+    const response = await axios.get(`${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/inboxes/${inboxId}`, {
+      headers: { 'api_access_token': CHATWOOT_API_TOKEN }
+    });
+    
+    console.log(`🔍 Resposta da API para caixa ${inboxId}:`, JSON.stringify(response.data, null, 2));
+    
+    // Verificar diferentes formatos de resposta
+    let inboxInfo = response.data.payload || response.data;
+    
+    if (!inboxInfo || !inboxInfo.name) {
+      console.error(`❌ Formato de resposta inesperado para caixa ${inboxId}:`, response.data);
+      return null;
+    }
+    
+    // Cachear resultado por 10 minutos
+    inboxCache.set(cacheKey, inboxInfo);
+    setTimeout(() => inboxCache.delete(cacheKey), 10 * 60 * 1000);
+    
+    console.log(`✅ Informações da caixa ${inboxId} obtidas: ${inboxInfo.name} (${inboxInfo.channel_type})`);
+    return inboxInfo;
+    
+  } catch (error) {
+    console.error(`❌ Erro ao buscar informações da caixa ${inboxId}:`, error.message);
+    if (error.response) {
+      console.error(`❌ Resposta de erro:`, error.response.data);
+    }
+    return null;
+  }
+}
+
+// Função para formatar botões como lista numerada para EvolutionAPI
+function formatButtonsAsNumberedList(message, buttons) {
+  if (!buttons || buttons.length === 0) {
+    return message;
+  }
+  
+  let formattedMessage = message;
+  
+  // Adicionar lista numerada
+  formattedMessage += '\n\n';
+  buttons.forEach((button, index) => {
+    formattedMessage += `${index + 1} - ${button.text}\n`;
+  });
+  
+  formattedMessage += '\n_Digite o número da opção desejada_';
+  
+  return formattedMessage;
+}
+
+// Função para processar resposta numérica e converter para texto do botão
+function processNumericResponse(userMessage, buttons) {
+  if (!buttons || buttons.length === 0) {
+    return null;
+  }
+  
+  // Remover espaços e verificar se é um número
+  const cleanMessage = userMessage.trim();
+  const number = parseInt(cleanMessage);
+  
+  // Verificar se é um número válido e está dentro do range dos botões
+  if (!isNaN(number) && number >= 1 && number <= buttons.length) {
+    const selectedButton = buttons[number - 1];
+    console.log(`🔢 Resposta numérica detectada: ${number} -> "${selectedButton.text}"`);
+    return selectedButton.text;
+  }
+  
+  return null;
 }
 
 // Sistema sem workflows padrão - apenas fluxos configurados explicitamente por conta/caixa
@@ -469,7 +580,7 @@ async function initializeDatabase() {
         target_contacts JSONB,
         schedule_type VARCHAR(50) DEFAULT 'immediate',
         scheduled_time TIMESTAMP,
-        status VARCHAR(50) DEFAULT 'draft',
+        status VARCHAR(50) DEFAULT 'pending',
         created_by INTEGER REFERENCES system_users(id),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -522,6 +633,19 @@ async function initializeDatabase() {
         last_interaction_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // NOVA: Criar tabela para controle de debounce de botões
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS button_debounce (
+        id SERIAL PRIMARY KEY,
+        conversation_id INTEGER NOT NULL,
+        contact_id VARCHAR(255) NOT NULL,
+        block_id VARCHAR(255) NOT NULL,
+        button_text VARCHAR(500) NOT NULL,
+        processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(conversation_id, block_id, button_text)
       )
     `);
 
@@ -1592,6 +1716,21 @@ class ConversationManager {
         : null;
 
       if (button) {
+        // ===== VERIFICAÇÃO DE DEBOUNCE DE BOTÃO =====
+        const isRecentlyProcessed = await isButtonRecentlyProcessed(conversationId, conversation.current_block, button.text);
+        if (isRecentlyProcessed) {
+          console.log(`🚫 Botão "${button.text}" já foi processado recentemente para o bloco ${conversation.current_block}. Ignorando clique duplicado.`);
+          return { 
+            type: 'duplicate_button', 
+            message: `Botão "${button.text}" já foi processado. Aguarde um momento antes de clicar novamente.` 
+          };
+        }
+
+        // Marcar botão como processado para evitar cliques duplicados
+        await markButtonAsProcessed(conversationId, contactId, conversation.current_block, button.text);
+        
+        console.log(`✅ Processando botão "${button.text}" para o bloco ${conversation.current_block}`);
+
         // Salvar interação no histórico
         await this.saveInteraction(conversation.id, contactId, conversation.current_block, userResponse, currentBlock.message, currentBlock.buttons);
 
@@ -1606,35 +1745,38 @@ class ConversationManager {
         console.log(`🔍 Debug - conversation.conversation_id: ${conversation.conversation_id}, conversation.data.conversation_id: ${conversation.data?.conversation_id}, usando: ${conversationId}`);
         await this.processButtonActions(button, conversationId, contactId, accountId);
 
-        // Mover para próximo bloco
-        if (button.next_block === 'finalizar') {
-          await this.finalizeConversation(contactId);
-          return { type: 'finalized', message: 'Conversa finalizada. Obrigado!' };
-        } else {
-          const nextBlock = workflow.blocks[button.next_block];
-          if (nextBlock) {
-            // NOVA LÓGICA: Verificar se é bloco de atendimento humano
-            if (nextBlock.id === 'atendimento_humano' || nextBlock.name?.toLowerCase().includes('atendimento')) {
-              console.log(`👤 Bloco de atendimento humano detectado: ${nextBlock.name || nextBlock.id}`);
-              // Pausar o bot automaticamente
-              await pauseBotForConversation(conversationId, contactId, 'human_handoff', 'system');
+                    // Mover para próximo bloco
+            if (button.next_block === 'finalizar') {
+              await this.finalizeConversation(contactId);
+              return { type: 'finalized', message: 'Conversa finalizada. Obrigado!' };
+            } else {
+              const nextBlock = workflow.blocks[button.next_block];
+              if (nextBlock) {
+                // ===== RESET DE DEBOUNCE AO NAVEGAR ENTRE BLOCOS =====
+                await resetButtonDebounceForBlock(conversationId, button.next_block);
+                
+                // NOVA LÓGICA: Verificar se é bloco de atendimento humano
+                if (nextBlock.id === 'atendimento_humano' || nextBlock.name?.toLowerCase().includes('atendimento')) {
+                  console.log(`👤 Bloco de atendimento humano detectado: ${nextBlock.name || nextBlock.id}`);
+                  // Pausar o bot automaticamente
+                  await pauseBotForConversation(conversationId, contactId, 'human_handoff', 'system');
+                }
+                
+                // Aplicar ações do próximo bloco
+                await this.processBlockActions(nextBlock, conversationId, contactId, accountId);
+                
+                // Atualizar o campo data com o nome
+                await pool.query(
+                  'UPDATE workflow_conversations SET current_block = $1, last_activity = CURRENT_TIMESTAMP, data = $2 WHERE id = $3',
+                  [button.next_block, JSON.stringify(data), conversation.id]
+                );
+                return {
+                  type: 'next_block',
+                  block: nextBlock,
+                  message: this.processMessage(nextBlock.message, data)
+                };
+              }
             }
-            
-            // Aplicar ações do próximo bloco
-            await this.processBlockActions(nextBlock, conversationId, contactId, accountId);
-            
-            // Atualizar o campo data com o nome
-            await pool.query(
-              'UPDATE workflow_conversations SET current_block = $1, last_activity = CURRENT_TIMESTAMP, data = $2 WHERE id = $3',
-              [button.next_block, JSON.stringify(data), conversation.id]
-            );
-            return {
-              type: 'next_block',
-              block: nextBlock,
-              message: this.processMessage(nextBlock.message, data)
-            };
-          }
-        }
       } else {
         // Se não houver botões, avançar automaticamente para o next_block
         await this.saveInteraction(conversation.id, contactId, conversation.current_block, userResponse, currentBlock.message, []);
@@ -1652,6 +1794,9 @@ class ConversationManager {
         if (currentBlock.next_block) {
           const nextBlock = workflow.blocks[currentBlock.next_block];
           if (nextBlock) {
+            // ===== RESET DE DEBOUNCE AO AVANÇAR AUTOMATICAMENTE =====
+            await resetButtonDebounceForBlock(conversationId, currentBlock.next_block);
+            
             // Aplicar ações do próximo bloco
             await this.processBlockActions(nextBlock, conversationId, contactId, accountId);
             
@@ -1896,6 +2041,11 @@ class ConversationManager {
         'UPDATE workflow_conversations SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE contact_id = $2 AND status = $3',
         ['completed', contactId, 'active']
       );
+      
+      // Limpar registros de debounce para este contato
+      await pool.query('DELETE FROM button_debounce WHERE contact_id = $1', [contactId]);
+      
+      console.log(`✅ Conversa finalizada para ${contactId} (debounce limpo)`);
     } catch (error) {
       console.error('Erro ao finalizar conversa:', error);
     }
@@ -2487,6 +2637,14 @@ async function executeAutoFollowup(conversationId, contactId, workflow, blockNam
   try {
     console.log(`🚀 Executando auto followup: ${blockName} para conversa ${conversationId}`);
     
+    // ===== VERIFICAÇÃO DE CONTATO EVOLUTIONAPI =====
+    // Verificar se o contato é o EvolutionAPI
+    const isEvolutionAPI = await isEvolutionAPIContact(contactId, conversationData?.account_id);
+    if (isEvolutionAPI) {
+      console.log(`🚫 Auto followup cancelado: contato EvolutionAPI detectado (${contactId})`);
+      return; // Não executar auto followups para o EvolutionAPI
+    }
+    
     // Obter o account_id correto da tabela workflow_conversations
     const accountResult = await pool.query(`
       SELECT account_id 
@@ -2557,7 +2715,7 @@ async function executeAutoFollowup(conversationId, contactId, workflow, blockNam
     
     // Enviar mensagem de followup
     const buttons = followupBlock.buttons || [];
-    await sendChatwootMessage(chatwootConversationId, processedMessage, buttons, null, correctAccountId);
+    await sendChatwootMessage(chatwootConversationId, processedMessage, buttons, null, correctAccountId, inboxId);
     
     // Salvar interação - usar o id da tabela workflow_conversations, não o conversation_id do Chatwoot
     await conversationManager.saveInteraction(
@@ -2744,6 +2902,20 @@ async function processChatwootConversation(conversation, accountId = CHATWOOT_AC
       return;
     }
     
+    // ===== VERIFICAÇÃO DE CONTATO EVOLUTIONAPI =====
+    // Verificar se o contato é o EvolutionAPI pelo nome ou telefone
+    const contactName = conversation.meta?.sender?.name || '';
+    const phoneNumber = conversation.meta?.sender?.phone_number || '';
+    
+    const isEvolutionAPI = contactName.toLowerCase().includes('evolutionapi') || 
+                          phoneNumber.includes('+123456') ||
+                          phoneNumber.includes('123456');
+    
+    if (isEvolutionAPI) {
+      //console.log(`🚫 Ignorando conversa do contato EvolutionAPI: ${contactName} (${phoneNumber}) - ID: ${conversationId}`);
+      return; // Não processar conversas do EvolutionAPI
+    }
+    
     //console.log(`🔍 Processando conversa - ID: ${conversationId}, Inbox: ${inboxId}, Contato: ${contactId}, Conta: ${accountId}`);
     
     // Verificar se já existe uma conversa de workflow ativa
@@ -2760,12 +2932,40 @@ async function processChatwootConversation(conversation, accountId = CHATWOOT_AC
       // Marcar mensagem como processada
       await markMessageAsProcessed(message.id, contactId);
       
-      // Processar mensagens do usuário (incoming) e comandos especiais de agentes (outgoing)
+      // Processar mensagens do usuário (incoming) e TODAS as mensagens de agentes (outgoing)
       if (message.content) {
         if (message.message_type === 0) {  // 0 = incoming (usuário)
           await processUserMessage(contactId, conversationId, message.content, inboxId, accountId);
-        } else if (message.message_type === 1 && message.content.trim().startsWith('!')) {  // 1 = outgoing (agente) com comando
-          await processAgentCommand(contactId, conversationId, message.content, inboxId, accountId, message.user_id);
+        } else if (message.message_type === 1) {  // 1 = outgoing (sistema/agente)
+          // VERIFICAÇÕES PARA EVITAR LOOP - Ignorar mensagens do próprio bot
+          const isBotMessage = 
+            !message.sender || // Sem sender (sistema)
+            message.sender.type === 'AgentBot' || 
+            message.sender.type === 'Bot' ||
+            message.content.includes('**Bot Pausado Automaticamente**') || // Mensagem específica do bot
+            message.content.includes('**Comando de Agente Executado**') ||
+            message.content.startsWith('🤖') || // Mensagens que começam com emoji de bot
+            message.content.includes('Detectei intervenção de agente') || // Conteúdo específico
+            message.content.includes('Fluxo reiniciado com sucesso') || // Mensagem de reset
+            message.content.includes('Bot reativado com sucesso') || // Mensagem de reativação
+            message.content.includes('Status do Bot') || // Mensagem de status
+            message.content.includes('assistente virtual') || // Mensagens típicas do bot
+            message.content.includes('👋') || // Mensagens com emoji de saudação (comum em bots)
+            (message.sender && message.sender.name && message.sender.name.includes('Admin CRM')) || // Sender do sistema/bot
+            // NOVA VERIFICAÇÃO: Verificar se user_id é null/undefined (mensagens do sistema)
+            (!message.user_id || message.user_id === null || message.user_id === undefined) ||
+            // VERIFICAÇÃO DE PADRÕES ESPECÍFICOS DO BOT DA WIZARD
+            (message.content.includes('Wizard') && message.content.includes('assistente virtual')) ||
+            (message.content.includes('Você já é nosso aluno') && message.content.includes('👋'));
+          
+          if (isBotMessage) {
+            console.log(`🤖 Mensagem de bot ignorada: ${message.sender?.type || 'Sistema'} - ${message.content.substring(0, 50)}...`);
+          } else if (message.sender) {
+            // Log detalhado para debug
+            console.log(`👤 DEBUG: Mensagem outgoing - ID: ${message.id}, User_ID: ${message.user_id}, Sender: ${JSON.stringify(message.sender)}, Content: ${message.content.substring(0, 100)}`);
+            console.log(`👤 Mensagem de agente humano detectada: ${message.sender.name || message.user_id} - ${message.content}`);
+            await processAgentCommand(contactId, conversationId, message.content, inboxId, accountId, message.user_id);
+          }
         }
       }
     }
@@ -2817,10 +3017,132 @@ async function markMessageAsProcessed(messageId, contactId) {
   }
 }
 
+// Verificar se um botão já foi processado recentemente (debounce)
+async function isButtonRecentlyProcessed(conversationId, blockId, buttonText) {
+  try {
+    const result = await pool.query(`
+      SELECT processed_at 
+      FROM button_debounce 
+      WHERE conversation_id = $1 AND block_id = $2 AND button_text = $3
+    `, [conversationId, blockId, buttonText]);
+    
+    if (result.rows.length === 0) {
+      return false; // Botão nunca foi processado
+    }
+    
+    const processedAt = result.rows[0].processed_at;
+    const now = new Date();
+    const timeDiff = (now - processedAt) / 1000; // Diferença em segundos
+    
+    // ===== DEBOUNCE INTELIGENTE =====
+    // Se foi processado há menos de 5 segundos, considerar como recente
+    // Mas se passou mais de 5 minutos, permitir reutilização (usuário pode ter voltado ao bloco)
+    if (timeDiff < 5) {
+      console.log(`🚫 Botão "${buttonText}" processado há ${timeDiff.toFixed(1)} segundos. Bloqueando clique duplicado.`);
+      return true; // Clique muito recente - bloquear
+    } else if (timeDiff > 300) { // 5 minutos = 300 segundos
+      console.log(`🔄 Botão "${buttonText}" foi processado há ${Math.round(timeDiff/60)} minutos. Permitindo reutilização (usuário pode ter voltado ao bloco).`);
+      return false; // Permitir reutilização após tempo significativo
+    } else {
+      console.log(`⏳ Botão "${buttonText}" processado há ${Math.round(timeDiff)} segundos. Mantendo bloqueio (entre 5s e 5min).`);
+      return true; // Entre 5 segundos e 5 minutos - manter bloqueio
+    }
+  } catch (error) {
+    console.error('❌ Erro ao verificar debounce do botão:', error);
+    return false; // Em caso de erro, permitir processamento
+  }
+}
+
+// Marcar botão como processado (para debounce)
+async function markButtonAsProcessed(conversationId, contactId, blockId, buttonText) {
+  try {
+    await pool.query(`
+      INSERT INTO button_debounce (conversation_id, contact_id, block_id, button_text) 
+      VALUES ($1, $2, $3, $4) 
+      ON CONFLICT (conversation_id, block_id, button_text) 
+      DO UPDATE SET processed_at = CURRENT_TIMESTAMP
+    `, [conversationId, contactId, blockId, buttonText]);
+  } catch (error) {
+    console.error('❌ Erro ao marcar botão como processado:', error);
+  }
+}
+
+// Resetar debounce quando usuário navega para bloco diferente
+async function resetButtonDebounceForBlock(conversationId, newBlockId) {
+  try {
+    // Buscar o bloco atual da conversa
+    const currentBlockResult = await pool.query(`
+      SELECT current_block 
+      FROM workflow_conversations 
+      WHERE conversation_id = $1
+    `, [conversationId]);
+    
+    if (currentBlockResult.rows.length === 0) {
+      // Se não encontrar a conversa, assumir que é uma navegação direta
+      // e resetar debounce de todos os blocos para esta conversa
+      console.log(`🔄 Conversa ${conversationId} não encontrada. Resetando debounce de todos os blocos.`);
+      
+      await pool.query(`
+        UPDATE button_debounce 
+        SET processed_at = processed_at - INTERVAL '10 minutes'
+        WHERE conversation_id = $1
+      `, [conversationId]);
+      
+      console.log(`✅ Debounce resetado para todos os blocos da conversa ${conversationId}`);
+      return;
+    }
+    
+    const currentBlock = currentBlockResult.rows[0].current_block;
+    
+    // Se o usuário está navegando para um bloco diferente, resetar debounce do bloco anterior
+    if (currentBlock && currentBlock !== newBlockId) {
+      console.log(`🔄 Usuário navegando de bloco ${currentBlock} para ${newBlockId}. Resetando debounce do bloco anterior.`);
+      
+      // ===== RESET INTELIGENTE =====
+      // Resetar debounce do bloco anterior E de todos os blocos visitados anteriormente
+      // para permitir navegação de volta em qualquer ponto do fluxo
+      
+      // 1. Resetar o bloco atual
+      await pool.query(`
+        UPDATE button_debounce 
+        SET processed_at = processed_at - INTERVAL '10 minutes'
+        WHERE conversation_id = $1 AND block_id = $2
+      `, [conversationId, currentBlock]);
+      
+      // 2. Resetar todos os blocos que podem ser acessados de volta
+      // (incluindo blocos visitados anteriormente na conversa)
+      await pool.query(`
+        UPDATE button_debounce 
+        SET processed_at = processed_at - INTERVAL '10 minutes'
+        WHERE conversation_id = $1 
+        AND block_id != $2 
+        AND processed_at > CURRENT_TIMESTAMP - INTERVAL '1 hour'
+      `, [conversationId, newBlockId]);
+      
+      console.log(`✅ Debounce resetado para bloco ${currentBlock} e blocos anteriores visitados`);
+      console.log(`🔄 Agora o usuário pode navegar de volta para qualquer bloco anterior`);
+    }
+  } catch (error) {
+    console.error('❌ Erro ao resetar debounce do bloco:', error);
+  }
+}
+
 // Processar comando de agente
 async function processAgentCommand(contactId, conversationId, agentMessage, inboxId, accountId = CHATWOOT_ACCOUNT_ID, agentId = null) {
   try {
     console.log(`👤 Processando comando de agente ${agentId} (Inbox: ${inboxId}): ${agentMessage}`);
+    
+    // ===== PAUSAR BOT AUTOMATICAMENTE QUANDO AGENTE INTERVÉM =====
+    // Se não for um comando especial, pausar o bot automaticamente
+    if (!agentMessage.trim().startsWith('!')) {
+      console.log(`👤 Agente ${agentId} enviou mensagem normal, pausando bot automaticamente (silencioso)`);
+      await pauseBotForConversation(conversationId, contactId, 'agent_intervention', `agent_${agentId}`);
+      
+      // NÃO enviar mensagem informativa para evitar loop
+      // O agente já está atendendo, não precisa de notificação automática
+      
+      return; // IMPORTANTE: Sair da função após pausar o bot
+    }
     
     const command = agentMessage.trim().toLowerCase();
     
@@ -2830,13 +3152,15 @@ async function processAgentCommand(contactId, conversationId, agentMessage, inbo
     if (command === '!reset') {
       console.log(`🔄 Reset solicitado por agente ${agentId}`);
       await pool.query('DELETE FROM workflow_conversations WHERE contact_id = $1', [contactId]);
+      // Limpar registros de debounce para este contato
+      await pool.query('DELETE FROM button_debounce WHERE contact_id = $1', [contactId]);
       // Remover todos os labels do contato
       await removeAllLabelsFromContact(contactId, accountId);
       // Remover todos os labels da conversa
       await removeAllLabelsFromConversation(conversationId, accountId);
       // Reativar o bot após reset
       await reactivateBotForConversation(conversationId, contactId, `agent_${agentId}_reset`);
-      await sendChatwootMessage(conversationId, '🔄 **Comando de Agente Executado**\n\nFluxo reiniciado com sucesso e todos os labels removidos (contato e conversa). O bot foi reativado e está pronto para uma nova conversa.', [], null, accountId);
+      await sendChatwootMessage(conversationId, '🔄 **Comando de Agente Executado**\n\nFluxo reiniciado com sucesso e todos os labels removidos (contato e conversa). O bot foi reativado e está pronto para uma nova conversa.', [], null, accountId, inboxId);
       return;
     }
     
@@ -2845,7 +3169,7 @@ async function processAgentCommand(contactId, conversationId, agentMessage, inbo
       console.log(`▶️ Comando de reativação do bot solicitado por agente ${agentId}`);
       const success = await reactivateBotForConversation(conversationId, contactId, `agent_${agentId}`);
       if (success) {
-        await sendChatwootMessage(conversationId, '🔄 **Comando de Agente Executado**\n\n▶️ Bot reativado com sucesso! O bot voltará a responder normalmente nesta conversa.', [], null, accountId);
+        await sendChatwootMessage(conversationId, '🔄 **Comando de Agente Executado**\n\n▶️ Bot reativado com sucesso! O bot voltará a responder normalmente nesta conversa.', [], null, accountId, inboxId);
       } else {
         await sendChatwootMessage(conversationId, '❌ Erro ao reativar bot. Tente novamente.', [], null, accountId);
       }
@@ -2857,7 +3181,7 @@ async function processAgentCommand(contactId, conversationId, agentMessage, inbo
       console.log(`⏸️ Comando de pausa do bot solicitado por agente ${agentId}`);
       const success = await pauseBotForConversation(conversationId, contactId, 'manual_pause', `agent_${agentId}`);
       if (success) {
-        await sendChatwootMessage(conversationId, '🔄 **Comando de Agente Executado**\n\n⏸️ Bot pausado com sucesso! O bot não responderá mais nesta conversa até ser reativado.', [], null, accountId);
+        await sendChatwootMessage(conversationId, '🔄 **Comando de Agente Executado**\n\n⏸️ Bot pausado com sucesso! O bot não responderá mais nesta conversa até ser reativado.', [], null, accountId, inboxId);
       } else {
         await sendChatwootMessage(conversationId, '❌ Erro ao pausar bot. Tente novamente.', [], null, accountId);
       }
@@ -2919,22 +3243,80 @@ async function processAgentCommand(contactId, conversationId, agentMessage, inbo
 }
 
 // Processar mensagem do usuário
+// Função para verificar se o contato é o EvolutionAPI (contato do sistema)
+async function isEvolutionAPIContact(contactId, accountId = CHATWOOT_ACCOUNT_ID) {
+  try {
+    // Buscar informações do contato
+    const response = await axios.get(
+      `${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/contacts/${contactId}`,
+      {
+        headers: { 'api_access_token': CHATWOOT_API_TOKEN }
+      }
+    );
+    
+    if (response.data && response.data.payload) {
+      const contact = response.data.payload;
+      const contactName = contact.name || '';
+      const phoneNumber = contact.phone_number || '';
+      
+      // Verificar se é o contato EvolutionAPI pelo nome ou telefone
+      const isEvolutionAPI = contactName.toLowerCase().includes('evolutionapi') || 
+                            phoneNumber.includes('+123456') ||
+                            phoneNumber.includes('123456');
+      
+      if (isEvolutionAPI) {
+        console.log(`🚫 Contato EvolutionAPI detectado: ${contactName} (${phoneNumber})`);
+      }
+      
+      return isEvolutionAPI;
+    }
+    
+    return false;
+  } catch (error) {
+    console.error('❌ Erro ao verificar se é contato EvolutionAPI:', error);
+    return false;
+  }
+}
+
 async function processUserMessage(contactId, conversationId, userMessage, inboxId, accountId = CHATWOOT_ACCOUNT_ID) {
   try {
     console.log(`📨 Processando mensagem de ${contactId} (Inbox: ${inboxId}): ${userMessage}`);
+    
+    // ===== VERIFICAÇÃO DE CONTATO EVOLUTIONAPI =====
+    // Verificar se o contato é o EvolutionAPI (contato do sistema)
+    const isEvolutionAPI = await isEvolutionAPIContact(contactId, accountId);
+    if (isEvolutionAPI) {
+      console.log(`🚫 Ignorando mensagem do contato EvolutionAPI (${contactId}): ${userMessage}`);
+      return; // Não processar mensagens do EvolutionAPI
+    }
     
     // ===== COMANDOS QUE SEMPRE FUNCIONAM (mesmo com bot pausado) =====
     
     // Se o usuário digitar !reset, zera o fluxo
     if (userMessage.trim().toLowerCase() === '!reset') {
-      console.log(`🔄 Reset solicitado por ${contactId}`);
+      console.log(`🔄 Reset solicitado por ${contactId} para conversa ${conversationId}`);
+      
+      // Verificar status antes do reset
+      const statusBeforeReset = await getBotConversationStatus(conversationId, contactId);
+      console.log(`🔍 Status do bot ANTES do reset: bot_active=${statusBeforeReset.bot_active}, paused_reason=${statusBeforeReset.paused_reason}`);
+      
       await pool.query('DELETE FROM workflow_conversations WHERE contact_id = $1', [contactId]);
+      // Limpar registros de debounce para este contato
+      await pool.query('DELETE FROM button_debounce WHERE contact_id = $1', [contactId]);
       // Remover todos os labels do contato
       await removeAllLabelsFromContact(contactId, accountId);
       // Remover todos os labels da conversa
       await removeAllLabelsFromConversation(conversationId, accountId);
+      
       // Reativar o bot após reset
-      await reactivateBotForConversation(conversationId, contactId, 'user_reset');
+      console.log(`🔄 Iniciando reativação do bot para conversa ${conversationId}...`);
+      const reactivateSuccess = await reactivateBotForConversation(conversationId, contactId, 'user_reset');
+      console.log(`🔄 Resultado da reativação após reset: ${reactivateSuccess}`);
+      
+      // Verificar status do bot após reativação
+      const statusAfterReset = await getBotConversationStatus(conversationId, contactId);
+      console.log(`🔍 Status do bot APÓS reset: bot_active=${statusAfterReset.bot_active}, paused_reason=${statusAfterReset.paused_reason}, reactivated_at=${statusAfterReset.reactivated_at}`);
+      
       await sendChatwootMessage(conversationId, 'Fluxo reiniciado com sucesso e todos os labels removidos (contato e conversa). Agora você pode iniciar a conversa novamente. Tente dar um "oi".', [], null, accountId);
       return;
     }
@@ -3004,6 +3386,26 @@ async function processUserMessage(contactId, conversationId, userMessage, inboxI
       } else {
         await sendChatwootMessage(conversationId, '❌ Erro ao pausar bot. Tente novamente.', [], null, accountId);
       }
+      return;
+    }
+    
+    // Comando especial para forçar reativação (debug)
+    if (userMessage.trim().toLowerCase() === '!forceactive') {
+      console.log(`⚡ Comando FORÇAR reativação solicitado por ${contactId} para conversa ${conversationId}`);
+      
+      // Forçar limpeza completa do status
+      await pool.query(`
+        DELETE FROM bot_conversation_status WHERE conversation_id = $1
+      `, [conversationId]);
+      
+      // Recriar status ativo
+      const success = await reactivateBotForConversation(conversationId, contactId, 'force_active');
+      
+      // Verificar resultado
+      const status = await getBotConversationStatus(conversationId, contactId);
+      
+      const message = `⚡ **Reativação Forçada**\n\nResultado: ${success ? '✅ Sucesso' : '❌ Falha'}\nStatus: ${status.bot_active ? 'Ativo' : 'Inativo'}\nRazão: ${status.paused_reason || 'Nenhuma'}`;
+      await sendChatwootMessage(conversationId, message, [], null, accountId);
       return;
     }
     
@@ -3083,7 +3485,8 @@ async function processUserMessage(contactId, conversationId, userMessage, inboxI
             conversationManager.processMessage(firstBlock.message, conversation.data),
             firstBlock.buttons,
             firstBlock.media,
-            accountId
+            accountId,
+            inboxId
           );
         } else {
           console.log(`🚫 Nenhum fluxo configurado para a caixa de entrada ${inboxId}. Bot não responderá automaticamente.`);
@@ -3099,13 +3502,48 @@ async function processUserMessage(contactId, conversationId, userMessage, inboxI
         return;
       }
       
-      const result = await conversationManager.processResponse(contactId, userMessage, accountId);
+      // Verificar se é EvolutionAPI e processar resposta numérica se necessário
+      let processedMessage = userMessage;
+      try {
+        const inboxInfo = await getInboxInfo(accountId, inboxId);
+        let isEvolutionAPI = inboxInfo ? isEvolutionAPIInbox(inboxInfo) : false;
+        
+        // Fallback: detectar Evolution API por IDs conhecidos
+        if (!isEvolutionAPI && (inboxId == 26 || inboxId == 27 || inboxId == 28 || inboxId == 30)) {
+          console.log(`🔄 Fallback: Caixa ${inboxId} detectada como Evolution API pelo ID (processamento numérico)`);
+          isEvolutionAPI = true;
+        }
+        
+        if (isEvolutionAPI) {
+          // Buscar o bloco atual para obter os botões
+          const conversation = await conversationManager.getConversation(contactId);
+          if (conversation) {
+            const workflow = conversationManager.workflows.get(conversation.workflow_name) || 
+                           await conversationManager.loadWorkflowFromDatabase(conversation.workflow_name);
+            
+            if (workflow && workflow.blocks[conversation.current_block]) {
+              const currentBlock = workflow.blocks[conversation.current_block];
+              if (currentBlock.buttons && currentBlock.buttons.length > 0) {
+                const numericResponse = processNumericResponse(userMessage, currentBlock.buttons);
+                if (numericResponse) {
+                  processedMessage = numericResponse;
+                  console.log(`🔄 EvolutionAPI: Convertendo resposta "${userMessage}" -> "${numericResponse}"`);
+                }
+              }
+            }
+          }
+        }
+      } catch (error) {
+        console.warn(`⚠️ Erro ao processar resposta numérica:`, error.message);
+      }
+      
+      const result = await conversationManager.processResponse(contactId, processedMessage, accountId);
       
       if (result && result.type) {
       if (result.type === 'next_block') {
-        await sendChatwootMessage(conversationId, result.message, result.block.buttons, result.block.media, accountId);
+        await sendChatwootMessage(conversationId, result.message, result.block.buttons, result.block.media, accountId, inboxId);
       } else if (result.type === 'finalized') {
-        await sendChatwootMessage(conversationId, result.message, [], null, accountId);
+        await sendChatwootMessage(conversationId, result.message, [], null, accountId, inboxId);
         await conversationManager.finalizeConversation(contactId);
       } else if (result.type === 'invalid_response') {
         let workflow = conversationManager.workflows.get(conversation.workflow_name);
@@ -3118,7 +3556,7 @@ async function processUserMessage(contactId, conversationId, userMessage, inboxI
         
         if (workflow) {
           const currentBlock = workflow.blocks[conversation.current_block];
-          await sendChatwootMessage(conversationId, result.message, currentBlock.buttons, currentBlock.media, accountId);
+          await sendChatwootMessage(conversationId, result.message, currentBlock.buttons, currentBlock.media, accountId, inboxId);
         } else {
           console.error(`❌ Não foi possível encontrar workflow '${conversation.workflow_name}' para resposta inválida`);
         }
@@ -3168,7 +3606,7 @@ async function processUserMessage(contactId, conversationId, userMessage, inboxI
 }
 
 // Enviar mensagem para o Chatwoot
-async function sendChatwootMessage(conversationId, message, buttons = [], mediaContent = null, accountId = CHATWOOT_ACCOUNT_ID) {
+async function sendChatwootMessage(conversationId, message, buttons = [], mediaContent = null, accountId = CHATWOOT_ACCOUNT_ID, inboxId = null) {
   try {
     // Se houver anexo direto via file_id, baixar arquivo e enviar via multipart/form-data
     if (mediaContent && mediaContent.attachment && mediaContent.attachment.file_id) {
@@ -3206,8 +3644,38 @@ async function sendChatwootMessage(conversationId, message, buttons = [], mediaC
       }
     }
     
+    // Detectar tipo de caixa para adaptar formato dos botões
+    let isEvolutionAPI = false;
+    let inboxInfo = null;
+    
+    if (inboxId && buttons && buttons.length > 0) {
+      try {
+        inboxInfo = await getInboxInfo(accountId, inboxId);
+        isEvolutionAPI = inboxInfo ? isEvolutionAPIInbox(inboxInfo) : false;
+        
+        // Fallback: detectar Evolution API por IDs conhecidos
+        if (!isEvolutionAPI && (inboxId == 26 || inboxId == 27 || inboxId == 28 || inboxId == 30)) {
+          console.log(`🔄 Fallback: Caixa ${inboxId} detectada como Evolution API pelo ID`);
+          isEvolutionAPI = true;
+        }
+        
+        if (isEvolutionAPI) {
+          console.log(`🔄 Caixa Evolution API detectada: ${inboxInfo.name} - Convertendo botões para lista numerada`);
+        } else {
+          console.log(`📱 Caixa WhatsApp API detectada: ${inboxInfo?.name || 'Desconhecida'} - Mantendo botões interativos`);
+        }
+      } catch (error) {
+        console.warn(`⚠️ Erro ao detectar tipo da caixa ${inboxId}:`, error.message);
+      }
+    }
+    
+    // Se for EvolutionAPI e houver botões, converter para lista numerada
+    const finalMessage = isEvolutionAPI && buttons && buttons.length > 0 
+      ? formatButtonsAsNumberedList(message, buttons)
+      : message;
+    
     const payload = {
-      content: message,
+      content: finalMessage,
       message_type: 'outgoing'  // outgoing message
     };
     
@@ -3218,8 +3686,8 @@ async function sendChatwootMessage(conversationId, message, buttons = [], mediaC
         items: [{
           media_url: mediaContent.url,
           title: mediaContent.title || 'Mídia',
-          description: mediaContent.description || message,
-          actions: buttons && buttons.length > 0 ? buttons.map(button => ({
+          description: mediaContent.description || finalMessage,
+          actions: (!isEvolutionAPI && buttons && buttons.length > 0) ? buttons.map(button => ({
             type: 'postback',
             text: button.text,
             payload: button.text
@@ -3227,8 +3695,8 @@ async function sendChatwootMessage(conversationId, message, buttons = [], mediaC
         }]
     };
     } 
-    // Se houver botões mas sem mídia, criar mensagem com botões
-    else if (buttons && buttons.length > 0) {
+    // Se houver botões mas sem mídia e não for EvolutionAPI, criar mensagem com botões
+    else if (buttons && buttons.length > 0 && !isEvolutionAPI) {
       payload.content_type = 'input_select';
       payload.content_attributes = {
         items: buttons.map((button, index) => ({
@@ -3619,26 +4087,70 @@ async function sendChatwootMessageWithAttachment(conversationId, message, button
       console.log(`⏰ Aguardando ${buttonDelay}ms antes de enviar botões...`);
       await new Promise(resolve => setTimeout(resolve, buttonDelay));
       
-      const buttonPayload = {
-        content: 'Escolha uma opção:',
-        content_type: 'input_select',
-        content_attributes: {
-          items: buttons.map((button, index) => ({
-            title: button.text,
-            value: button.text
-          }))
-        },
-        message_type: 'outgoing'
-      };
+      // 🔄 DETECTAR TIPO DE CAIXA PARA ADAPTAR BOTÕES (igual função principal)
+      let isEvolutionAPI = false;
+      let inboxInfo = null;
       
-      await axios.post(`${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/conversations/${conversationId}/messages`, buttonPayload, {
-        headers: {
-          'api_access_token': CHATWOOT_API_TOKEN,
-          'Content-Type': 'application/json'
+      try {
+        // Buscar informações da caixa da conversa
+        const convResponse = await axios.get(`${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/conversations/${conversationId}`, {
+          headers: { 'api_access_token': CHATWOOT_API_TOKEN }
+        });
+        
+        const inboxId = convResponse.data.inbox_id;
+        if (inboxId) {
+          inboxInfo = await getInboxInfo(accountId, inboxId);
+          isEvolutionAPI = inboxInfo ? isEvolutionAPIInbox(inboxInfo) : false;
+          
+          // Fallback: detectar Evolution API por IDs conhecidos
+          if (!isEvolutionAPI && (inboxId == 26 || inboxId == 27 || inboxId == 28 || inboxId == 30)) {
+            console.log(`🔄 Fallback: Caixa ${inboxId} detectada como Evolution API pelo ID (mídia com botões)`);
+            isEvolutionAPI = true;
+          }
         }
-      });
+      } catch (error) {
+        console.error('❌ Erro ao detectar tipo de caixa para botões pós-mídia:', error.message);
+      }
       
-      console.log(`✅ Botões enviados para conversa ${conversationId}`);
+      if (isEvolutionAPI) {
+        // 🔄 Evolution API: Enviar lista numerada
+        console.log(`🔄 Caixa Evolution API detectada - Enviando botões como lista numerada`);
+        const numberedList = formatButtonsAsNumberedList('Escolha uma opção:', buttons);
+        
+        const textPayload = {
+          content: numberedList,
+          message_type: 'outgoing'
+        };
+        
+        await axios.post(`${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/conversations/${conversationId}/messages`, textPayload, {
+          headers: { 'api_access_token': CHATWOOT_API_TOKEN }
+        });
+        
+        console.log(`✅ Lista numerada enviada após mídia para Evolution API`);
+      } else {
+        // 📱 WhatsApp API: Enviar botões interativos
+        console.log(`📱 Caixa WhatsApp API detectada - Enviando botões interativos`);
+        const buttonPayload = {
+          content: 'Escolha uma opção:',
+          content_type: 'input_select',
+          content_attributes: {
+            items: buttons.map((button, index) => ({
+              title: button.text,
+              value: button.text
+            }))
+          },
+          message_type: 'outgoing'
+        };
+        
+        await axios.post(`${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/conversations/${conversationId}/messages`, buttonPayload, {
+          headers: {
+            'api_access_token': CHATWOOT_API_TOKEN,
+            'Content-Type': 'application/json'
+          }
+        });
+        
+        console.log(`✅ Botões interativos enviados após mídia para WhatsApp API`);
+      }
     }
     
     console.log(`✅ Anexo enviado para conversa ${conversationId}: ${attachment.originalname}`);
@@ -4175,6 +4687,18 @@ async function isBotActiveForConversation(conversationId, contactId, accountId =
       return false;
     }
     
+    // Verificar se bot foi reativado recentemente (últimos 5 minutos)
+    if (botStatus.reactivated_at) {
+      const now = new Date();
+      const reactivatedAt = new Date(botStatus.reactivated_at);
+      const timeDiff = (now.getTime() - reactivatedAt.getTime()) / 1000 / 60; // diferença em minutos
+      
+      if (timeDiff < 5) {
+        console.log(`⏳ Bot reativado há ${timeDiff.toFixed(1)} minutos, ignorando verificação de agente (período de graça)`);
+        return true;
+      }
+    }
+    
     // Verificar se há atendente humano ativo no Chatwoot
     const hasHumanAgent = await checkHumanAgentActive(conversationId, accountId);
     
@@ -4274,17 +4798,19 @@ async function checkHumanAgentActive(conversationId, accountId) {
     const humanStatuses = ['open', 'resolved'];
     const isHumanStatus = humanStatuses.includes(conversation.status);
     
-    // Verificar se há mensagens recentes de agentes humanos
+    // Verificar se há mensagens recentes de agentes humanos (PRINCIPAL VERIFICAÇÃO)
     const hasRecentAgentActivity = await checkRecentAgentActivity(conversationId, accountId);
     
-    const hasHumanAgent = hasAssignedAgent && isHumanStatus;
+    // NOVA LÓGICA: Se há atividade recente de agente, considerar como atendimento humano ativo
+    // independentemente de atribuição formal
+    const hasHumanAgent = hasRecentAgentActivity || (hasAssignedAgent && isHumanStatus);
     
-    console.log(`👤 Conversa ${conversationId} - Agente: ${hasAssignedAgent ? conversation.assignee_id : 'Nenhum'}, Status: ${conversation.status}, Atividade Recente: ${hasRecentAgentActivity}`);
+    console.log(`👤 Conversa ${conversationId} - Agente: ${hasAssignedAgent ? conversation.assignee_id : 'Nenhum'}, Status: ${conversation.status}, Atividade Recente: ${hasRecentAgentActivity}, Atendimento Humano: ${hasHumanAgent}`);
     
     // Atualizar status no banco
     await updateBotAgentStatus(conversationId, hasHumanAgent, conversation.assignee_id);
     
-    return hasHumanAgent || hasRecentAgentActivity;
+    return hasHumanAgent;
   } catch (error) {
     console.error(`❌ Erro ao verificar atendente humano para conversa ${conversationId}:`, error.response?.status, JSON.stringify(error.response?.data));
     // Em caso de erro, assumir que não há atendente (permitir bot)
@@ -4299,26 +4825,38 @@ async function checkRecentAgentActivity(conversationId, accountId = CHATWOOT_ACC
       `${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/conversations/${conversationId}/messages`,
       {
         headers: { 'api_access_token': CHATWOOT_API_TOKEN },
-        params: { page: 1, per_page: 5 }
+        params: { page: 1, per_page: 10 } // Aumentar para 10 mensagens para melhor detecção
       }
     );
     
     const messages = response.data.payload || [];
     const now = new Date();
-    const thirtyMinutesAgo = new Date(now.getTime() - 30 * 60 * 1000);
+    const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000); // Aumentar para 1 hora
     
-    // Verificar se há mensagens de agentes humanos nos últimos 30 minutos
+    // Verificar se há mensagens de agentes humanos na última hora
     const recentAgentMessages = messages.filter(msg => {
       const messageTime = new Date(msg.created_at);
-      return (
-        msg.message_type === 1 && // outgoing message
-        msg.sender && 
-        msg.sender.type === 'AgentBot' === false && // não é bot
-        messageTime > thirtyMinutesAgo
-      );
+      
+      // Verificar se é mensagem de agente (outgoing) e não é bot
+      const isAgentMessage = msg.message_type === 1 && // outgoing message
+                            msg.sender && 
+                            msg.sender.type !== 'AgentBot' && // não é bot
+                            msg.sender.type !== 'Bot'; // não é bot (outro tipo)
+      
+      // Verificar se é recente (última hora)
+      const isRecent = messageTime > oneHourAgo;
+      
+      if (isAgentMessage && isRecent) {
+        console.log(`👤 Mensagem de agente detectada: ${msg.sender?.name || msg.sender?.type} - ${msg.content} (${messageTime.toLocaleTimeString()})`);
+      }
+      
+      return isAgentMessage && isRecent;
     });
     
-    return recentAgentMessages.length > 0;
+    const hasAgentActivity = recentAgentMessages.length > 0;
+    console.log(`🔍 Atividade de agente detectada para conversa ${conversationId}: ${hasAgentActivity} (${recentAgentMessages.length} mensagens de agente na última hora)`);
+    
+    return hasAgentActivity;
   } catch (error) {
     console.error(`❌ Erro ao verificar atividade recente de agente:`, error);
     return false;
@@ -4453,7 +4991,7 @@ async function checkAndReactivateBotsAfter24Hours() {
       FROM bot_conversation_status 
       WHERE bot_active = false 
         AND paused_at < NOW() - INTERVAL '24 hours'
-        AND paused_reason IN ('human_handoff', 'sector_transfer', 'human_agent_active')
+        AND paused_reason IN ('human_handoff', 'sector_transfer', 'human_agent_active', 'agent_intervention')
     `);
     
     if (result.rows.length > 0) {
@@ -4518,6 +5056,9 @@ async function checkAndReactivateBotsAfter24Hours() {
         try {
           // 1. Deletar conversa do workflow (reset do estado)
           await pool.query('DELETE FROM workflow_conversations WHERE contact_id = $1', [contact_id]);
+          
+          // 1.5. Limpar registros de debounce para este contato
+          await pool.query('DELETE FROM button_debounce WHERE contact_id = $1', [contact_id]);
           
           // 2. Remover todos os labels do contato
           await removeAllLabelsFromContact(contact_id, accountId);
@@ -4925,6 +5466,9 @@ app.post('/api/workflow/conversation/:contactId/reset', authenticateToken, async
     
     // Deletar conversa do workflow
     await pool.query('DELETE FROM workflow_conversations WHERE contact_id = $1', [contactId]);
+    
+    // Limpar registros de debounce para este contato
+    await pool.query('DELETE FROM button_debounce WHERE contact_id = $1', [contactId]);
     
     // Remover todos os labels do contato
     await removeAllLabelsFromContact(contactId);
@@ -5656,6 +6200,20 @@ async function processCampaign(campaignId) {
     
     for (const contact of contacts) {
       try {
+        // ===== VERIFICAÇÃO DE CONTATO EVOLUTIONAPI =====
+        // Verificar se o contato é o EvolutionAPI
+        const contactName = contact.name || '';
+        const phoneNumber = contact.phone || '';
+        
+        const isEvolutionAPI = contactName.toLowerCase().includes('evolutionapi') || 
+                              phoneNumber.includes('+123456') ||
+                              phoneNumber.includes('123456');
+        
+        if (isEvolutionAPI) {
+          console.log(`🚫 Ignorando contato EvolutionAPI na campanha: ${contactName} (${phoneNumber})`);
+          continue; // Pular este contato
+        }
+        
         // Normalizar telefone para formato E.164
         let normalizedPhone = contact.phone.replace(/[^\d+]/g, '');
         if (!normalizedPhone.startsWith('+')) {
@@ -6207,8 +6765,9 @@ app.post('/api/campaigns/:id/upload-csv', authenticateToken, upload.single('file
   for await (const row of stream) {
     const name = (row.name || '').trim();
     const phone = (row.phone || '').replace(/\D/g, '');
-    if (!name || !phone) {
-      errors.push({ row, error: 'Nome ou telefone inválido' });
+    // Validar apenas se telefone existe (nome pode estar vazio)
+    if (!phone) {
+      errors.push({ row, error: 'Telefone inválido ou vazio' });
       continue;
     }
     try {

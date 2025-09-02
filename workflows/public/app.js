@@ -8,11 +8,10 @@ function parseDateFromBackend(dateString) {
     }
     
     // Para datas do PostgreSQL que vêm no formato "YYYY-MM-DD HH:MM:SS" 
-    // assumir que são no horário UTC e converter para Brasil
+    // o backend já está enviando no timezone correto, então não forçar UTC
     if (typeof dateString === 'string' && /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}/.test(dateString)) {
-        // Interpretar como UTC e converter para horário do Brasil
-        const utcDate = new Date(dateString + 'Z'); // Forçar UTC
-        return utcDate;
+        // O backend já converteu para o timezone correto, usar como está
+        return new Date(dateString);
     }
     
     // Para outros formatos, tentar interpretação normal
@@ -353,7 +352,9 @@ class ChatwootWorkflowsApp {
                  }
                  
                  if (isEvolutionAPIInbox(inboxInfo)) {
-                     console.log('✅ Caixa de entrada é uma Evolution API');
+                     console.warn('⚠️ Campanhas não são permitidas com Evolution API');
+                     this.showEvolutionAPIModal(inboxInfo.name);
+                     return false;
                  } else {
                      console.log('✅ Caixa de entrada é uma API oficial do WhatsApp');
                  }
@@ -366,7 +367,9 @@ class ChatwootWorkflowsApp {
                  }
                  
                  if (isEvolutionAPIInbox(selectedInboxInfo)) {
-                     console.log('✅ Caixa de entrada é uma Evolution API');
+                     console.warn('⚠️ Campanhas não são permitidas com Evolution API');
+                     this.showEvolutionAPIModal(selectedInboxInfo.name);
+                     return false;
                  } else {
                      console.log('✅ Caixa de entrada é uma API oficial do WhatsApp');
                  }
@@ -1088,9 +1091,22 @@ class ChatwootWorkflowsApp {
             accountInboxes.forEach(inbox => {
                 const option = document.createElement('option');
                 option.value = inbox.id;
-                option.textContent = inbox.name;
+                
+                // Adicionar indicador visual para diferentes tipos de caixas
+                // Usar funções utilitárias globais
+                if (isWhatsAppAPIInbox(inbox)) {
+                    option.textContent = `📱 ${inbox.name} (WhatsApp API)`;
+                    console.log(`📋 Caixa WhatsApp adicionada: ${inbox.name} (ID: ${inbox.id})`);
+                } else if (isEvolutionAPIInbox(inbox)) {
+                    option.textContent = `🔄 ${inbox.name} (Evolution API)`;
+                    console.log(`📋 Caixa Evolution API adicionada: ${inbox.name} (ID: ${inbox.id})`);
+                } else {
+                    option.textContent = `❌ ${inbox.name} (Não suportado)`;
+                    option.disabled = true;
+                    console.log(`📋 Caixa não suportada: ${inbox.name} (ID: ${inbox.id}) - Tipo: ${inbox.channel_type}`);
+                }
+                
                 inboxSelect.appendChild(option);
-                        console.log(`📋 Caixa adicionada: ${inbox.name} (ID: ${inbox.id})`);
                     });
                     inboxSelect.disabled = false;
                     console.log(`✅ ${accountInboxes.length} caixas carregadas no select`);
@@ -1172,6 +1188,22 @@ class ChatwootWorkflowsApp {
         
         if (!selectedInboxId) {
             this.showAlert('Por favor, selecione uma caixa de entrada antes de criar a campanha', 'warning');
+            return;
+        }
+
+        // Validar se a caixa de entrada não é Evolution API
+        try {
+            const accountInboxes = await this.loadInboxesForAccount(selectedAccountId);
+            const selectedInboxInfo = accountInboxes.find(inbox => String(inbox.id) === String(selectedInboxId));
+            
+            if (selectedInboxInfo && isEvolutionAPIInbox(selectedInboxInfo)) {
+                console.warn('⚠️ Campanhas não são permitidas com Evolution API');
+                this.showEvolutionAPIModal(selectedInboxInfo.name);
+                return;
+            }
+        } catch (error) {
+            console.error('❌ Erro ao validar tipo da caixa de entrada:', error);
+            this.showAlert('Erro ao validar caixa de entrada. Tente novamente.', 'danger');
             return;
         }
 
@@ -3462,7 +3494,18 @@ class ChatwootWorkflowsApp {
                 inboxes.forEach(inbox => {
                     const option = document.createElement('option');
                     option.value = inbox.id;
-                    option.textContent = inbox.name;
+                    
+                    // Adicionar indicador visual para diferentes tipos de caixas
+                    // Usar funções utilitárias globais
+                    if (isWhatsAppAPIInbox(inbox)) {
+                        option.textContent = `📱 ${inbox.name} (WhatsApp API)`;
+                    } else if (isEvolutionAPIInbox(inbox)) {
+                        option.textContent = `🔄 ${inbox.name} (Evolution API)`;
+                    } else {
+                        option.textContent = `❌ ${inbox.name} (Não suportado)`;
+                        option.disabled = true;
+                    }
+                    
                     inboxSelect.appendChild(option);
                 });
                 console.log(`✅ ${inboxes.length} caixas carregadas para ${this.user.role}`);
@@ -3537,6 +3580,22 @@ class ChatwootWorkflowsApp {
         
         if (!accountId || !inboxId) {
             this.showAlert('Por favor, selecione uma conta e caixa de entrada no dashboard', 'warning');
+            return;
+        }
+
+        // Validar se a caixa de entrada não é Evolution API
+        try {
+            const accountInboxes = await this.loadInboxesForAccount(accountId);
+            const selectedInboxInfo = accountInboxes.find(inbox => String(inbox.id) === String(inboxId));
+            
+            if (selectedInboxInfo && isEvolutionAPIInbox(selectedInboxInfo)) {
+                console.warn('⚠️ Campanhas não são permitidas com Evolution API');
+                this.showEvolutionAPIModal(selectedInboxInfo.name);
+                return;
+            }
+        } catch (error) {
+            console.error('❌ Erro ao validar tipo da caixa de entrada:', error);
+            this.showAlert('Erro ao validar caixa de entrada. Tente novamente.', 'danger');
             return;
         }
 
@@ -3651,6 +3710,142 @@ class ChatwootWorkflowsApp {
                 console.error('Erro ao criar campanha:', error);
                 this.showAlert('Erro ao criar campanha', 'danger');
             }
+        });
+    }
+
+    showCreateUserForm() {
+        showCreateUserForm();
+    }
+
+    showEvolutionAPIModal(inboxName) {
+        // Remover modal existente se houver
+        const existingModal = document.getElementById('evolutionAPIModal');
+        if (existingModal) {
+            existingModal.remove();
+        }
+
+        // Criar modal
+        const modal = document.createElement('div');
+        modal.id = 'evolutionAPIModal';
+        modal.className = 'modal fade';
+        modal.setAttribute('tabindex', '-1');
+        modal.setAttribute('aria-labelledby', 'evolutionAPIModalLabel');
+        modal.setAttribute('aria-hidden', 'true');
+        
+        modal.innerHTML = `
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content">
+                    <div class="modal-header bg-warning text-dark">
+                        <h5 class="modal-title" id="evolutionAPIModalLabel">
+                            <i class="fas fa-exclamation-triangle me-2"></i>Campanhas não disponíveis
+                        </h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="text-center mb-4">
+                            <i class="fas fa-robot fa-3x text-warning mb-3"></i>
+                            <h5 class="text-warning">Campanhas não são permitidas com Evolution API</h5>
+                        </div>
+                        
+                        <div class="alert alert-info">
+                            <i class="fas fa-info-circle me-2"></i>
+                            <strong>Caixa selecionada:</strong> ${inboxName}
+                        </div>
+                        
+                        <p class="mb-3">
+                            As campanhas de WhatsApp só podem ser criadas usando a <strong>API oficial do WhatsApp</strong>.
+                        </p>
+                        
+                        <div class="alert alert-warning">
+                            <h6><i class="fas fa-lightbulb me-2"></i>O que você pode fazer:</h6>
+                            <ul class="mb-0">
+                                <li>Selecione uma caixa de entrada que use a <strong>API oficial do WhatsApp</strong></li>
+                                <li>Configure uma nova caixa de entrada com a API oficial do WhatsApp</li>
+                                <li>Entre em contato com o administrador para configurar uma caixa compatível</li>
+                            </ul>
+                        </div>
+                        
+                        <div class="alert alert-secondary">
+                            <small>
+                                <i class="fas fa-question-circle me-1"></i>
+                                <strong>Por que essa limitação?</strong><br>
+                                A Evolution API é uma solução de terceiros que não suporta o envio de campanhas em massa 
+                                através do nosso sistema. Para campanhas, é necessário usar a API oficial do WhatsApp Business.
+                            </small>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+                            <i class="fas fa-times me-2"></i>Entendi
+                        </button>
+                        <button type="button" class="btn btn-primary" onclick="window.app.showHelpModal()">
+                            <i class="fas fa-question-circle me-2"></i>Preciso de ajuda
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        // Adicionar ao DOM
+        document.body.appendChild(modal);
+        
+        // Mostrar modal
+        const bootstrapModal = new bootstrap.Modal(modal);
+        bootstrapModal.show();
+        
+        // Limpar modal quando fechado
+        modal.addEventListener('hidden.bs.modal', () => {
+            modal.remove();
+        });
+        
+        console.log('📋 Modal de Evolution API exibido');
+    }
+
+    showHelpModal() {
+        // Modal simples com informações de ajuda
+        const modal = document.createElement('div');
+        modal.className = 'modal fade';
+        modal.setAttribute('tabindex', '-1');
+        
+        modal.innerHTML = `
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content">
+                    <div class="modal-header bg-primary text-white">
+                        <h5 class="modal-title">
+                            <i class="fas fa-question-circle me-2"></i>Precisa de ajuda?
+                        </h5>
+                        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <h6><i class="fas fa-phone me-2"></i>Contato do Suporte</h6>
+                        <p>Entre em contato com nossa equipe de suporte para obter ajuda:</p>
+                        <ul>
+                            <li><strong>Email:</strong> suporte@inovai.com.br</li>
+                            <li><strong>WhatsApp:</strong> (11) 99999-9999</li>
+                            <li><strong>Horário:</strong> Segunda a Sexta, 8h às 18h</li>
+                        </ul>
+                        
+                        <div class="alert alert-info">
+                            <i class="fas fa-lightbulb me-2"></i>
+                            <strong>Dica:</strong> Para usar campanhas, você precisa de uma conta WhatsApp Business 
+                            conectada através da API oficial do WhatsApp.
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-primary" data-bs-dismiss="modal">
+                            <i class="fas fa-check me-2"></i>Entendi
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        document.body.appendChild(modal);
+        const bootstrapModal = new bootstrap.Modal(modal);
+        bootstrapModal.show();
+        
+        modal.addEventListener('hidden.bs.modal', () => {
+            modal.remove();
         });
     }
 }
@@ -4517,7 +4712,7 @@ function showCampanhasList(campanhas, isAdmin = false) {
                                             <p class="card-text">
                                                 <strong>Tipo:</strong> ${campanha.type}<br>
                                                 <strong>Template:</strong> ${campanha.template_name}<br>
-                                                <strong>Criada:</strong> ${formatDateBrazil(campanha.created_at_brasil)}
+                                                <strong>Criada:</strong> ${formatDateBrazil(campanha.created_at)}
                                                 ${campanha.scheduled_at ? `<br><strong>Agendada:</strong> ${formatDateScheduled(campanha.scheduled_at)}` : ''}
                                             </p>
                                             
@@ -5082,8 +5277,8 @@ function renderCampaignSummary(stats, campaignInfo) {
                             <div class="mt-3 pt-3 border-top">
                                 <small class="text-muted">
                                     <i class="fas fa-calendar me-1"></i>
-                                    Criada em: ${formatDateBrazil(campaignInfo.created_at_brasil)}
-                                    ${campaignInfo.scheduled_at ? `| Agendada para: ${formatDateBrazil(campaignInfo.scheduled_at)}` : ''}
+                                    Criada em: ${formatDateBrazil(campaignInfo.created_at)}
+                                    ${campaignInfo.scheduled_at ? `| Agendada para: ${formatDateScheduled(campaignInfo.scheduled_at)}` : ''}
                                 </small>
                             </div>
                         ` : ''}
@@ -5243,8 +5438,8 @@ function renderStatusRow(item, index) {
     const formattedDate = item.created_at ? 
         formatDateBrazil(item.created_at) : 
         'Data não disponível';
-    const formattedDateSent = item.sent_at_br ? 
-        formatDateBrazil(item.sent_at_br) : 
+    const formattedDateSent = item.sent_at ? 
+        formatDateBrazil(item.sent_at) : 
         'Data não disponível';
     
     const errorMessage = item.error_message || item.error || '';

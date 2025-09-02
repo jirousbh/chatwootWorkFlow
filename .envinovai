@@ -67,22 +67,22 @@ RAILS_MAX_THREADS=5
 
 # The email from which all outgoing emails are sent
 # could user either  `email@yourdomain.com` or `BrandName <email@yourdomain.com>`
-MAILER_SENDER_EMAIL=Chatwoot <accounts@chatwoot.com>
+MAILER_SENDER_EMAIL=InovAI analytics <noreply@inovaianalytics.com.br>
 
 #SMTP domain key is set up for HELO checking
-SMTP_DOMAIN=chatwoot.com
+SMTP_DOMAIN=localhost
 # Set the value to "mailhog" if using docker-compose for development environments,
 # Set the value as "localhost" or your SMTP address in other environments
 # If SMTP_ADDRESS is empty, Chatwoot would try to use sendmail(postfix)
-SMTP_ADDRESS=
-SMTP_PORT=1025
-SMTP_USERNAME=
-SMTP_PASSWORD=
+SMTP_ADDRESS=mail.inovaianalytics.com.br
+SMTP_PORT=465
+SMTP_USERNAME=noreply@inovaianalytics.com.br
+SMTP_PASSWORD=InovAI@76825
 # plain,login,cram_md5
-SMTP_AUTHENTICATION=
+SMTP_AUTHENTICATION=login
 SMTP_ENABLE_STARTTLS_AUTO=true
 # Can be: 'none', 'peer', 'client_once', 'fail_if_no_peer_cert', see http://api.rubyonrails.org/classes/ActionMailer/Base.html
-SMTP_OPENSSL_VERIFY_MODE=peer
+SMTP_OPENSSL_VERIFY_MODE=none
 # Comment out the following environment variables if required by your SMTP server
 # SMTP_TLS=
 # SMTP_SSL=

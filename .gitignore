@@ -1,5 +1,6 @@
 # Ignorar a pasta de dados
 /data/
+/backup/
 
 # Outras regras comuns
 node_modules/

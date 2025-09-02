@@ -193,7 +193,7 @@
       "name": "Objetivo - Viagem",
       "media": {
         "attachment": {
-          "file_id": "1754921347981"
+          "file_id": "1756758773770"
         }
       },
       "message": "Show! Já sabe o país que quer visitar?",
@@ -211,7 +211,7 @@
       "name": "Objetivo - Carreira",
       "media": {
         "attachment": {
-          "file_id": "1754921355972"
+          "file_id": "1756758783622"
         }
       },
       "message": "Bacana! Em qual área você atua? Podemos focar nisso.",
@@ -229,7 +229,7 @@
       "name": "Objetivo - Faculdade/Intercâmbio",
       "media": {
         "attachment": {
-          "file_id": "1754921362460"
+          "file_id": "1756758791222"
         }
       },
       "message": "Legal! Já tem destino de intercâmbio ou curso em mente?",
@@ -257,7 +257,7 @@
       "media": {
         "delay": 20000,
         "attachment": {
-          "file_id": "1754921368676"
+          "file_id": "1756758799116"
         }
       },
       "buttons": [
