@@ -1,0 +1,123 @@
+version: '3'
+
+networks:
+  chatwoot-dev:
+    name: chatwoot-dev-network
+    driver: bridge
+
+services:
+  base: &base
+    image: chatwoot/chatwoot:latest
+    env_file: .envinovai-dev ## Change this file for customized env variables
+    volumes:
+      - ./data/storage:/app/storage
+    networks:
+      - chatwoot-dev
+
+  rails:
+    <<: *base
+    env_file: .envinovai-dev ## Change this file for customized env variables
+    depends_on:
+      - postgres-dev
+      - redis-dev
+    ports:
+      - '127.0.0.1:4501:4500'  # Mudança de 4500 para 4501
+    environment:
+      - NODE_ENV=production
+      - RAILS_ENV=production
+      - INSTALLATION_ENV=docker
+    entrypoint: docker/entrypoints/rails.sh
+    command: ['bundle', 'exec', 'rails', 's', '-p', '4500', '-b', '0.0.0.0']
+    restart: always
+    networks:
+      - chatwoot-dev
+
+  sidekiq:
+    <<: *base
+    env_file: .envinovai-dev ## Change this file for customized env variables
+    depends_on:
+      - postgres-dev
+      - redis-dev
+    environment:
+      - NODE_ENV=production
+      - RAILS_ENV=production
+      - INSTALLATION_ENV=docker
+    command: ['bundle', 'exec', 'sidekiq', '-C', 'config/sidekiq.yml']
+    restart: always
+    networks:
+      - chatwoot-dev
+
+  # Evolution API - WhatsApp API Service (comentada para evitar conflitos)
+  # evolution_api:
+  #   container_name: evolution_api_dev
+  #   image: evoapicloud/evolution-api:latest
+  #   restart: always
+  #   depends_on:
+  #     - redis-dev
+  #     - postgres-dev
+  #   ports:
+  #     - '127.0.0.1:8081:8080'  # Mudança de 8080 para 8081
+  #   volumes:
+  #     - ./data/evolution_instances_dev:/evolution/instances
+  #   env_file:
+  #     - .env-evolution
+  #   expose:
+  #     - 8080
+  #   networks:
+  #     - chatwoot-dev
+
+  postgres-dev:
+    container_name: postgres-dev
+    image: pgvector/pgvector:pg16
+    restart: always
+    ports:
+      - '127.0.0.1:5495:5432'
+    volumes:
+      - ./data/postgres-dev:/var/lib/postgresql/data  # Volume separado para dev
+    environment:
+      - POSTGRES_DB=chatwoot_workflows
+      - POSTGRES_USER=postgres
+      # Please provide your own password.
+      - POSTGRES_PASSWORD=invoAI@76925
+      - TZ=America/Sao_Paulo
+    networks:
+      - chatwoot-dev
+
+  redis-dev:
+    container_name: redis-dev
+    image: redis:alpine
+    restart: always
+    command: redis-server --requirepass invoAI@76925
+    volumes:
+      - ./data/redis-dev:/data  # Volume separado para dev
+    ports:
+      - '127.0.0.1:6395:6379'  # Mudança de 6390 para 6395
+    environment:
+      - REDIS_PASSWORD=invoAI@76925
+    networks:
+      - chatwoot-dev
+
+  # Sistema de Workflows de Chatbot
+  chatbot-workflows-dev:
+    container_name: chatbot-workflows-dev
+    build: ./workflows
+    ports:
+      - '127.0.0.1:3005:3005'
+    env_file: env-workflows-dev
+    environment:
+      - CHATWOOT_BASE_URL=https://crm-dev.inovaianalytics.com.br
+      - PORT=3005
+      - TZ=America/Sao_Paulo
+    volumes:
+      - ./workflows/chatbot-workflow-system.js:/app/chatbot-workflow-system.js
+      - ./data/workflows-logs-dev:/app/logs  # Volume separado para dev
+      - ./data/workflows-uploads-dev:/app/uploads  # Volume separado para dev
+    restart: unless-stopped
+    depends_on:
+      - postgres-dev
+      - redis-dev
+    networks:
+      - chatwoot-dev
+
+volumes:
+  evolution_instances_dev:
