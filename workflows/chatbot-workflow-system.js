@@ -570,20 +570,32 @@ async function initializeDatabase() {
       )
     `);
 
-    // Criar tabela de campanhas
+    // ATUALIZADA: Tabela de campanhas conforme create-campaign-tables.sql
     await pool.query(`
       CREATE TABLE IF NOT EXISTS campaigns (
         id SERIAL PRIMARY KEY,
         name VARCHAR(255) NOT NULL,
-        description TEXT,
-        workflow_name VARCHAR(255) NOT NULL,
-        target_contacts JSONB,
-        schedule_type VARCHAR(50) DEFAULT 'immediate',
-        scheduled_time TIMESTAMP,
+        type VARCHAR(50) NOT NULL,
+        tag_name VARCHAR(255),
+        csv_file VARCHAR(255),
+        template_name VARCHAR(255) NOT NULL,
+        scheduled_at TIMESTAMP,
         status VARCHAR(50) DEFAULT 'pending',
-        created_by INTEGER REFERENCES system_users(id),
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        chatwoot_account_id INTEGER NOT NULL,
+        chatwoot_inbox_id INTEGER NOT NULL,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+
+    // NOVA: Tabela de contatos das campanhas conforme create-campaign-tables.sql
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS campaign_contacts (
+        id SERIAL PRIMARY KEY,
+        campaign_id INTEGER REFERENCES campaigns(id) ON DELETE CASCADE,
+        name VARCHAR(255),
+        phone VARCHAR(30) NOT NULL,
+        created_at TIMESTAMP DEFAULT NOW()
       )
     `);
 
@@ -592,7 +604,7 @@ async function initializeDatabase() {
       CREATE TABLE IF NOT EXISTS campaign_executions (
         id SERIAL PRIMARY KEY,
         campaign_id INTEGER REFERENCES campaigns(id),
-        contact_id VARCHAR(255) NOT NULL,
+        contact_id INTEGER NOT NULL,
         conversation_id INTEGER,
         status VARCHAR(50) DEFAULT 'pending',
         executed_at TIMESTAMP,
@@ -636,7 +648,7 @@ async function initializeDatabase() {
       )
     `);
 
-    // NOVA: Criar tabela para controle de debounce de botões
+    // ATUALIZADA: Tabela para controle de debounce de botões conforme create-button-debounce-table.sql
     await pool.query(`
       CREATE TABLE IF NOT EXISTS button_debounce (
         id SERIAL PRIMARY KEY,
@@ -649,12 +661,12 @@ async function initializeDatabase() {
       )
     `);
 
-    // Criar tabela de status por contato (se não existir)
+    // ATUALIZADA: Tabela de status por contato conforme create-campaign-tables.sql
     await pool.query(`
       CREATE TABLE IF NOT EXISTS campaign_status (
         id SERIAL PRIMARY KEY,
         campaign_id INTEGER REFERENCES campaigns(id) ON DELETE CASCADE,
-        contact_id INTEGER NOT NULL,
+        contact_id INTEGER REFERENCES campaign_contacts(id) ON DELETE CASCADE,
         status VARCHAR(50) DEFAULT 'pending',
         message_id VARCHAR(255),
         error_message TEXT,
@@ -714,6 +726,22 @@ async function initializeDatabase() {
     await pool.query(`
       CREATE INDEX IF NOT EXISTS idx_campaign_executions_campaign_id 
       ON campaign_executions(campaign_id);
+    `);
+
+    // NOVOS: Índices para button_debounce conforme create-button-debounce-table.sql
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_button_debounce_conversation_block 
+      ON button_debounce(conversation_id, block_id);
+    `);
+    
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_button_debounce_contact 
+      ON button_debounce(contact_id);
+    `);
+    
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_button_debounce_processed_at 
+      ON button_debounce(processed_at);
     `);
 
     console.log('✅ Banco de dados inicializado com sucesso');
