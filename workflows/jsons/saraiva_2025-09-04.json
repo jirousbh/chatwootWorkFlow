@@ -1,0 +1,218 @@
+{
+  "name": "Fluxo Comercial - Saraiva",
+  "blocks": {
+    "bloco_01": {
+      "id": "bloco_01",
+      "name": "Início - Entrada no fluxo comercial",
+      "buttons": [
+        {
+          "text": "Maranhão",
+          "next_block": "bloco_02",
+          "assign_labels": [
+            "interesse_maranhao"
+          ]
+        },
+        {
+          "text": "Tocantins",
+          "next_block": "bloco_03",
+          "assign_labels": [
+            "interesse_tocantins"
+          ]
+        },
+        {
+          "tag": "lead_frio",
+          "text": "Agora não.",
+          "next_block": "finalizar",
+          "assign_labels": [
+            "lead_frio"
+          ],
+          "contact_labels": [
+            "desinteressado"
+          ]
+        }
+      ],
+      "message": "Seja bem vindo(a) {{nome}}! 😄\nSomos a Saraiva Motos. Em qual estado você se encontra? ",
+      "assign_labels": [
+        "novo_lead"
+      ],
+      "contact_labels": [
+        "prospect"
+      ]
+    },
+    "bloco_02": {
+      "id": "bloco_02",
+      "name": "Tabela de Preços - Maranhão",
+      "buttons": [
+        {
+          "text": "AZ1 50CC",
+          "next_block": "bloco_04",
+          "assign_labels": [
+            "interesse_az1"
+          ]
+        },
+        {
+          "text": "AZ 125 ALPHA",
+          "next_block": "bloco_04",
+          "assign_labels": [
+            "interesse_az125alpha"
+          ]
+        },
+        {
+          "text": "AZ160X-TREME",
+          "next_block": "bloco_04",
+          "assign_labels": [
+            "interesse_az160xtreme"
+          ]
+        },
+        {
+          "text": "Menu Anterior",
+          "next_block": "bloco_01",
+          "assign_labels": [
+            "novo_lead"
+          ]
+        }
+      ],
+      "message": "Temos os seguintes motos disponíveis:\n\n🏍️ AZ1 50CC - R$ 11.900,00\n🏍️ AZ 125 ALPHA - R$ 13.900,00\n🏍️ AZ160X-TREME - R$ 19.900,00.\n\nQual você se interessou?"
+    },
+    "bloco_03": {
+      "id": "bloco_03",
+      "name": "Tabela de Preços - Tocantins",
+      "buttons": [
+        {
+          "text": "AZ1 50CC",
+          "next_block": "bloco_04",
+          "assign_labels": [
+            "interesse_az1"
+          ]
+        },
+        {
+          "text": "AZ 125 ALPHA",
+          "next_block": "bloco_04",
+          "assign_labels": [
+            "interesse_az125alpha"
+          ]
+        },
+        {
+          "text": "AZ160X-TREME",
+          "next_block": "bloco_04",
+          "assign_labels": [
+            "interesse_az160xtreme"
+          ]
+        },
+        {
+          "text": "Menu Anterior",
+          "next_block": "bloco_01",
+          "assign_labels": [
+            "novo_lead"
+          ]
+        }
+      ],
+      "message": "Temos os seguintes motos disponíveis:\n\n🏍️ AZ1 50CC - R$ 12.199,00\n🏍️ AZ 125 ALPHA - R$ 14.490,00\n🏍️ AZ160X-TREME - R$ 20.490,00.\n\nQual você se interessou?"
+    },
+    "bloco_04": {
+      "id": "bloco_04",
+      "name": "Opçoes de Pagamento",
+      "buttons": [
+        {
+          "text": "Cartão de crédito",
+          "next_block": "bloco_05",
+          "assign_labels": [
+            "interesse_cartao"
+          ]
+        },
+        {
+          "text": "Financiamento",
+          "next_block": "bloco_06",
+          "assign_labels": [
+            "interesse_financiamento"
+          ]
+        },
+        {
+          "text": "Consórcio",
+          "next_block": "atendimento_humano",
+          "assign_labels": [
+            "interesse_consorcio"
+          ]
+        },
+        {
+          "text": "Menu Anterior",
+          "next_block": "bloco_03"
+        },
+        {
+          "text": "Menu Principal",
+          "next_block": "bloco_01"
+        }
+      ],
+      "message": "Que bom que você intressou por uma de nossas motos! Temoss as seguintes opções de pagamento:\n\nCartão de crédito em até 24x com taxa\n\nFinanciamento em até 48x sem entrada\n\nConsórcio de até 72x\n\nQual você se interessou?"
+    },
+    "bloco_05": {
+      "id": "bloco_4",
+      "name": "Opções de Pagamento - Cartão de Crédito",
+      "buttons": [
+        {
+          "text": "Quero parcelar",
+          "next_block": "atendimento_humano",
+          "assign_labels": [
+            "interesse_cartao_parcelado"
+          ]
+        },
+        {
+          "text": "Não",
+          "next_block": "bloco_01",
+          "assign_labels": [
+            "novo_lead"
+          ]
+        }
+      ],
+      "message": "Cartão de crédito em até 24x com taxa\n\nTaxas podem variar de acordo com a bandeira do cartão.\n\nEntrega Imediata – Retirada na loja"
+    },
+    "bloco_06": {
+      "id": "bloco_06",
+      "name": "Opções de Pagamento - Financiamento",
+      "buttons": [
+        {
+          "text": "Quero financiar",
+          "next_block": "atendimento_humano",
+          "assign_labels": [
+            "interesse_financiamento"
+          ]
+        },
+        {
+          "text": "Não",
+          "next_block": "bloco_01",
+          "assign_labels": [
+            "novo_lead"
+          ]
+        }
+      ],
+      "message": "Financiamento em até 48x sem entrada\n\nSimular financiamento – (vai pra um atendente)\n\nEntrega em até 48 horas – Retirada na loja ou entregamos na sua casa"    
+    },
+    "atendimento_humano": {
+      "id": "atendimento_humano",
+      "tag": "encaminhado_atendimento",
+      "name": "Encaminhar para Atendimento Humano",
+      "message": "Perfeito! Vou te conectar agora mesmo com nossa equipe especializada que vai te ajudar com todas as suas dúvidas! 😊\n\nEm instantes você receberá o contato de um de nossos especialistas.",
+      "pause_bot": true,
+      "assign_team": 1,
+      "assign_labels": [
+        "atendimento_humano",
+        "transferido"
+      ],
+      "contact_labels": [
+        "atendimento_especializado"
+      ]
+    },
+    "finalizar": {
+      "id": "finalizar",
+      "name": "Finalizar Conversa",
+      "type": "end",
+      "message": "Obrigado por conversar comigo! Se precisar de mais alguma coisa, é só chamar. Tenha um ótimo dia! 😊",
+      "assign_labels": [
+        "conversa_finalizada"
+      ]
+    }
+  },
+  "triggers": [
+    "*"
+  ]
+}

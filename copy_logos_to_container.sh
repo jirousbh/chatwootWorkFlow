@@ -152,17 +152,19 @@ else
         "UPDATE installation_configs SET serialized_value='\"--- !ruby/hash:ActiveSupport::HashWithIndifferentAccess\\nvalue: https://www.inovaianalytics.com.br/\\n\"' WHERE id=5;"
         "UPDATE installation_configs SET serialized_value='\"--- !ruby/hash:ActiveSupport::HashWithIndifferentAccess\\nvalue: https://www.inovaianalytics.com.br/\\n\"' WHERE id=6;"
         "UPDATE installation_configs SET serialized_value='\"--- !ruby/hash:ActiveSupport::HashWithIndifferentAccess\\nvalue: CRM InovAI\\n\"' WHERE id=7;"
+        "UPDATE installation_configs SET serialized_value='\"--- !ruby/hash:ActiveSupport::HashWithIndifferentAccess\\nvalue: true\\n\"' WHERE id=71;"
     )
     
     # Executar cada query
-    for i in "${!sql_queries[@]}"; do
+    total_queries=${#sql_queries[@]}
+    for ((i=0; i<total_queries; i++)); do
         query="${sql_queries[$i]}"
-        echo "  📝 Executando query ${i+1}/7..."
+        echo "  📝 Executando query $((i+1))/${total_queries}..."
         
         if docker exec -e PGPASSWORD=invoAI@76825 "${DB_CONTAINER_NAME}" psql -U postgres -d chatwoot_production -c "$query"; then
-            echo "    ✅ Query ${i+1} executada com sucesso!"
+            echo "    ✅ Query $((i+1)) executada com sucesso!"
         else
-            echo "    ❌ Erro ao executar query ${i+1}"
+            echo "    ❌ Erro ao executar query $((i+1))"
             echo "    🔍 Query: $query"
         fi
     done
