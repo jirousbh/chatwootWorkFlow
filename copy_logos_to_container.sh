@@ -153,6 +153,7 @@ else
         "UPDATE installation_configs SET serialized_value='\"--- !ruby/hash:ActiveSupport::HashWithIndifferentAccess\\nvalue: https://www.inovaianalytics.com.br/\\n\"' WHERE id=6;"
         "UPDATE installation_configs SET serialized_value='\"--- !ruby/hash:ActiveSupport::HashWithIndifferentAccess\\nvalue: CRM InovAI\\n\"' WHERE id=7;"
         "UPDATE installation_configs SET serialized_value='\"--- !ruby/hash:ActiveSupport::HashWithIndifferentAccess\\nvalue: true\\n\"' WHERE id=71;"
+        "UPDATE installation_configs SET serialized_value='\"--- !ruby/hash:ActiveSupport::HashWithIndifferentAccess\\nvalue: true\\n\"' WHERE id=24;"
     )
     
     # Executar cada query
@@ -183,4 +184,6 @@ fi
 
 echo ""
 echo "🎉 Script completamente finalizado!"
-echo "✨ Todas as alterações foram aplicadas com sucesso!" 
+echo "✨ Todas as alterações foram aplicadas com sucesso!"
+echo ""
+echo "📅 Finalizado em: $(date '+%d/%m/%Y às %H:%M:%S')" 
