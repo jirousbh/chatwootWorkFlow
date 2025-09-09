@@ -4812,7 +4812,7 @@ async function verStatusCampanha(campanhaId) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
         
-        const status = await response.json();
+        let status = await response.json();
         console.log(`📊 Dados brutos recebidos:`, status);
         console.log(`📊 Tipo de dados: ${typeof status}, É array: ${Array.isArray(status)}, Tamanho: ${status.length || 'N/A'}`);
         
@@ -4829,6 +4829,31 @@ async function verStatusCampanha(campanhaId) {
             // Verificar se há dados de envio em outras tabelas
             await checkCampaignLogs(campanhaId);
             
+            // NOVA FUNCIONALIDADE: Buscar contatos da campanha mesmo quando pending
+            console.log('📞 Buscando contatos da campanha para exibir como pending...');
+            const campaignContacts = await checkCampaignContacts(campanhaId);
+            
+            if (campaignContacts && campaignContacts.length > 0) {
+                console.log(`✅ Encontrados ${campaignContacts.length} contatos para exibir como pending`);
+                
+                // Converter contatos em formato de status pending
+                status = campaignContacts.map(contact => ({
+                    id: contact.id || `contact_${contact.phone}`,
+                    contact_phone: contact.phone,
+                    contact_name: contact.name,
+                    name: contact.name,
+                    status: 'pending',
+                    created_at: contact.created_at || new Date().toISOString(),
+                    sent_at: null,
+                    error_message: null,
+                    tag: contact.tag || null
+                }));
+                
+                console.log(`📊 Convertidos ${status.length} contatos para formato de status pending`);
+            } else {
+                console.log('❌ Nenhum contato encontrado na campanha');
+            }
+            
             // Log especial para o usuário APÓS verificações
             console.log(`
 🔧 DIAGNÓSTICO RÁPIDO - CAMPANHA ${campanhaId}:
@@ -4836,6 +4861,7 @@ async function verStatusCampanha(campanhaId) {
 1. ✅ Endpoint /api/campaigns/${campanhaId}/status funciona (retornou resposta válida)
 2. ❌ Nenhum dado na tabela 'campaign_status'
 3. 🔍 Verificações adicionais executadas (veja logs acima)
+4. 📞 Contatos da campanha: ${campaignContacts ? campaignContacts.length : 0} encontrados
 
 📋 PRÓXIMOS PASSOS:
 • Analise os logs detalhados acima para entender o problema específico
@@ -5384,18 +5410,30 @@ function renderStatusTable(statusData, campanhaId) {
         `;
     }
     
+    // Verificar se todos os itens são pending (campanha não executada)
+    const allPending = statusData.every(item => item.status === 'pending');
+    const pendingInfo = allPending ? `
+        <div class="alert alert-info mb-3">
+            <i class="fas fa-info-circle me-2"></i>
+            <strong>Campanha Pendente:</strong> Esta campanha ainda não foi executada. 
+            Os contatos abaixo serão enviados quando a campanha for processada.
+        </div>
+    ` : '';
+
     return `
         <div class="card">
-                         <div class="card-header bg-light">
+            ${pendingInfo}
+            <div class="card-header bg-light">
                  <div class="d-flex justify-content-between align-items-center">
                      <h6 class="mb-0">
                          <i class="fas fa-list me-2"></i>Detalhes dos Envios
                          <span class="badge bg-primary ms-2" id="totalVisible">${statusData.length}</span>
                          <small class="text-muted ms-2">de ${statusData.length} total</small>
+                         ${allPending ? '<span class="badge bg-warning text-dark ms-2">Pendente</span>' : ''}
                      </h6>
                      <small class="text-muted">
                          <i class="fas fa-info-circle me-1"></i>
-                         Clique em um erro para ver detalhes completos
+                         ${allPending ? 'Contatos que serão enviados' : 'Clique em um erro para ver detalhes completos'}
                      </small>
                  </div>
              </div>
@@ -5473,11 +5511,16 @@ function renderStatusRow(item, index) {
             </td>
             <td>
                 <small class="text-muted">
-                    ${formattedDateSent}
+                    ${item.status === 'pending' ? 'Aguardando envio' : formattedDateSent}
                 </small>
             </td>
             <td>
-                ${errorMessage ? `
+                ${item.status === 'pending' ? `
+                    <small class="text-warning">
+                        <i class="fas fa-clock me-1"></i>
+                        Aguardando processamento
+                    </small>
+                ` : errorMessage ? `
                     <div class="text-danger">
                         <small>
                             <i class="fas fa-exclamation-triangle me-1"></i>
