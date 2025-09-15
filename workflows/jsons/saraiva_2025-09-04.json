@@ -185,7 +185,16 @@
           ]
         }
       ],
-      "message": "Financiamento em até 48x sem entrada\n\nSimular financiamento – (vai pra um atendente)\n\nEntrega em até 48 horas – Retirada na loja ou entregamos na sua casa"    
+      "message": "Financiamento em até 48x sem entrada\n\nEntrega em até 48 horas – Retirada na loja ou entregamos na sua casa"
+    },
+    "finalizar": {
+      "id": "finalizar",
+      "name": "Finalizar Conversa",
+      "type": "end",
+      "message": "Obrigado por conversar comigo! Se precisar de mais alguma coisa, é só chamar. Tenha um ótimo dia! 😊",
+      "assign_labels": [
+        "conversa_finalizada"
+      ]
     },
     "atendimento_humano": {
       "id": "atendimento_humano",
@@ -200,15 +209,6 @@
       ],
       "contact_labels": [
         "atendimento_especializado"
-      ]
-    },
-    "finalizar": {
-      "id": "finalizar",
-      "name": "Finalizar Conversa",
-      "type": "end",
-      "message": "Obrigado por conversar comigo! Se precisar de mais alguma coisa, é só chamar. Tenha um ótimo dia! 😊",
-      "assign_labels": [
-        "conversa_finalizada"
       ]
     }
   },

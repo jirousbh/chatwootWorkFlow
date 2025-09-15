@@ -28,6 +28,34 @@ fi
 
 echo "✅ Container ${CONTAINER_NAME} encontrado e rodando."
 
+# Verificar se o container do banco está rodando para validação
+if ! docker ps | grep -q "${DB_CONTAINER_NAME}"; then
+    echo "❌ Erro: Container ${DB_CONTAINER_NAME} não está rodando ou não existe."
+    echo "📋 Containers disponíveis:"
+    docker ps --format "table {{.Names}}\t{{.Status}}"
+    echo "⚠️  Não é possível validar a condição necessária. Abortando execução."
+    exit 1
+fi
+
+# Verificar se a condição necessária está atendida na tabela installation_configs
+echo "🔍 Verificando condição necessária na tabela installation_configs..."
+EXPECTED_VALUE='"---!ruby/hash:ActiveSupport::HashWithIndifferentAccess\nvalue:Chatwoot\n"'
+CURRENT_VALUE=$(docker exec -e PGPASSWORD=invoAI@76825 "${DB_CONTAINER_NAME}" psql -U postgres -d chatwoot_production -t -c "SELECT serialized_value FROM installation_configs WHERE id=1;" 2>/dev/null | tr -d ' \n\r')
+
+if [ "$CURRENT_VALUE" != "$EXPECTED_VALUE" ]; then
+    echo "❌ Condição não atendida!"
+    echo "📋 Valor atual na tabela installation_configs (ID=1):"
+    echo "   '$CURRENT_VALUE'"
+    echo "📋 Valor esperado:"
+    echo "   '$EXPECTED_VALUE'"
+    echo "⚠️  O script só executa se o valor for exatamente 'Chatwoot'."
+    echo "🛑 Abortando execução."
+    exit 1
+fi
+
+echo "✅ Condição validada! Valor correto encontrado na tabela installation_configs."
+echo "🚀 Prosseguindo com as operações..."
+
 # Verificar se o diretório brand-assets existe no container
 echo "📁 Verificando diretório /app/public/brand-assets no container..."
 if docker exec "${CONTAINER_NAME}" test -d /app/public/brand-assets; then
