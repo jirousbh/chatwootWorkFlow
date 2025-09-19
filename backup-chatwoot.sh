@@ -9,6 +9,7 @@ set -e  # Para o script se houver erro
 
 # Configurações
 BACKUP_DIR="./backup"
+LOG_DIR="./data/workflows-logs"
 DATE=$(date +%Y%m%d_%H%M%S)
 BACKUP_NAME="chatwoot_backup_$DATE"
 BACKUP_PATH="$BACKUP_DIR/$BACKUP_NAME"
@@ -201,13 +202,17 @@ EOF
 }
 
 # Função para limpeza de backups antigos
-cleanup_old_backups() {
+cleanup_old_backups_and_logs() {
     log "Limpando backups antigos (mantendo últimos 7 dias)..."
     
     # Manter apenas backups dos últimos 7 dias
     find "$BACKUP_DIR" -maxdepth 1 -type d -name "chatwoot_backup_*" -mtime +7 -exec rm -rf {} \; 2>/dev/null || true
     
     log "✓ Limpeza de backups antigos concluída"
+
+    log "Limpando logs antigos (mantendo últimos 7 dias)..."
+    find "$LOG_DIR" -name "*.log" -mtime +7 -delete 2>/dev/null || true
+    log "✓ Limpeza de logs antigos concluída"
 }
 
 # Função para verificar espaço em disco
@@ -245,7 +250,7 @@ main() {
     create_backup_info
     
     # Limpeza de backups antigos
-    cleanup_old_backups
+    cleanup_old_backups_and_logs
     
     # Resumo final
     log "=== BACKUP CONCLUÍDO COM SUCESSO ==="
