@@ -119,5 +119,23 @@ services:
     networks:
       - chatwoot-dev
 
+  # Sistema de Agentes IA
+  ia-agent-dev:
+    container_name: ia-agent-dev
+    build: ./ia-agent
+    ports:
+      - '127.0.0.1:3006:3006'
+    env_file: .env-ia-agent-dev
+    environment:
+      - TZ=America/Sao_Paulo
+    volumes:
+      - ./data/ia-agent-dev:/data/ia-agent-dev  # Volume para dados dos agentes
+    restart: unless-stopped
+    depends_on:
+      - postgres-dev
+      - redis-dev
+    networks:
+      - chatwoot-dev
+
 volumes:
   evolution_instances_dev:

@@ -1,0 +1,15 @@
+# Configurações da API da Groq
+GROQ_API_KEY=your_groq_api_key_here
+
+# Configurações do banco de dados
+DATABASE_URL=postgresql://postgres:invoAI@76925@postgres-dev:5432/workflows_iaagent
+
+# Configurações da aplicação
+FLASK_ENV=production
+FLASK_DEBUG=False
+
+# Configurações de upload
+MAX_CONTENT_LENGTH=52428800  # 50MB
+
+# Configurações de timezone
+TZ=America/Sao_Paulo

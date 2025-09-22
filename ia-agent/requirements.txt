@@ -1,0 +1,24 @@
+# Flask e dependências web
+flask
+flask-cors
+flask-sqlalchemy
+werkzeug
+
+# Banco de dados
+psycopg2-binary
+sqlalchemy
+
+# LangChain e dependências IA (usando versões flexíveis como na baseapp)
+langchain
+langchain-community
+langchain-groq
+langchain-text-splitters
+groq
+pypdf
+python-dotenv
+faiss-cpu
+sentence-transformers
+torch
+
+# Utilitários
+requests

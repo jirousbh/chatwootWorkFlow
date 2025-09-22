@@ -1,0 +1,17 @@
+flask==3.0.0
+flask-cors==4.0.0
+langchain==0.1.0
+langchain-community>=0.0.20
+langchain-groq>=0.0.1
+langchain-text-splitters==0.0.1
+groq>=0.4.1
+pypdf>=3.0.0
+python-dotenv>=1.0.0
+faiss-cpu>=1.7.4
+sentence-transformers>=2.2.0
+torch==2.1.1
+psycopg2-binary==2.9.9
+sqlalchemy==2.0.23
+flask-sqlalchemy==3.1.1
+werkzeug==3.0.1
+requests==2.31.0
