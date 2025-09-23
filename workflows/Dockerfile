@@ -24,7 +24,7 @@ COPY . .
 RUN mkdir -p logs workflows
 
 # Expor porta
-EXPOSE 3001
+EXPOSE 3005
 
 # Comando para iniciar a aplicação
 CMD ["npm", "start"] 

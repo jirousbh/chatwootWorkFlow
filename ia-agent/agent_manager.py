@@ -1,5 +1,7 @@
 import os
 import tempfile
+import unicodedata
+import re
 from pathlib import Path
 from typing import Optional, List
 from langchain_community.document_loaders.pdf import PyPDFLoader
@@ -109,11 +111,11 @@ class AgentManager:
                 print(f"Provider não suportado: {api_provider}")
                 return None
             
-            # Criar prompt template
-            prompt_template = PromptTemplate(
-                template=system_prompt,
-                input_variables=["context", "chat_history", "question"]
-            )
+            # Criar prompt template usando o padrão do ConversationalRetrievalChain
+            from langchain.chains.conversational_retrieval.prompts import CONDENSE_QUESTION_PROMPT, QA_PROMPT
+            
+            # Usar o template padrão do LangChain que já tem as variáveis corretas
+            prompt_template = QA_PROMPT
             
             # Configurar memória
             memory = ConversationBufferMemory(
@@ -127,7 +129,7 @@ class AgentManager:
                 search_kwargs={"k": 4}  # Buscar 4 chunks mais relevantes
             )
             
-            # Criar chain
+            # Criar chain com configuração corrigida
             chain = ConversationalRetrievalChain.from_llm(
                 llm=llm,
                 memory=memory,
@@ -157,7 +159,7 @@ class AgentManager:
             
             # Buscar documentos mais relevantes para o resumo
             retriever = vectorstore.as_retriever(search_kwargs={"k": 8})
-            relevant_docs = retriever.get_relevant_documents(summary_prompt)
+            relevant_docs = retriever.invoke(summary_prompt)
             
             # Combinar contexto dos documentos
             context = "\n\n".join([doc.page_content for doc in relevant_docs])
@@ -188,25 +190,133 @@ Responda em português brasileiro."""
             return f"Erro ao gerar resumo: {str(e)}"
     
     def chat_with_agent(self, agent_id: str, vectorstore_path: str, 
-                       message: str, system_prompt: str, model: str, api_provider: str) -> str:
+                       message: str, system_prompt: str, model: str, api_provider: str) -> dict:
         """Conversa com o agente usando o vectorstore"""
         try:
             # Obter ou criar chain
             chain = self._get_or_create_chain(agent_id, vectorstore_path, system_prompt, model, api_provider)
             
             if not chain:
-                return "Erro: Não foi possível inicializar o agente."
+                return {
+                    "answer": "Erro: Não foi possível inicializar o agente.",
+                    "should_transfer": False,
+                    "transfer_reason": None
+                }
             
             # Processar mensagem
             response = chain.invoke({"question": message})
             answer = response.get("answer", "Não foi possível gerar uma resposta.")
             
-            return answer
+            # Detectar se deve transferir para humano
+            transfer_analysis = self._analyze_transfer_need(message, answer)
+            
+            return {
+                "answer": answer,
+                "should_transfer": transfer_analysis["should_transfer"],
+                "transfer_reason": transfer_analysis["reason"]
+            }
             
         except Exception as e:
             print(f"Erro ao processar mensagem: {e}")
-            return f"Erro ao processar mensagem: {str(e)}"
+            return {
+                "answer": f"Erro ao processar mensagem: {str(e)}",
+                "should_transfer": False,
+                "transfer_reason": None
+            }
     
+    def _normalize_text(self, text: str) -> str:
+        """Remove acentos, pontuação e transforma para minúsculas"""
+        text = text.lower()
+        text = unicodedata.normalize('NFKD', text)
+        text = ''.join([c for c in text if not unicodedata.combining(c)])
+        text = re.sub(r'[^\w\s]', '', text)  # remove pontuação
+        return text.strip()
+
+    def _analyze_transfer_need(self, user_message: str, agent_response: str) -> dict:
+        """Analisa se deve transferir para atendimento humano"""
+        try:
+            # Normalize as mensagens
+            user_lower = self._normalize_text(user_message)
+            response_lower = self._normalize_text(agent_response)
+
+            # Palavras-chave do usuário que indicam necessidade de transferência
+            transfer_keywords = [
+                # Solicitações diretas
+                'quero falar com um humano', 'quero falar com atendente', 'quero falar com uma pessoa',
+                'atendimento humano', 'atendente humano', 'pessoa real',
+                'falar com humano', 'preciso de um humano', 'me transfira para um atendente',
+                'quero atendimento humano', 'quero alguém de verdade',
+                
+                # Insatisfação
+                'nao entendi', 'nao ajudou', 'nao resolveu', 'nao resolve meu problema',
+                'estou insatisfeito', 'estou frustrado', 'estou irritado',
+                'isso nao funciona', 'nada disso funciona', 'isso e inutil',
+                'estou perdendo tempo', 'isso nao serve', 'isso nao faz sentido',
+                
+                # Rejeição ao bot
+                'nao quero mais bot', 'nao quero robo', 'pare de ser robo', 'voce e um bot',
+                'isso e um bot', 'nao quero falar com bot', 'odeio falar com robo',
+                'so tem robo aqui',
+                
+                # Crítico / Urgente
+                'urgente', 'emergencia', 'problema serio', 'problema critico',
+                'nao posso esperar', 'isso e grave', 'preciso de ajuda urgente',
+                
+                # Assuntos delicados
+                'cancelar', 'cancelamento', 'reembolso', 'devolucao',
+                'reclamacao', 'reclamar', 'sac', 'ouvidoria',
+                'erro na fatura', 'problema com pedido', 'erro de cobranca',
+                'encerrar conta', 'mudar plano',
+                
+                # Jurídico / contratos
+                'contrato', 'termos', 'condicoes', 'politica', 'lgpd',
+                'politica de privacidade', 'politica de cancelamento',
+                
+                # Promoções / negociações
+                'preco especial', 'desconto', 'promocao', 'negociacao',
+                'proposta', 'oferta exclusiva', 'valor melhor',
+                'tem como melhorar o preco',
+                
+                # Comandos diretos
+                '!transferir', '!humano', '!atendente',
+                '/transferir', '/humano', '/atendente',
+                
+                # Outros
+                'chama alguem', 'tem alguem ai', 'fala com alguem por favor'
+            ]
+
+            if any(keyword in user_lower for keyword in transfer_keywords):
+                return {
+                    "should_transfer": True,
+                    "reason": f"Detectada palavra-chave na mensagem do usuário"
+                }
+
+            # Frases do agente indicando limitação
+            incapacity_phrases = [
+                'nao posso ajudar', 'nao consigo', 'nao tenho informacao',
+                'nao sei', 'nao encontrei', 'fora do meu conhecimento',
+                'preciso transferir', 'vou transferir', 'atendente humano',
+                'vou te passar para um atendente'
+            ]
+
+            if any(phrase in response_lower for phrase in incapacity_phrases):
+                return {
+                    "should_transfer": True,
+                    "reason": f"Agente indicou incapacidade na resposta"
+                }
+
+            return {
+                "should_transfer": False,
+                "reason": None
+            }
+
+        except Exception as e:
+            print(f"Erro ao analisar necessidade de transferência: {e}")
+            return {
+                "should_transfer": False,
+                "reason": None
+            }
+
     def clear_agent_memory(self, agent_id: str, vectorstore_path: str):
         """Limpa memória de conversa de um agente"""
         cache_key = f"{agent_id}_{vectorstore_path}"

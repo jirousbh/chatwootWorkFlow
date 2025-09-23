@@ -1956,7 +1956,7 @@ class ChatwootWorkflowsApp {
             return;
         }
         
-        this.activeWorkflows.forEach(workflow => {
+        this.activeWorkflows.forEach(async (workflow) => {
             // Buscar nome da conta e da caixa, garantindo comparação por string
             let accountName = workflow.account_id;
             let inboxName = workflow.inbox_id;
@@ -1968,11 +1968,33 @@ class ChatwootWorkflowsApp {
                 const inbox = this.inboxes.find(inb => String(inb.id) === String(workflow.inbox_id));
                 if (inbox) inboxName = inbox.name;
             }
+            
+            // Verificar se há agente IA vinculado
+            let aiAgentInfo = '';
+            try {
+                const agentResponse = await fetch(`/api/workflows/${workflow.workflow_name}/ai-agent`, {
+                    headers: {
+                        'Authorization': 'Bearer ' + localStorage.getItem('authToken')
+                    }
+                });
+                if (agentResponse.ok) {
+                    const agentData = await agentResponse.json();
+                    if (agentData.agent) {
+                        aiAgentInfo = `<span class="badge bg-warning ms-2"><i class="fas fa-robot me-1"></i>Agente IA: ${agentData.agent.name}</span>`;
+                    }
+                }
+            } catch (error) {
+                console.log('Erro ao verificar agente IA:', error);
+            }
+            
             const item = document.createElement('div');
             item.className = 'workflow-item';
             item.innerHTML = `
                 <div class="workflow-info">
-                    <h6 class="workflow-name">${workflow.workflow_name}</h6>
+                    <h6 class="workflow-name">
+                        ${workflow.workflow_name}
+                        ${aiAgentInfo || '<span class="badge bg-info ms-2"><i class="fas fa-cogs me-1"></i>Fluxo Estático</span>'}
+                    </h6>
                     <p class="workflow-details">
                         Conta: ${accountName} | Caixa: ${inboxName}
                     </p>
@@ -7212,5 +7234,612 @@ async function corrigirCampanhasPresas() {
     } catch (error) {
         console.error('Erro ao corrigir campanhas presas:', error);
         window.app.showAlert('Erro ao corrigir campanhas presas', 'danger');
+    }
+}
+
+// ==================== FUNÇÕES PARA AGENTES IA ====================
+
+// Variáveis globais para agentes IA
+let currentEditingAgent = null;
+let availableModels = [];
+
+// Mostrar gerenciador de agentes IA
+function showAIAgentManager() {
+    document.getElementById('aiAgentManagerDiv').classList.remove('d-none');
+    loadAIAgents();
+}
+
+// Fechar gerenciador de agentes IA
+function hideAIAgentManager() {
+    document.getElementById('aiAgentManagerDiv').classList.add('d-none');
+}
+
+// Carregar lista de agentes IA
+async function loadAIAgents() {
+    try {
+        const response = await fetch('/api/ai-agents', {
+            headers: {
+                'Authorization': 'Bearer ' + localStorage.getItem('authToken')
+            }
+        });
+        
+        if (!response.ok) {
+            throw new Error('Erro ao carregar agentes IA');
+        }
+        
+        const data = await response.json();
+        displayAIAgents(data.agents || []);
+    } catch (error) {
+        console.error('Erro ao carregar agentes IA:', error);
+        document.getElementById('aiAgentsList').innerHTML = `
+            <div class="alert alert-danger">
+                <i class="fas fa-exclamation-triangle me-2"></i>
+                Erro ao carregar agentes IA: ${error.message}
+            </div>
+        `;
+    }
+}
+
+// Exibir lista de agentes IA
+function displayAIAgents(agents) {
+    const container = document.getElementById('aiAgentsList');
+    
+    if (!agents || agents.length === 0) {
+        container.innerHTML = `
+            <div class="text-center text-muted">
+                <i class="fas fa-robot fa-3x mb-3"></i>
+                <p>Nenhum agente IA cadastrado ainda.</p>
+                <p>Clique em "Novo Agente IA" para criar o primeiro.</p>
+            </div>
+        `;
+        return;
+    }
+    
+    const agentsHtml = agents.map(agent => `
+        <div class="card mb-3">
+            <div class="card-body">
+                <div class="row align-items-center">
+                    <div class="col-md-8">
+                        <h6 class="mb-1">
+                            <i class="fas fa-robot me-2"></i>${agent.name}
+                            ${agent.is_active ? '<span class="badge bg-success ms-2">Ativo</span>' : '<span class="badge bg-secondary ms-2">Inativo</span>'}
+                        </h6>
+                        <p class="text-muted mb-1">
+                            <strong>Modelo:</strong> ${agent.model} | 
+                            <strong>Provedor:</strong> ${agent.api_provider}
+                        </p>
+                        <p class="text-muted mb-0">
+                            <strong>Criado por:</strong> ${agent.created_by_name || 'N/A'} | 
+                            <strong>Data:</strong> ${formatDateBrazil(agent.created_at)}
+                        </p>
+                        ${agent.pdf_filename ? `<p class="text-muted mb-0"><strong>PDF:</strong> ${agent.pdf_filename}</p>` : ''}
+                    </div>
+                    <div class="col-md-4 text-end">
+                        <div class="btn-group" role="group">
+                            <button class="btn btn-sm btn-outline-primary" onclick="editAIAgent('${agent.id}')">
+                                <i class="fas fa-edit"></i> Editar
+                            </button>
+                            <button class="btn btn-sm btn-outline-danger" onclick="deleteAIAgent('${agent.id}', '${escapeHtml(agent.name)}')">
+                                <i class="fas fa-trash"></i> Deletar
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `).join('');
+    
+    container.innerHTML = agentsHtml;
+}
+
+// Mostrar formulário de criação de agente IA
+async function showCreateAIAgentForm() {
+    currentEditingAgent = null;
+    
+    const titleElement = document.getElementById('aiAgentFormTitle');
+    if (titleElement) {
+        titleElement.textContent = 'Novo Agente IA';
+    }
+    
+    const formElement = document.getElementById('aiAgentForm');
+    if (formElement) {
+        formElement.reset();
+    }
+    
+    const activeCheckbox = document.getElementById('agentActive');
+    if (activeCheckbox) {
+        activeCheckbox.checked = true;
+    }
+    
+    // Carregar modelos disponíveis
+    await loadAvailableModels();
+    
+    // Mostrar formulário
+    const formDiv = document.getElementById('aiAgentFormDiv');
+    if (formDiv) {
+        formDiv.classList.remove('d-none');
+    }
+    
+    hideAIAgentManager();
+}
+
+// Editar agente IA
+async function editAIAgent(agentId) {
+    try {
+        const response = await fetch(`/api/ai-agents/${agentId}`, {
+            headers: {
+                'Authorization': 'Bearer ' + localStorage.getItem('authToken')
+            }
+        });
+        
+        if (!response.ok) {
+            throw new Error('Erro ao carregar agente IA');
+        }
+        
+        const data = await response.json();
+        const agent = data.agent;
+        
+        currentEditingAgent = agent;
+        
+        const titleElement = document.getElementById('aiAgentFormTitle');
+        if (titleElement) {
+            titleElement.textContent = 'Editar Agente IA';
+        }
+        
+        // Preencher formulário
+        const nameInput = document.getElementById('agentName');
+        if (nameInput) nameInput.value = agent.name;
+        
+        const providerSelect = document.getElementById('agentProvider');
+        if (providerSelect) providerSelect.value = agent.api_provider;
+        
+        const summaryPromptTextarea = document.getElementById('agentSummaryPrompt');
+        if (summaryPromptTextarea) summaryPromptTextarea.value = agent.summary_prompt;
+        
+        const systemPromptTextarea = document.getElementById('agentSystemPrompt');
+        if (systemPromptTextarea) systemPromptTextarea.value = agent.custom_system_prompt;
+        
+        const activeCheckbox = document.getElementById('agentActive');
+        if (activeCheckbox) activeCheckbox.checked = agent.is_active;
+        
+        // Carregar modelos e selecionar o atual
+        await loadAvailableModels();
+        
+        const modelSelect = document.getElementById('agentModel');
+        if (modelSelect) {
+            // Aguardar um pouco para garantir que os modelos foram carregados
+            setTimeout(() => {
+                modelSelect.value = agent.model;
+            }, 100);
+        }
+        
+        // Mostrar formulário
+        const formDiv = document.getElementById('aiAgentFormDiv');
+        if (formDiv) {
+            formDiv.classList.remove('d-none');
+        }
+        
+        hideAIAgentManager();
+        
+    } catch (error) {
+        console.error('Erro ao carregar agente IA:', error);
+        window.app.showAlert('Erro ao carregar agente IA: ' + error.message, 'danger');
+    }
+}
+
+// Carregar modelos disponíveis
+async function loadAvailableModels() {
+    try {
+        const response = await fetch('/api/ai-models', {
+            headers: {
+                'Authorization': 'Bearer ' + localStorage.getItem('authToken')
+            }
+        });
+        
+        if (!response.ok) {
+            throw new Error('Erro ao carregar modelos');
+        }
+        
+        const data = await response.json();
+        availableModels = data.models || [];
+        
+        const select = document.getElementById('agentModel');
+        if (select) {
+            select.innerHTML = '<option value="">Selecione um modelo...</option>';
+            
+            availableModels.forEach(model => {
+                const option = document.createElement('option');
+                option.value = model.id || model.name;
+                option.textContent = `${model.name} - ${model.description || model.id}`;
+                select.appendChild(option);
+            });
+        }
+        
+    } catch (error) {
+        console.error('Erro ao carregar modelos:', error);
+        const select = document.getElementById('agentModel');
+        if (select) {
+            select.innerHTML = '<option value="">Erro ao carregar modelos</option>';
+        }
+    }
+}
+
+// Fechar formulário de agente IA
+function hideAIAgentForm() {
+    const formDiv = document.getElementById('aiAgentFormDiv');
+    if (formDiv) {
+        formDiv.classList.add('d-none');
+    }
+    currentEditingAgent = null;
+}
+
+// Deletar agente IA
+async function deleteAIAgent(agentId, agentName) {
+    if (!confirm(`Tem certeza que deseja deletar o agente IA "${agentName}"?\n\nEsta ação não pode ser desfeita.`)) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/api/ai-agents/${agentId}`, {
+            method: 'DELETE',
+            headers: {
+                'Authorization': 'Bearer ' + localStorage.getItem('authToken')
+            }
+        });
+        
+        if (!response.ok) {
+            throw new Error('Erro ao deletar agente IA');
+        }
+        
+        window.app.showAlert('Agente IA deletado com sucesso!', 'success');
+        loadAIAgents();
+        
+    } catch (error) {
+        console.error('Erro ao deletar agente IA:', error);
+        window.app.showAlert('Erro ao deletar agente IA: ' + error.message, 'danger');
+    }
+}
+
+// Event listeners para agentes IA
+document.addEventListener('DOMContentLoaded', function() {
+    // Fechar gerenciador de agentes IA
+    const closeAIAgentManagerBtn = document.getElementById('closeAIAgentManager');
+    if (closeAIAgentManagerBtn) {
+        closeAIAgentManagerBtn.addEventListener('click', hideAIAgentManager);
+    }
+    
+    // Formulário de agente IA
+    const aiAgentForm = document.getElementById('aiAgentForm');
+    if (aiAgentForm) {
+        aiAgentForm.addEventListener('submit', handleAIAgentSubmit);
+    }
+    
+    // Validação de arquivo PDF
+    const agentPdfFile = document.getElementById('agentPdfFile');
+    if (agentPdfFile) {
+        agentPdfFile.addEventListener('change', validatePdfFile);
+    }
+});
+
+// Validar arquivo PDF
+function validatePdfFile(event) {
+    const file = event.target.files[0];
+    const maxSize = 50 * 1024 * 1024; // 50MB
+    
+    if (file) {
+        if (file.type !== 'application/pdf') {
+            window.app.showAlert('Apenas arquivos PDF são aceitos!', 'danger');
+            event.target.value = '';
+            return;
+        }
+        
+        if (file.size > maxSize) {
+            window.app.showAlert('O arquivo deve ter no máximo 50MB!', 'danger');
+            event.target.value = '';
+            return;
+        }
+        
+        // Mostrar informações do arquivo
+        const sizeInMB = (file.size / (1024 * 1024)).toFixed(2);
+        const infoElement = document.getElementById('pdfUploadInfo');
+        if (infoElement) {
+            infoElement.innerHTML = `
+                <i class="fas fa-info-circle me-2"></i>
+                Arquivo selecionado: ${file.name} (${sizeInMB} MB)
+            `;
+            infoElement.classList.remove('d-none');
+        }
+    }
+}
+
+// Submeter formulário de agente IA
+async function handleAIAgentSubmit(event) {
+    event.preventDefault();
+    
+    const formData = new FormData(event.target);
+    const saveBtn = document.getElementById('saveAgentBtn');
+    
+    try {
+        if (saveBtn) {
+            saveBtn.disabled = true;
+            saveBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Salvando...';
+        }
+        
+        // Mostrar progresso
+        const progressDiv = document.getElementById('pdfUploadProgress');
+        if (progressDiv) {
+            progressDiv.classList.remove('d-none');
+            const progressBar = progressDiv.querySelector('.progress-bar');
+            if (progressBar) {
+                progressBar.style.width = '0%';
+            }
+        }
+        
+        const url = currentEditingAgent ? `/api/ai-agents/${currentEditingAgent.id}` : '/api/ai-agents';
+        const method = currentEditingAgent ? 'PUT' : 'POST';
+        
+        // Converter FormData para JSON (exceto o arquivo PDF)
+        const agentData = {
+            name: formData.get('name'),
+            api_provider: formData.get('api_provider'),
+            model: formData.get('model'),
+            summary_prompt: formData.get('summary_prompt'),
+            custom_system_prompt: formData.get('custom_system_prompt'),
+            is_active: formData.get('is_active') === 'on'
+        };
+        const requestBody = JSON.stringify(agentData);
+        
+        const response = await fetch(url, {
+            method: method,
+            headers: {
+                'Authorization': 'Bearer ' + localStorage.getItem('authToken'),
+                'Content-Type': 'application/json'
+            },
+            body: requestBody
+        });
+        
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.error || 'Erro ao salvar agente IA');
+        }
+        
+        const data = await response.json();
+        
+        // Fazer upload do PDF se houver arquivo selecionado (criação ou edição)
+        const pdfFile = formData.get('pdf_file');
+        if (pdfFile && pdfFile.size > 0) {
+            await uploadPdfToAgent(data.agent.id, pdfFile);
+        }
+        
+        window.app.showAlert(
+            currentEditingAgent ? 'Agente IA atualizado com sucesso!' : 'Agente IA criado com sucesso!', 
+            'success'
+        );
+        
+        hideAIAgentForm();
+        showAIAgentManager();
+        loadAIAgents();
+        
+    } catch (error) {
+        console.error('Erro ao salvar agente IA:', error);
+        window.app.showAlert('Erro ao salvar agente IA: ' + error.message, 'danger');
+    } finally {
+        if (saveBtn) {
+            saveBtn.disabled = false;
+            saveBtn.innerHTML = '<i class="fas fa-save me-2"></i>Salvar Agente';
+        }
+        const progressDiv = document.getElementById('pdfUploadProgress');
+        if (progressDiv) {
+            progressDiv.classList.add('d-none');
+        }
+    }
+}
+
+// Upload de PDF para agente IA (direto para a API do ia-agent)
+async function uploadPdfToAgent(agentId, pdfFile) {
+    try {
+        const formData = new FormData();
+        formData.append('pdf_file', pdfFile);
+        
+        // Simular progresso
+        const progressDiv = document.getElementById('pdfUploadProgress');
+        if (progressDiv) {
+            const progressBar = progressDiv.querySelector('.progress-bar');
+            if (progressBar) {
+                progressBar.style.width = '50%';
+            }
+        }
+        
+        // Upload direto para a API do ia-agent (sem proxy)
+        const response = await fetch(`http://localhost:3006/agents/${agentId}/upload-pdf`, {
+            method: 'POST',
+            body: formData
+        });
+        
+        if (!response.ok) {
+            throw new Error('Erro ao fazer upload do PDF');
+        }
+        
+        const data = await response.json();
+        
+        if (progressDiv) {
+            const progressBar = progressDiv.querySelector('.progress-bar');
+            if (progressBar) {
+                progressBar.style.width = '100%';
+            }
+        }
+        
+        const successElement = document.getElementById('pdfUploadSuccess');
+        if (successElement) {
+            successElement.innerHTML = `
+                <i class="fas fa-check-circle me-2"></i>
+                PDF enviado com sucesso! Agente IA está pronto para uso.
+            `;
+            successElement.classList.remove('d-none');
+        }
+        
+        return data;
+        
+    } catch (error) {
+        console.error('Erro no upload do PDF:', error);
+        const errorElement = document.getElementById('pdfUploadError');
+        if (errorElement) {
+            errorElement.innerHTML = `
+                <i class="fas fa-exclamation-triangle me-2"></i>
+                Erro no upload do PDF: ${error.message}
+            `;
+            errorElement.classList.remove('d-none');
+        }
+        throw error;
+    }
+}
+
+// ==================== FUNÇÕES PARA EDITOR DE WORKFLOW ====================
+
+// Alternar entre tipo de fluxo estático e IA
+function toggleWorkflowType() {
+    const staticType = document.getElementById('workflowTypeStatic');
+    const aiType = document.getElementById('workflowTypeAI');
+    const aiAgentSelection = document.getElementById('aiAgentSelection');
+    const templateSelection = document.getElementById('templateSelection');
+    const workflowConfig = document.getElementById('workflowConfig');
+    
+    if (aiType && aiType.checked) {
+        // Mostrar seleção de agente IA e ocultar template
+        if (aiAgentSelection) aiAgentSelection.style.display = 'block';
+        if (templateSelection) templateSelection.style.display = 'none';
+        if (workflowConfig) {
+            workflowConfig.disabled = true;
+            workflowConfig.placeholder = 'Configuração desabilitada para Agentes IA';
+        }
+        
+        // Carregar agentes IA disponíveis
+        loadAvailableAIAgents();
+    } else {
+        // Mostrar template e ocultar seleção de agente IA
+        if (aiAgentSelection) aiAgentSelection.style.display = 'none';
+        if (templateSelection) templateSelection.style.display = 'block';
+        if (workflowConfig) {
+            workflowConfig.disabled = false;
+            workflowConfig.placeholder = 'Cole aqui a configuração JSON do fluxo';
+        }
+    }
+}
+
+// Carregar agentes IA disponíveis para seleção
+async function loadAvailableAIAgents() {
+    try {
+        const response = await fetch('/api/ai-agents', {
+            headers: {
+                'Authorization': 'Bearer ' + localStorage.getItem('authToken')
+            }
+        });
+        
+        if (!response.ok) {
+            throw new Error('Erro ao carregar agentes IA');
+        }
+        
+        const data = await response.json();
+        const agents = data.agents || [];
+        
+        const select = document.getElementById('aiAgentSelect');
+        if (select) {
+            select.innerHTML = '<option value="">Selecione um agente IA...</option>';
+            
+            agents.forEach(agent => {
+                if (agent.is_active) {
+                    const option = document.createElement('option');
+                    option.value = agent.id;
+                    option.textContent = `${agent.name} (${agent.model})`;
+                    select.appendChild(option);
+                }
+            });
+        }
+        
+    } catch (error) {
+        console.error('Erro ao carregar agentes IA:', error);
+        const select = document.getElementById('aiAgentSelect');
+        if (select) {
+            select.innerHTML = '<option value="">Erro ao carregar agentes IA</option>';
+        }
+    }
+}
+
+// Salvar workflow com suporte a agentes IA
+async function saveWorkflowWithAI() {
+    const accountId = document.getElementById('accountSelect').value;
+    const inboxId = document.getElementById('inboxSelect').value;
+    const workflowName = document.getElementById('workflowName').value;
+    const workflowType = document.querySelector('input[name="workflowType"]:checked').value;
+    
+    if (!accountId || !inboxId || !workflowName) {
+        window.app.showAlert('Preencha todos os campos obrigatórios', 'warning');
+        return;
+    }
+    
+    try {
+        if (workflowType === 'ai') {
+            // Salvar workflow com agente IA
+            const aiAgentSelect = document.getElementById('aiAgentSelect');
+        const agentId = aiAgentSelect ? aiAgentSelect.value : null;
+            if (!agentId) {
+                window.app.showAlert('Selecione um agente IA', 'warning');
+                return;
+            }
+            
+            // Criar workflow básico
+            const workflowData = {
+                accountId: parseInt(accountId),
+                inboxId: parseInt(inboxId),
+                workflowName: workflowName,
+                workflowConfig: JSON.stringify({
+                    type: 'ai_agent',
+                    agent_id: agentId, // UUID como string, não converter para inteiro
+                    blocks: [] // Sem blocos - o agente IA vai responder diretamente
+                })
+            };
+            
+            // Salvar workflow
+            const response = await fetch('/api/inbox-workflows', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ' + localStorage.getItem('authToken')
+                },
+                body: JSON.stringify(workflowData)
+            });
+            
+            if (!response.ok) {
+                throw new Error('Erro ao salvar workflow');
+            }
+            
+            // Vincular agente IA ao workflow
+            const linkResponse = await fetch(`/api/workflows/${workflowName}/ai-agent`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ' + localStorage.getItem('authToken')
+                },
+                body: JSON.stringify({ agent_id: agentId }) // UUID como string, não converter para inteiro
+            });
+            
+            if (!linkResponse.ok) {
+                throw new Error('Erro ao vincular agente IA ao workflow');
+            }
+            
+            window.app.showAlert('Workflow com Agente IA salvo com sucesso!', 'success');
+            
+        } else {
+            // Salvar workflow estático (comportamento original)
+            await window.app.saveWorkflow();
+        }
+        
+        // Recarregar lista de workflows ativos
+        await window.app.loadActiveWorkflows(true);
+        window.app.hideWorkflowEditor();
+        
+    } catch (error) {
+        console.error('Erro ao salvar workflow:', error);
+        window.app.showAlert('Erro ao salvar workflow: ' + error.message, 'danger');
     }
 }

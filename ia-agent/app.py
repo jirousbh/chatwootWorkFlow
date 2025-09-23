@@ -157,6 +157,53 @@ def create_agent():
             'error': f'Erro ao criar agente: {str(e)}'
         }), 500
 
+@app.route('/agents/<agent_id>', methods=['PUT'])
+def update_agent(agent_id):
+    """Atualiza um agente IA existente"""
+    try:
+        agent = Agent.query.get_or_404(agent_id)
+        data = request.get_json()
+        
+        # Validação dos campos obrigatórios
+        required_fields = ['name', 'model', 'summary_prompt', 'custom_system_prompt']
+        for field in required_fields:
+            if field not in data or not data[field]:
+                return jsonify({
+                    'error': f'Campo obrigatório: {field}'
+                }), 400
+        
+        # Validação do modelo
+        if data.get('api_provider', agent.api_provider) == 'groq':
+            available_models = groq_client.list_models()
+            if data['model'] not in [model['id'] for model in available_models]:
+                return jsonify({
+                    'error': f'Modelo {data["model"]} não está disponível na Groq',
+                    'available_models': [model['id'] for model in available_models]
+                }), 400
+        
+        # Atualizar campos do agente
+        agent.name = data['name']
+        agent.api_provider = data.get('api_provider', agent.api_provider)
+        agent.model = data['model']
+        agent.summary_prompt = data['summary_prompt']
+        agent.custom_system_prompt = data['custom_system_prompt']
+        agent.is_active = data.get('is_active', agent.is_active)
+        agent.updated_at = datetime.utcnow()
+        
+        db.session.commit()
+        
+        return jsonify({
+            'agent': agent.to_dict(),
+            'status': 'success',
+            'message': 'Agente atualizado com sucesso'
+        })
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({
+            'error': f'Erro ao atualizar agente: {str(e)}'
+        }), 500
+
 @app.route('/agents/<agent_id>/upload-pdf', methods=['POST'])
 def upload_pdf(agent_id):
     """Faz upload de PDF para um agente específico"""
@@ -255,9 +302,17 @@ def chat_with_agent(agent_id):
                 agent.model,
                 agent.api_provider
             )
+            
+            return jsonify({
+                'response': response,
+                'agent_id': agent_id,
+                'status': 'success',
+                'should_transfer': False,
+                'transfer_reason': None
+            })
         else:
             # Usar custom_system_prompt para conversa normal
-            response = agent_manager.chat_with_agent(
+            response_data = agent_manager.chat_with_agent(
                 agent_id,
                 agent.vectorstore_path,
                 message,
@@ -265,12 +320,14 @@ def chat_with_agent(agent_id):
                 agent.model,
                 agent.api_provider
             )
-        
-        return jsonify({
-            'response': response,
-            'agent_id': agent_id,
-            'status': 'success'
-        })
+            
+            return jsonify({
+                'response': response_data['answer'],
+                'agent_id': agent_id,
+                'status': 'success',
+                'should_transfer': response_data['should_transfer'],
+                'transfer_reason': response_data['transfer_reason']
+            })
         
     except Exception as e:
         return jsonify({

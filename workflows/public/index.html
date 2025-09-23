@@ -126,6 +126,157 @@
         </div>
     </div>
 
+    <!-- AI Agent Manager Div -->
+    <div id="aiAgentManagerDiv" class="d-none position-fixed top-0 start-0 w-100 h-100 bg-white p-4 overflow-auto" style="z-index: 9999;">
+        <div class="container">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h3><i class="fas fa-robot me-2"></i>Gerenciamento de Agentes IA</h3>
+                <button class="btn btn-secondary" id="closeAIAgentManager">
+                    <i class="fas fa-times"></i> Fechar
+                </button>
+            </div>
+            
+            <!-- Botão para criar novo agente -->
+            <div class="mb-4">
+                <button class="btn btn-success" onclick="showCreateAIAgentForm()">
+                    <i class="fas fa-plus me-2"></i>Novo Agente IA
+                </button>
+            </div>
+            
+            <!-- Lista de agentes IA -->
+            <div class="card">
+                <div class="card-header">
+                    <h6 class="mb-0">
+                        <i class="fas fa-list me-2"></i>Agentes IA Cadastrados
+                    </h6>
+                </div>
+                <div class="card-body">
+                    <div id="aiAgentsList">
+                        <div class="text-center">
+                            <div class="spinner-border" role="status">
+                                <span class="visually-hidden">Carregando...</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- AI Agent Form Div -->
+    <div id="aiAgentFormDiv" class="d-none position-fixed top-0 start-0 w-100 h-100 bg-white p-4 overflow-auto" style="z-index: 9999;">
+        <div class="container">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h3 id="aiAgentFormTitle"><i class="fas fa-robot me-2"></i>Novo Agente IA</h3>
+                <button class="btn btn-secondary" onclick="hideAIAgentForm()">
+                    <i class="fas fa-times"></i> Fechar
+                </button>
+            </div>
+            
+            <form id="aiAgentForm" enctype="multipart/form-data">
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="card">
+                            <div class="card-header">
+                                <h6 class="mb-0">Informações Básicas</h6>
+                            </div>
+                            <div class="card-body">
+                                <div class="mb-3">
+                                    <label for="agentName" class="form-label">Nome do Agente *</label>
+                                    <input type="text" class="form-control" id="agentName" name="name" required>
+                                </div>
+                                
+                                <div class="mb-3">
+                                    <label for="agentModel" class="form-label">Modelo IA *</label>
+                                    <select class="form-control" id="agentModel" name="model" required>
+                                        <option value="">Carregando modelos...</option>
+                                    </select>
+                                </div>
+                                
+                                <div class="mb-3">
+                                    <label for="agentProvider" class="form-label">Provedor de IA</label>
+                                    <select class="form-control" id="agentProvider" name="api_provider">
+                                        <option value="groq" selected>Groq</option>
+                                    </select>
+                                </div>
+                                
+                                <div class="mb-3">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="agentActive" name="is_active" checked>
+                                        <label class="form-check-label" for="agentActive">
+                                            Agente ativo
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-6">
+                        <div class="card">
+                            <div class="card-header">
+                                <h6 class="mb-0">Configurações de Prompts</h6>
+                            </div>
+                            <div class="card-body">
+                                <div class="mb-3">
+                                    <label for="agentSummaryPrompt" class="form-label">Prompt de Resumo *</label>
+                                    <textarea class="form-control" id="agentSummaryPrompt" name="summary_prompt" rows="3" required 
+                                        placeholder="Prompt usado para criar resumos dos documentos..."></textarea>
+                                </div>
+                                
+                                <div class="mb-3">
+                                    <label for="agentSystemPrompt" class="form-label">Prompt do Sistema *</label>
+                                    <textarea class="form-control" id="agentSystemPrompt" name="custom_system_prompt" rows="5" required 
+                                        placeholder="Prompt que define como o agente deve responder..."></textarea>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="row mt-4">
+                    <div class="col-12">
+                        <div class="card">
+                            <div class="card-header">
+                                <h6 class="mb-0">Documento PDF</h6>
+                            </div>
+                            <div class="card-body">
+                                <div class="mb-3">
+                                    <label for="agentPdfFile" class="form-label">Arquivo PDF *</label>
+                                    <input type="file" class="form-control" id="agentPdfFile" name="pdf_file" accept=".pdf" required>
+                                    <div class="form-text">
+                                        Apenas arquivos PDF são aceitos. Tamanho máximo: 50MB
+                                    </div>
+                                </div>
+                                
+                                <div class="progress d-none" id="pdfUploadProgress">
+                                    <div class="progress-bar" role="progressbar" style="width: 0%"></div>
+                                </div>
+                                
+                                <div class="alert alert-info d-none" id="pdfUploadInfo"></div>
+                                <div class="alert alert-success d-none" id="pdfUploadSuccess"></div>
+                                <div class="alert alert-danger d-none" id="pdfUploadError"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="row mt-4">
+                    <div class="col-12">
+                        <div class="d-flex gap-2">
+                            <button type="submit" class="btn btn-primary" id="saveAgentBtn">
+                                <i class="fas fa-save me-2"></i>Salvar Agente
+                            </button>
+                            <button type="button" class="btn btn-secondary" onclick="hideAIAgentForm()">
+                                <i class="fas fa-times me-2"></i>Cancelar
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <!-- Main App -->
     <div id="app" class="d-none">
         <!-- Navigation -->
@@ -188,6 +339,10 @@
                             <!-- Botão Gerenciar Mídia (Admin apenas) -->
                             <button id="btnGerenciarMidia" class="btn btn-info w-100 mt-2" onclick="showMediaManager()">
                                 <i class="fas fa-photo-video me-2"></i>Gerenciar Mídia
+                            </button>
+                            <!-- Botão Gerenciar Agentes IA (Admin apenas) -->
+                            <button id="btnGerenciarAgentesIA" class="btn btn-warning w-100 mt-2" onclick="showAIAgentManager()">
+                                <i class="fas fa-robot me-2"></i>Gerenciar Agentes IA
                             </button>
                         </div>
                     </div>
@@ -252,7 +407,36 @@
                                             <label for="workflowName" class="form-label">Nome do Fluxo</label>
                                             <input type="text" class="form-control" id="workflowName" placeholder="Digite o nome do fluxo">
                                         </div>
+                                        
+                                        <!-- Seleção do tipo de fluxo -->
                                         <div class="mb-3">
+                                            <label class="form-label">Tipo de Fluxo</label>
+                                            <div class="d-flex gap-3">
+                                                <div class="form-check">
+                                                    <input type="radio" class="form-check-input" id="workflowTypeStatic" name="workflowType" value="static" checked onchange="toggleWorkflowType()">
+                                                    <label class="form-check-label" for="workflowTypeStatic">
+                                                        <i class="fas fa-cogs me-1"></i>Fluxo Estático
+                                                    </label>
+                                                </div>
+                                                <div class="form-check">
+                                                    <input type="radio" class="form-check-input" id="workflowTypeAI" name="workflowType" value="ai" onchange="toggleWorkflowType()">
+                                                    <label class="form-check-label" for="workflowTypeAI">
+                                                        <i class="fas fa-robot me-1"></i>Agente IA
+                                                    </label>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        
+                                        <!-- Seleção de agente IA (apenas quando tipo AI for selecionado) -->
+                                        <div class="mb-3" id="aiAgentSelection" style="display: none;">
+                                            <label for="aiAgentSelect" class="form-label">Agente IA</label>
+                                            <select class="form-select" id="aiAgentSelect">
+                                                <option value="">Selecione um agente IA...</option>
+                                            </select>
+                                        </div>
+                                        
+                                        <!-- Template (apenas quando tipo estático for selecionado) -->
+                                        <div class="mb-3" id="templateSelection">
                                             <label for="workflowTemplate" class="form-label">Template</label>
                                             <select class="form-select" id="workflowTemplate" onchange="loadTemplate()">
                                                 <option value="">Selecione um template...</option>
@@ -263,7 +447,7 @@
                                             <textarea class="form-control" id="workflowConfig" rows="20" placeholder="Cole aqui a configuração JSON do fluxo"></textarea>
                                         </div>
                                         <div class="d-flex gap-2">
-                                            <button class="btn btn-primary" onclick="saveWorkflow()">
+                                            <button class="btn btn-primary" onclick="saveWorkflowWithAI()">
                                                 <i class="fas fa-save me-2"></i>Salvar Fluxo
                                             </button>
                                             <button class="btn btn-secondary" onclick="testWorkflow()">

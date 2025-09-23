@@ -350,7 +350,7 @@ async function getInboxInfo(accountId, inboxId) {
       headers: { 'api_access_token': CHATWOOT_API_TOKEN }
     });
     
-    console.log(`🔍 Resposta da API para caixa ${inboxId}:`, JSON.stringify(response.data, null, 2));
+    //console.log(`🔍 Resposta da API para caixa ${inboxId}:`, JSON.stringify(response.data, null, 2));
     
     // Verificar diferentes formatos de resposta
     let inboxInfo = response.data.payload || response.data;
@@ -419,7 +419,17 @@ function processNumericResponse(userMessage, buttons) {
 
 // Função para detectar o bloco inicial do workflow
 function getInitialBlock(workflow) {
-  if (!workflow || !workflow.blocks) {
+  if (!workflow) {
+    return null;
+  }
+  
+  // Se for workflow de agente IA, não precisa de bloco inicial
+  if (workflow.type === 'ai_agent') {
+    return 'ai_agent'; // Retornar um identificador especial para agentes IA
+  }
+  
+  // Para workflows estáticos, verificar se tem blocos
+  if (!workflow.blocks) {
     return null;
   }
   
@@ -742,6 +752,74 @@ async function initializeDatabase() {
     await pool.query(`
       CREATE INDEX IF NOT EXISTS idx_button_debounce_processed_at 
       ON button_debounce(processed_at);
+    `);
+
+    // NOVA: Tabela para agentes IA
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS ai_agents (
+        id VARCHAR(36) PRIMARY KEY,
+        name VARCHAR(255) NOT NULL,
+        api_provider VARCHAR(50) DEFAULT 'groq',
+        model VARCHAR(100) NOT NULL,
+        summary_prompt TEXT NOT NULL,
+        custom_system_prompt TEXT NOT NULL,
+        pdf_filename VARCHAR(255),
+        vectorstore_path VARCHAR(500),
+        is_active BOOLEAN DEFAULT true,
+        created_by INTEGER REFERENCES system_users(id),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // NOVA: Tabela para vincular agentes IA aos workflows
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS workflow_ai_agents (
+        id SERIAL PRIMARY KEY,
+        workflow_name VARCHAR(255) NOT NULL,
+        ai_agent_id VARCHAR(36) REFERENCES ai_agents(id) ON DELETE SET NULL,
+        is_active BOOLEAN DEFAULT true,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(workflow_name)
+      )
+    `);
+
+    // Migração: Alterar tipo de ID para VARCHAR se necessário
+    try {
+      await pool.query(`
+        ALTER TABLE ai_agents 
+        ALTER COLUMN id TYPE VARCHAR(36);
+      `);
+    } catch (error) {
+      // Ignorar erro se a coluna já for VARCHAR
+      console.log('Coluna ai_agents.id já é VARCHAR ou erro esperado:', error.message);
+    }
+    
+    try {
+      await pool.query(`
+        ALTER TABLE workflow_ai_agents 
+        ALTER COLUMN ai_agent_id TYPE VARCHAR(36);
+      `);
+    } catch (error) {
+      // Ignorar erro se a coluna já for VARCHAR
+      console.log('Coluna workflow_ai_agents.ai_agent_id já é VARCHAR ou erro esperado:', error.message);
+    }
+
+    // Criar índices para agentes IA
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_ai_agents_active 
+      ON ai_agents(is_active);
+    `);
+    
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_workflow_ai_agents_workflow 
+      ON workflow_ai_agents(workflow_name);
+    `);
+
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_workflow_ai_agents_agent 
+      ON workflow_ai_agents(ai_agent_id);
     `);
 
     console.log('✅ Banco de dados inicializado com sucesso');
@@ -1209,6 +1287,45 @@ async function assignConversationToTeamMember(conversationId, teamId, options = 
   }
 }
 
+// Função para atribuir conversa a um agente disponível
+async function assignConversationToAvailableAgent(conversationId, accountId = CHATWOOT_ACCOUNT_ID) {
+  try {
+    console.log(`🔍 Tentando encontrar agente disponível para conversa ${conversationId}`);
+    
+    // Buscar agentes disponíveis na conta
+    const response = await axios.get(
+      `${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/agents`,
+      { headers: { 'api_access_token': CHATWOOT_API_TOKEN } }
+    );
+    
+    if (!response.data || !response.data.data || !Array.isArray(response.data.data.payload)) {
+      console.log(`⚠️ Nenhum agente encontrado na conta ${accountId}`);
+      return;
+    }
+    
+    const agents = response.data.data.payload;
+    console.log(`👥 Encontrados ${agents.length} agentes na conta ${accountId}`);
+    
+    // Buscar primeiro agente disponível (status: available)
+    const availableAgent = agents.find(agent => 
+      agent.availability_status === 'available' || 
+      agent.availability_status === 'online'
+    );
+    
+    if (availableAgent) {
+      console.log(`✅ Agente disponível encontrado: ${availableAgent.name} (ID: ${availableAgent.id})`);
+      await assignConversationToAgent(conversationId, availableAgent.id, accountId);
+    } else {
+      console.log(`⚠️ Nenhum agente disponível encontrado, conversa ficará sem atribuição`);
+      // Opcional: atribuir a um time padrão se configurado
+      // await assignConversationToTeam(conversationId, DEFAULT_TEAM_ID, accountId);
+    }
+    
+  } catch (error) {
+    console.error(`❌ Erro ao buscar agente disponível para conversa ${conversationId}:`, error.response?.data || error.message);
+  }
+}
+
 // Função para selecionar o próximo agente no round-robin
 async function selectNextAgentInRoundRobin(teamMembers, teamId, accountId = CHATWOOT_ACCOUNT_ID) {
   try {
@@ -1668,11 +1785,14 @@ class ConversationManager {
         throw new Error(`Não foi possível determinar o bloco inicial para o workflow '${workflowName}'`);
       }
       
+      // Para workflows de agente IA, usar um bloco especial
+      const blockToUse = initialBlock === 'ai_agent' ? 'ai_agent_start' : initialBlock;
+      
       if (existingResult.rows.length > 0) {
         // Atualizar conversa existente
         await pool.query(
           'UPDATE workflow_conversations SET workflow_name = $1, current_block = $2, data = $3, account_id = $4, conversation_id = $5, last_activity = CURRENT_TIMESTAMP WHERE id = $6',
-          [workflowName, initialBlock, JSON.stringify(initialData), accountId, initialData.conversation_id || null, existingResult.rows[0].id]
+          [workflowName, blockToUse, JSON.stringify(initialData), accountId, initialData.conversation_id || null, existingResult.rows[0].id]
         );
         return existingResult.rows[0];
       }
@@ -1680,7 +1800,7 @@ class ConversationManager {
       // Criar nova conversa
       const result = await pool.query(
         'INSERT INTO workflow_conversations (contact_id, workflow_name, current_block, data, account_id, conversation_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
-        [contactId, workflowName, initialBlock, JSON.stringify(initialData), accountId, initialData.conversation_id || null]
+        [contactId, workflowName, blockToUse, JSON.stringify(initialData), accountId, initialData.conversation_id || null]
       );
 
       return result.rows[0];
@@ -2838,22 +2958,18 @@ async function checkAndExecuteScheduledCampaigns() {
 // Função de polling para verificar novas mensagens no Chatwoot
 async function pollChatwootMessages() {
   try {
-    console.log('🔍 Verificando novas mensagens no Chatwoot...');
+    // Log reduzido: não exibir detalhes por conta
     
     // Obter todas as contas disponíveis
     const accounts = await getAllAvailableAccounts();
-    console.log(`🏢 Monitorando ${accounts.length} conta(s)`);
     
     let totalConversations = 0;
     
     // Iterar por cada conta
     for (const account of accounts) {
       try {
-        console.log(`📋 Verificando conta: ${account.name} (ID: ${account.id})`);
-        
         // Obter conversas ativas da conta atual
         const conversations = await getChatwootConversations(account.id);
-        console.log(`   📋 Encontradas ${conversations.length} conversas ativas na conta ${account.name}`);
         
         totalConversations += conversations.length;
         
@@ -3497,6 +3613,14 @@ async function processUserMessage(contactId, conversationId, userMessage, inboxI
           console.log(`✅ Conversa criada com sucesso:`, conversation);
           
           const workflow = inboxWorkflow.workflow_config;
+          
+          // Verificar se é workflow de agente IA
+          if (workflow.type === 'ai_agent') {
+            console.log(`🤖 Workflow de agente IA detectado - não processar blocos estáticos`);
+            // Para workflows de agente IA, não processar blocos estáticos
+            return;
+          }
+          
           const initialBlockName = getInitialBlock(workflow);
           const firstBlock = workflow.blocks[initialBlockName];
           
@@ -3565,6 +3689,94 @@ async function processUserMessage(contactId, conversationId, userMessage, inboxI
         console.warn(`⚠️ Erro ao processar resposta numérica:`, error.message);
       }
       
+      // ===== VERIFICAR SE HÁ AGENTE IA VINCULADO AO WORKFLOW =====
+      const conversation = await conversationManager.getConversation(contactId);
+      if (conversation && conversation.workflow_name) {
+        const aiAgent = await getAIAgentByWorkflow(conversation.workflow_name);
+        
+        if (aiAgent) {
+          console.log(`🤖 Processando mensagem com Agente IA: ${aiAgent.name} (ID: ${aiAgent.id})`);
+          
+          try {
+            // Obter histórico da conversa para contexto
+            const chatHistory = [];
+            const interactions = await pool.query(`
+              SELECT bot_message, user_response, timestamp 
+              FROM workflow_interactions wi
+              JOIN workflow_conversations wc ON wi.wf_conversation_id = wc.id
+              WHERE wc.contact_id = $1 
+              ORDER BY wi.timestamp DESC 
+              LIMIT 10
+            `, [contactId]);
+            
+            // Construir histórico (mais recente primeiro, depois inverter)
+            for (const interaction of interactions.rows.reverse()) {
+              if (interaction.user_response) {
+                chatHistory.push({ role: 'user', content: interaction.user_response });
+              }
+              if (interaction.bot_message) {
+                chatHistory.push({ role: 'assistant', content: interaction.bot_message });
+              }
+            }
+            
+            // Enviar mensagem para o agente IA
+            // Verificar se é primeira interação (sem histórico de interações)
+            const isFirstInteraction = interactions.rows.length === 0;
+            console.log(`🤖 Primeira interação com agente IA: ${isFirstInteraction}, histórico: ${chatHistory.length} mensagens`);
+            
+            const aiResponse = await sendMessageToAIAgent(aiAgent.id, processedMessage, chatHistory, isFirstInteraction);
+            
+            if (aiResponse && aiResponse.response) {
+              // Verificar se deve transferir para atendimento humano
+              if (aiResponse.should_transfer) {
+                console.log(`🔄 Agente IA detectou necessidade de transferência: ${aiResponse.transfer_reason}`);
+                
+                // Pausar bot e transferir para atendimento humano
+                await pauseBotForConversation(conversationId, contactId, 'ai_agent_transfer', 'ai_agent');
+                
+                // Atribuir conversa a um agente disponível (se houver)
+                await assignConversationToAvailableAgent(conversationId, accountId);
+                
+                // Enviar mensagem informativa
+                await sendChatwootMessage(
+                  conversationId,
+                  `👤 **Transferência para Atendimento Humano**\n\n` +
+                  `Detectei que você precisa de atendimento humano: ${aiResponse.transfer_reason}\n\n` +
+                  `Um de nossos atendentes entrará em contato em breve para ajudá-lo melhor.\n\n`,
+                  [], null, accountId, inboxId
+                );
+                //+
+                //  `📞 **Resposta do assistente:** ${aiResponse.response}`
+                
+                return; // Sair sem salvar interação normal
+              }
+              
+              // Salvar interação normal
+              await conversationManager.saveInteraction(
+                conversation.id, // Usar ID da tabela workflow_conversations, não do Chatwoot
+                contactId, 
+                'ai_agent_response', 
+                processedMessage, 
+                aiResponse.response
+              );
+              
+              // Enviar resposta do agente IA
+              await sendChatwootMessage(conversationId, aiResponse.response, [], null, accountId, inboxId);
+              return;
+            } else {
+              console.error('❌ Resposta inválida do agente IA:', aiResponse);
+              await sendChatwootMessage(conversationId, '❌ Desculpe, ocorreu um erro ao processar sua mensagem. Tente novamente.', [], null, accountId);
+              return;
+            }
+          } catch (error) {
+            console.error('❌ Erro ao processar mensagem com agente IA:', error);
+            await sendChatwootMessage(conversationId, '❌ Desculpe, ocorreu um erro ao processar sua mensagem. Tente novamente.', [], null, accountId);
+            return;
+          }
+        }
+      }
+      
+      // ===== PROCESSAMENTO NORMAL DO WORKFLOW =====
       const result = await conversationManager.processResponse(contactId, processedMessage, accountId);
       
       if (result && result.type) {
@@ -4716,16 +4928,16 @@ async function isBotActiveForConversation(conversationId, contactId, accountId =
     }
     
     // Verificar se bot foi reativado recentemente (últimos 5 minutos)
-    if (botStatus.reactivated_at) {
-      const now = new Date();
-      const reactivatedAt = new Date(botStatus.reactivated_at);
-      const timeDiff = (now.getTime() - reactivatedAt.getTime()) / 1000 / 60; // diferença em minutos
+    // if (botStatus.reactivated_at) {
+    //   const now = new Date();
+    //   const reactivatedAt = new Date(botStatus.reactivated_at);
+    //   const timeDiff = (now.getTime() - reactivatedAt.getTime()) / 1000 / 60; // diferença em minutos
       
-      if (timeDiff < 5) {
-        console.log(`⏳ Bot reativado há ${timeDiff.toFixed(1)} minutos, ignorando verificação de agente (período de graça)`);
-        return true;
-      }
-    }
+    //   if (timeDiff < 5) {
+    //     console.log(`⏳ Bot reativado há ${timeDiff.toFixed(1)} minutos, ignorando verificação de agente (período de graça)`);
+    //     return true;
+    //   }
+    // }
     
     // Verificar se há atendente humano ativo no Chatwoot
     const hasHumanAgent = await checkHumanAgentActive(conversationId, accountId);
@@ -5019,7 +5231,7 @@ async function checkAndReactivateBotsAfter24Hours() {
       FROM bot_conversation_status 
       WHERE bot_active = false 
         AND paused_at < NOW() - INTERVAL '24 hours'
-        AND paused_reason IN ('human_handoff', 'sector_transfer', 'human_agent_active', 'agent_intervention')
+        AND paused_reason IN ('human_handoff', 'sector_transfer', 'human_agent_active', 'agent_intervention', 'ai_agent_transfer')
     `);
     
     if (result.rows.length > 0) {
@@ -5199,6 +5411,192 @@ app.post('/api/auth/change-password', authenticateToken, [
 
 // ===== ROTAS DO FRONTEND (PROTEGIDAS) =====
 
+// ==================== ROTAS PARA AGENTES IA ====================
+
+// Rota para listar modelos IA disponíveis
+app.get('/api/ai-models', authenticateToken, async (req, res) => {
+  try {
+    const models = await getAvailableAIModels();
+    res.json({ success: true, models });
+  } catch (error) {
+    console.error('Erro ao obter modelos IA:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Rota para listar agentes IA
+app.get('/api/ai-agents', authenticateToken, authorizeAccount, async (req, res) => {
+  try {
+    const agents = await getAllAIAgents();
+    res.json({ success: true, agents });
+  } catch (error) {
+    console.error('Erro ao listar agentes IA:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Rota para obter agente IA por ID
+app.get('/api/ai-agents/:id', authenticateToken, authorizeAccount, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const agent = await getAIAgentById(id);
+    
+    if (!agent) {
+      return res.status(404).json({ success: false, error: 'Agente IA não encontrado' });
+    }
+    
+    res.json({ success: true, agent });
+  } catch (error) {
+    console.error('Erro ao obter agente IA:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Rota para criar agente IA (apenas admins)
+app.post('/api/ai-agents', authenticateToken, authorizeAccount, async (req, res) => {
+  try {
+    const user = req.user;
+    
+    // Verificar se é admin
+    if (user.role !== 'admin') {
+      return res.status(403).json({ success: false, error: 'Apenas administradores podem criar agentes IA' });
+    }
+    
+    const agentData = req.body;
+    
+    // Validações básicas
+    if (!agentData.name || !agentData.model || !agentData.summary_prompt || !agentData.custom_system_prompt) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Nome, modelo, summary_prompt e custom_system_prompt são obrigatórios' 
+      });
+    }
+    
+    const agent = await createAIAgent(agentData, user.id);
+    res.status(201).json({ success: true, agent });
+  } catch (error) {
+    console.error('Erro ao criar agente IA:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Rota para atualizar agente IA (apenas admins)
+app.put('/api/ai-agents/:id', authenticateToken, authorizeAccount, async (req, res) => {
+  try {
+    const user = req.user;
+    const { id } = req.params;
+    
+    // Verificar se é admin
+    if (user.role !== 'admin') {
+      return res.status(403).json({ success: false, error: 'Apenas administradores podem editar agentes IA' });
+    }
+    
+    const agentData = req.body;
+    
+    // Verificar se o agente existe
+    const existingAgent = await getAIAgentById(id);
+    if (!existingAgent) {
+      return res.status(404).json({ success: false, error: 'Agente IA não encontrado' });
+    }
+    
+    const agent = await updateAIAgent(id, agentData, user.id);
+    res.json({ success: true, agent });
+  } catch (error) {
+    console.error('Erro ao atualizar agente IA:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Rota para deletar agente IA (apenas admins)
+app.delete('/api/ai-agents/:id', authenticateToken, authorizeAccount, async (req, res) => {
+  try {
+    const user = req.user;
+    const { id } = req.params;
+    
+    // Verificar se é admin
+    if (user.role !== 'admin') {
+      return res.status(403).json({ success: false, error: 'Apenas administradores podem deletar agentes IA' });
+    }
+    
+    // Verificar se o agente existe
+    const existingAgent = await getAIAgentById(id);
+    if (!existingAgent) {
+      return res.status(404).json({ success: false, error: 'Agente IA não encontrado' });
+    }
+    
+    const agent = await deleteAIAgent(id);
+    res.json({ success: true, message: 'Agente IA deletado com sucesso', agent });
+  } catch (error) {
+    console.error('Erro ao deletar agente IA:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Configuração do multer para upload de PDFs removida - upload direto para ia-agent
+
+// Rota de upload de PDF removida - agora fazemos upload direto para a API do ia-agent
+
+// Rota para vincular agente IA a um workflow
+app.post('/api/workflows/:name/ai-agent', authenticateToken, authorizeAccount, async (req, res) => {
+  try {
+    const user = req.user;
+    const { name } = req.params;
+    const { agent_id } = req.body;
+    
+    // Verificar se é admin
+    if (user.role !== 'admin') {
+      return res.status(403).json({ success: false, error: 'Apenas administradores podem vincular agentes IA' });
+    }
+    
+    if (!agent_id) {
+      return res.status(400).json({ success: false, error: 'ID do agente é obrigatório' });
+    }
+    
+    // Verificar se o agente existe
+    const agent = await getAIAgentById(agent_id);
+    if (!agent) {
+      return res.status(404).json({ success: false, error: 'Agente IA não encontrado' });
+    }
+    
+    const link = await linkAIAgentToWorkflow(name, agent_id);
+    res.json({ success: true, link, message: 'Agente IA vinculado ao workflow com sucesso' });
+  } catch (error) {
+    console.error('Erro ao vincular agente IA:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Rota para desvincular agente IA de um workflow
+app.delete('/api/workflows/:name/ai-agent', authenticateToken, authorizeAccount, async (req, res) => {
+  try {
+    const user = req.user;
+    const { name } = req.params;
+    
+    // Verificar se é admin
+    if (user.role !== 'admin') {
+      return res.status(403).json({ success: false, error: 'Apenas administradores podem desvincular agentes IA' });
+    }
+    
+    const link = await unlinkAIAgentFromWorkflow(name);
+    res.json({ success: true, message: 'Agente IA desvinculado do workflow com sucesso', link });
+  } catch (error) {
+    console.error('Erro ao desvincular agente IA:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Rota para obter agente IA vinculado a um workflow
+app.get('/api/workflows/:name/ai-agent', authenticateToken, authorizeAccount, async (req, res) => {
+  try {
+    const { name } = req.params;
+    const agent = await getAIAgentByWorkflow(name);
+    res.json({ success: true, agent });
+  } catch (error) {
+    console.error('Erro ao obter agente IA do workflow:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Obter contas do Chatwoot
 app.get('/api/accounts', authenticateToken, async (req, res) => {
   try {
@@ -5306,7 +5704,7 @@ app.post('/api/inbox-workflows', authenticateToken, [
   body('accountId').isInt().withMessage('Account ID deve ser um número'),
   body('inboxId').isInt().withMessage('Inbox ID deve ser um número'),
   body('workflowName').notEmpty().withMessage('Nome do workflow é obrigatório'),
-  body('workflowConfig').isObject().withMessage('Configuração do workflow é obrigatória')
+  body('workflowConfig').notEmpty().withMessage('Configuração do workflow é obrigatória')
 ], async (req, res) => {
   try {
     console.log('🔍 Salvando fluxo:', req.body);
@@ -6088,6 +6486,222 @@ app.get('/api/diagnose-auto-followup', authenticateToken, async (req, res) => {
 });
 
 // Função para processar uma campanha (enviar mensagens via API do WhatsApp)
+// ==================== FUNÇÕES PARA AGENTES IA ====================
+
+// Obter modelos disponíveis da API de agentes IA
+async function getAvailableAIModels() {
+  try {
+    const response = await fetch('http://ia-agent-dev:3006/models');
+    if (!response.ok) {
+      throw new Error(`Erro na API de agentes: ${response.status}`);
+    }
+    const data = await response.json();
+    return data.models || [];
+  } catch (error) {
+    console.error('Erro ao obter modelos IA:', error);
+    return [];
+  }
+}
+
+// Listar todos os agentes IA
+async function getAllAIAgents() {
+  try {
+    const response = await fetch('http://ia-agent-dev:3006/agents');
+    if (!response.ok) {
+      throw new Error(`Erro na API de agentes: ${response.status}`);
+    }
+    const data = await response.json();
+    return data.agents || [];
+  } catch (error) {
+    console.error('Erro ao listar agentes IA:', error);
+    return [];
+  }
+}
+
+// Obter agente IA por ID
+async function getAIAgentById(agentId) {
+  try {
+    const response = await fetch(`http://ia-agent-dev:3006/agents/${agentId}`);
+    if (!response.ok) {
+      if (response.status === 404) {
+        return null;
+      }
+      throw new Error(`Erro na API de agentes: ${response.status}`);
+    }
+    const data = await response.json();
+    return data.agent || null;
+  } catch (error) {
+    console.error('Erro ao obter agente IA:', error);
+    return null;
+  }
+}
+
+// Criar novo agente IA
+async function createAIAgent(agentData, userId) {
+  try {
+    const response = await fetch('http://ia-agent-dev:3006/agents', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(agentData)
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Erro na API de agentes: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    return data.agent;
+  } catch (error) {
+    console.error('Erro ao criar agente IA:', error);
+    throw error;
+  }
+}
+
+// Atualizar agente IA
+async function updateAIAgent(agentId, agentData, userId) {
+  try {
+    const response = await fetch(`http://ia-agent-dev:3006/agents/${agentId}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(agentData)
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Erro na API de agentes: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    return data.agent;
+  } catch (error) {
+    console.error('Erro ao atualizar agente IA:', error);
+    throw error;
+  }
+}
+
+// Deletar agente IA
+async function deleteAIAgent(agentId) {
+  try {
+    // Primeiro, desvincular de workflows
+    await pool.query('DELETE FROM workflow_ai_agents WHERE ai_agent_id = $1', [agentId]);
+    
+    // Depois deletar o agente via API
+    const response = await fetch(`http://ia-agent-dev:3006/agents/${agentId}`, {
+      method: 'DELETE'
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Erro na API de agentes: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    return data.agent;
+  } catch (error) {
+    console.error('Erro ao deletar agente IA:', error);
+    throw error;
+  }
+}
+
+// Vincular agente IA a um workflow
+async function linkAIAgentToWorkflow(workflowName, agentId) {
+  try {
+    const result = await pool.query(`
+      INSERT INTO workflow_ai_agents (workflow_name, ai_agent_id)
+      VALUES ($1, $2)
+      ON CONFLICT (workflow_name) 
+      DO UPDATE SET ai_agent_id = $2, updated_at = CURRENT_TIMESTAMP
+      RETURNING *
+    `, [workflowName, agentId]);
+    
+    return result.rows[0];
+  } catch (error) {
+    console.error('Erro ao vincular agente IA ao workflow:', error);
+    throw error;
+  }
+}
+
+// Desvincular agente IA de um workflow
+async function unlinkAIAgentFromWorkflow(workflowName) {
+  try {
+    const result = await pool.query(`
+      DELETE FROM workflow_ai_agents 
+      WHERE workflow_name = $1
+      RETURNING *
+    `, [workflowName]);
+    
+    return result.rows[0];
+  } catch ( error) {
+    console.error('Erro ao desvincular agente IA do workflow:', error);
+    throw error;
+  }
+}
+
+// Obter agente IA vinculado a um workflow
+async function getAIAgentByWorkflow(workflowName) {
+  try {
+    // Primeiro, buscar o agent_id vinculado ao workflow
+    const result = await pool.query(`
+      SELECT ai_agent_id, is_active as link_active
+      FROM workflow_ai_agents
+      WHERE workflow_name = $1 AND is_active = true
+    `, [workflowName]);
+    
+    if (result.rows.length === 0) {
+      return null;
+    }
+    
+    const agentId = result.rows[0].ai_agent_id;
+    
+    // Buscar os dados do agente na API ia-agent
+    const agent = await getAIAgentById(agentId);
+    
+    if (agent) {
+      // Adicionar informação do link
+      agent.link_active = result.rows[0].link_active;
+    }
+    
+    return agent;
+  } catch (error) {
+    console.error('Erro ao obter agente IA do workflow:', error);
+    return null;
+  }
+}
+
+// Enviar mensagem para agente IA
+async function sendMessageToAIAgent(agentId, message, conversationHistory = [], isFirstInteraction = false) {
+  try {
+    // Usar o parâmetro passado ou verificar se é primeira interação (sem histórico)
+    if (!isFirstInteraction) {
+      isFirstInteraction = conversationHistory.length === 0;
+    }
+    
+    const response = await fetch(`http://ia-agent-dev:3006/agents/${agentId}/chat`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        message: message,
+        chat_history: conversationHistory,
+        is_first_interaction: isFirstInteraction
+      })
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Erro na API de agentes: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    return data;
+  } catch (error) {
+    console.error('Erro ao enviar mensagem para agente IA:', error);
+    throw error;
+  }
+}
+
 async function processCampaign(campaignId) {
   console.log(`🚀 Iniciando processamento da campanha ${campaignId}...`);
   
