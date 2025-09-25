@@ -39,6 +39,15 @@ class Agent(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     is_active = db.Column(db.Boolean, default=True)
+    
+    # Configurações de Calendário
+    calendar_enabled = db.Column(db.Boolean, default=False)
+    calendar_credentials = db.Column(db.Text, nullable=True)  # JSON das credenciais
+    calendar_id = db.Column(db.String(255), nullable=True)
+    calendar_start_hour = db.Column(db.Integer, default=9)
+    calendar_end_hour = db.Column(db.Integer, default=18)
+    calendar_workdays = db.Column(db.String(20), default='1,2,3,4,5')  # 1=segunda, 7=domingo
+    calendar_duration_minutes = db.Column(db.Integer, default=60)
 
     def to_dict(self):
         return {
@@ -52,7 +61,14 @@ class Agent(db.Model):
             'vectorstore_path': self.vectorstore_path,
             'created_at': self.created_at.isoformat(),
             'updated_at': self.updated_at.isoformat(),
-            'is_active': self.is_active
+            'is_active': self.is_active,
+            'calendar_enabled': self.calendar_enabled,
+            'calendar_credentials': self.calendar_credentials,
+            'calendar_id': self.calendar_id,
+            'calendar_start_hour': self.calendar_start_hour,
+            'calendar_end_hour': self.calendar_end_hour,
+            'calendar_workdays': self.calendar_workdays,
+            'calendar_duration_minutes': self.calendar_duration_minutes
         }
 
 # Inicializar clientes
@@ -139,7 +155,14 @@ def create_agent():
             api_provider=data.get('api_provider', 'groq'),
             model=data['model'],
             summary_prompt=data['summary_prompt'],
-            custom_system_prompt=data['custom_system_prompt']
+            custom_system_prompt=data['custom_system_prompt'],
+            calendar_enabled=data.get('calendar_enabled', False),
+            calendar_credentials=data.get('calendar_credentials'),
+            calendar_id=data.get('calendar_id'),
+            calendar_start_hour=data.get('calendar_start_hour', 9),
+            calendar_end_hour=data.get('calendar_end_hour', 18),
+            calendar_workdays=data.get('calendar_workdays', '1,2,3,4,5'),
+            calendar_duration_minutes=data.get('calendar_duration_minutes', 60)
         )
         
         db.session.add(agent)
@@ -163,6 +186,7 @@ def update_agent(agent_id):
     try:
         agent = Agent.query.get_or_404(agent_id)
         data = request.get_json()
+        
         
         # Validação dos campos obrigatórios
         required_fields = ['name', 'model', 'summary_prompt', 'custom_system_prompt']
@@ -188,6 +212,13 @@ def update_agent(agent_id):
         agent.summary_prompt = data['summary_prompt']
         agent.custom_system_prompt = data['custom_system_prompt']
         agent.is_active = data.get('is_active', agent.is_active)
+        agent.calendar_enabled = data.get('calendar_enabled', agent.calendar_enabled)
+        agent.calendar_credentials = data.get('calendar_credentials', agent.calendar_credentials)
+        agent.calendar_id = data.get('calendar_id', agent.calendar_id)
+        agent.calendar_start_hour = data.get('calendar_start_hour', agent.calendar_start_hour)
+        agent.calendar_end_hour = data.get('calendar_end_hour', agent.calendar_end_hour)
+        agent.calendar_workdays = data.get('calendar_workdays', agent.calendar_workdays)
+        agent.calendar_duration_minutes = data.get('calendar_duration_minutes', agent.calendar_duration_minutes)
         agent.updated_at = datetime.utcnow()
         
         db.session.commit()
@@ -284,6 +315,8 @@ def chat_with_agent(agent_id):
         
         data = request.get_json()
         message = data.get('message', '')
+        chat_history = data.get('chat_history', [])
+        whatsapp = data.get('whatsapp', None)
         
         if not message:
             return jsonify({
@@ -318,16 +351,54 @@ def chat_with_agent(agent_id):
                 message,
                 agent.custom_system_prompt,
                 agent.model,
-                agent.api_provider
+                agent.api_provider,
+                agent.calendar_credentials,
+                agent.calendar_id,
+                chat_history,
+                whatsapp,
+                agent.calendar_start_hour,
+                agent.calendar_end_hour,
+                agent.calendar_workdays,
+                agent.calendar_duration_minutes
             )
             
-            return jsonify({
-                'response': response_data['answer'],
-                'agent_id': agent_id,
-                'status': 'success',
-                'should_transfer': response_data['should_transfer'],
-                'transfer_reason': response_data['transfer_reason']
-            })
+        # Verificar se a resposta contém dados de arquivo .ics
+        response_answer = response_data['answer']
+        ics_content = None
+        ics_filename = None
+        
+        print(f"🔍 DEBUG - Processando resposta do agente:")
+        print(f"   Tipo da resposta: {type(response_answer)}")
+        print(f"   É dicionário: {isinstance(response_answer, dict)}")
+        
+        # Se a resposta é um dicionário com dados de arquivo .ics
+        if isinstance(response_answer, dict) and 'message' in response_answer:
+            response_text = response_answer['message']
+            ics_content = response_answer.get('ics_content')
+            ics_filename = response_answer.get('ics_filename')
+            print(f"   ics_content: {'Sim' if ics_content else 'Não'}")
+            print(f"   ics_filename: {ics_filename}")
+        else:
+            response_text = response_answer
+            print(f"   Resposta é string simples")
+        
+        response_json = {
+            'response': response_text,
+            'agent_id': agent_id,
+            'status': 'success',
+            'should_transfer': response_data['should_transfer'],
+            'transfer_reason': response_data['transfer_reason'],
+            'has_scheduling_intent': response_data['has_scheduling_intent'],
+            'scheduling_info': response_data['scheduling_info'],
+            'scheduling_confidence': response_data['scheduling_confidence']
+        }
+        
+        # Adicionar dados do arquivo .ics se disponíveis
+        if ics_content and ics_filename:
+            response_json['ics_content'] = ics_content
+            response_json['ics_filename'] = ics_filename
+        
+        return jsonify(response_json)
         
     except Exception as e:
         return jsonify({
@@ -395,6 +466,151 @@ def download_pdf(agent_id):
     except Exception as e:
         return jsonify({
             'error': f'Erro ao baixar PDF: {str(e)}'
+        }), 500
+
+@app.route('/agents/<agent_id>/calendar/availability', methods=['POST'])
+def check_calendar_availability(agent_id):
+    """Verifica disponibilidade no calendário de um agente específico"""
+    try:
+        agent = Agent.query.get_or_404(agent_id)
+        
+        if not agent.calendar_enabled:
+            return jsonify({'error': 'Calendário não habilitado para este agente'}), 400
+        
+        if not agent.calendar_credentials:
+            return jsonify({'error': 'Credenciais de calendário não configuradas'}), 400
+        
+        data = request.get_json()
+        date = data.get('date')
+        start_hour = data.get('start_hour', agent.calendar_start_hour)
+        end_hour = data.get('end_hour', agent.calendar_end_hour)
+        duration_minutes = data.get('duration_minutes', agent.calendar_duration_minutes)
+        
+        if not date:
+            return jsonify({'error': 'Data não fornecida'}), 400
+        
+        # Converter string para datetime
+        try:
+            target_date = datetime.fromisoformat(date.replace('Z', ''))
+        except ValueError:
+            return jsonify({'error': 'Formato de data inválido'}), 400
+        
+        # Buscar horários disponíveis
+        available_slots = agent_manager.get_available_slots(
+            agent_id, agent.calendar_credentials, agent.calendar_id,
+            target_date, start_hour, end_hour, duration_minutes
+        )
+        
+        return jsonify({
+            'status': 'success',
+            'agent_id': agent_id,
+            'date': target_date.strftime('%d/%m/%Y'),
+            'available_slots': available_slots,
+            'total_slots': len(available_slots)
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'error': f'Erro ao verificar disponibilidade: {str(e)}'
+        }), 500
+
+@app.route('/agents/<agent_id>/calendar/create-event', methods=['POST'])
+def create_calendar_event(agent_id):
+    """Cria um evento no calendário de um agente específico"""
+    try:
+        agent = Agent.query.get_or_404(agent_id)
+        
+        if not agent.calendar_enabled:
+            return jsonify({'error': 'Calendário não habilitado para este agente'}), 400
+        
+        if not agent.calendar_credentials:
+            return jsonify({'error': 'Credenciais de calendário não configuradas'}), 400
+        
+        data = request.get_json()
+        
+        required_fields = ['summary', 'start_datetime']
+        for field in required_fields:
+            if field not in data:
+                return jsonify({'error': f'Campo obrigatório não fornecido: {field}'}), 400
+        
+        # Converter strings para datetime
+        try:
+            start_datetime = datetime.fromisoformat(data['start_datetime'].replace('Z', ''))
+            end_datetime = None
+            if 'end_datetime' in data:
+                end_datetime = datetime.fromisoformat(data['end_datetime'].replace('Z', ''))
+        except ValueError:
+            return jsonify({'error': 'Formato de data/hora inválido'}), 400
+        
+        # Criar evento
+        result = agent_manager.create_calendar_event(
+            agent_id, agent.calendar_credentials, agent.calendar_id,
+            summary=data['summary'],
+            start_datetime=start_datetime,
+            end_datetime=end_datetime,
+            description=data.get('description', ''),
+            attendees=data.get('attendees', []),
+            location=data.get('location', '')
+        )
+        
+        if result['success']:
+            return jsonify({
+                'status': 'success',
+                'agent_id': agent_id,
+                'event_id': result['event_id'],
+                'event_link': result['event_link'],
+                'start_time': result['start_time'],
+                'end_time': result['end_time'],
+                'summary': result['summary']
+            })
+        else:
+            return jsonify({
+                'error': result['error']
+            }), 500
+            
+    except Exception as e:
+        return jsonify({
+            'error': f'Erro ao criar evento: {str(e)}'
+        }), 500
+
+@app.route('/agents/<agent_id>/calendar/check-availability', methods=['POST'])
+def check_specific_availability(agent_id):
+    """Verifica disponibilidade em horário específico para um agente"""
+    try:
+        agent = Agent.query.get_or_404(agent_id)
+        
+        if not agent.calendar_enabled:
+            return jsonify({'error': 'Calendário não habilitado para este agente'}), 400
+        
+        if not agent.calendar_credentials:
+            return jsonify({'error': 'Credenciais de calendário não configuradas'}), 400
+        
+        data = request.get_json()
+        start_datetime = data.get('start_datetime')
+        end_datetime = data.get('end_datetime')
+        
+        if not start_datetime:
+            return jsonify({'error': 'start_datetime não fornecido'}), 400
+        
+        # Converter strings para datetime
+        try:
+            start_dt = datetime.fromisoformat(start_datetime.replace('Z', ''))
+            end_dt = None
+            if end_datetime:
+                end_dt = datetime.fromisoformat(end_datetime.replace('Z', ''))
+        except ValueError:
+            return jsonify({'error': 'Formato de data/hora inválido'}), 400
+        
+        # Verificar disponibilidade
+        result = agent_manager.check_calendar_availability(
+            agent_id, agent.calendar_credentials, agent.calendar_id, start_dt, end_dt
+        )
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        return jsonify({
+            'error': f'Erro ao verificar disponibilidade: {str(e)}'
         }), 500
 
 if __name__ == '__main__':

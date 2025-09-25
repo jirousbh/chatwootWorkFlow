@@ -6,7 +6,7 @@ echo "==> Parando os serviços de ia-agent-dev..."
 docker-compose -f ../docker-compose-dev.yaml stop ia-agent-dev
 
 echo "==> Removendo a imagem ia-agent-dev..."
-docker-compose -f ../docker-compose-dev.yaml rm ia-agent-dev
+docker-compose -f ../docker-compose-dev.yaml rm -f ia-agent-dev 
 
 echo "==> Buildando imagem ia-agent-dev..."
 docker-compose -f ../docker-compose-dev.yaml build ia-agent-dev

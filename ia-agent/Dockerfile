@@ -9,6 +9,9 @@ RUN apt-get update && apt-get install -y \
 # Definir diretório de trabalho
 WORKDIR /app
 
+# Garantir que a saída do Python não seja bufferizada (logs imediatos no Docker)
+ENV PYTHONUNBUFFERED=1
+
 # Copiar requirements e instalar dependências Python
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
@@ -23,4 +26,4 @@ RUN mkdir -p /data/ia-agent-dev
 EXPOSE 3006
 
 # Comando para executar a aplicação
-CMD ["python", "app.py"]
+CMD ["python", "-u", "app.py"]
