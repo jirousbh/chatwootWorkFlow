@@ -262,7 +262,7 @@ app.use(helmet({
       styleSrc: ["'self'", "'unsafe-inline'", "https://cdn.jsdelivr.net", "https://cdnjs.cloudflare.com"],
       fontSrc: ["'self'", "https://cdnjs.cloudflare.com", "data:"],
       imgSrc: ["'self'", "data:"],
-      connectSrc: ["'self'"],
+      connectSrc: ["'self'", "http://localhost:3006", "https://localhost:3006", "https://cdn.jsdelivr.net"],
       frameSrc: ["'none'"],
       objectSrc: ["'none'"],
       upgradeInsecureRequests: []
@@ -3036,10 +3036,16 @@ async function processChatwootConversation(conversation, accountId = CHATWOOT_AC
       return;
     }
     
-    // Novo formato: pegar o número do contato de conversation.meta.sender.phone_number
-    const contactId = conversation.meta && conversation.meta.sender && conversation.meta.sender.phone_number
+    // Obter o ID real do contato e o número de telefone
+    const realContactId = conversation.meta && conversation.meta.sender && conversation.meta.sender.id
+      ? conversation.meta.sender.id
+      : null;
+    const phoneNumber = conversation.meta && conversation.meta.sender && conversation.meta.sender.phone_number
       ? conversation.meta.sender.phone_number
       : null;
+    
+    // Usar o ID real do contato se disponível, senão usar o número de telefone como fallback
+    const contactId = realContactId || phoneNumber;
     
     if (!contactId) {
       console.error('❌ Não foi possível extrair o contactId da conversa:', JSON.stringify(conversation));
@@ -3049,7 +3055,6 @@ async function processChatwootConversation(conversation, accountId = CHATWOOT_AC
     // ===== VERIFICAÇÃO DE CONTATO EVOLUTIONAPI =====
     // Verificar se o contato é o EvolutionAPI pelo nome ou telefone
     const contactName = conversation.meta?.sender?.name || '';
-    const phoneNumber = conversation.meta?.sender?.phone_number || '';
     
     const isEvolutionAPI = contactName.toLowerCase().includes('evolutionapi') || 
                           phoneNumber.includes('+123456') ||
@@ -3077,6 +3082,119 @@ async function processChatwootConversation(conversation, accountId = CHATWOOT_AC
       await markMessageAsProcessed(message.id, contactId);
       
       // Processar mensagens do usuário (incoming) e TODAS as mensagens de agentes (outgoing)
+      // Também tratar mensagens com anexos (áudio)
+      const hasAttachments = Array.isArray(message.attachments) && message.attachments.length > 0;
+      if (hasAttachments) {
+        // Detectar áudio
+        const audioAttachment = message.attachments.find(att => {
+          const t = (att.content_type || att.file_type || '').toLowerCase();
+          return t.startsWith('audio/') || t.includes('audio');
+        });
+        if (audioAttachment && message.message_type === 0) { // incoming de usuário
+          try {
+            console.log(`🎤 Áudio recebido na conversa ${conversationId}. Iniciando transcrição...`);
+            // Identificar workflow ativo e agente IA associado
+            let agentId = null;
+            if (!workflowConversation) {
+              workflowConversation = await conversationManager.getConversation(contactId);
+            }
+            // Descobrir nome do workflow ativo
+            let activeWorkflowName = workflowConversation && workflowConversation.workflow_name
+              ? workflowConversation.workflow_name
+              : null;
+            
+            // Fallback: tentar obter workflow configurado pela inbox
+            if (!activeWorkflowName) {
+              try {
+                const inboxWorkflow = await inboxWorkflowManager.getInboxWorkflow(accountId, inboxId);
+                if (inboxWorkflow && inboxWorkflow.workflow_name) {
+                  activeWorkflowName = inboxWorkflow.workflow_name;
+                  // Se não houver conversa, inicializar uma básica para manter consistência
+                  if (!workflowConversation) {
+                    await conversationManager.startConversation(contactId, activeWorkflowName, { conversation_id: conversationId }, accountId);
+                    workflowConversation = await conversationManager.getConversation(contactId);
+                  }
+                }
+              } catch (e) {
+                console.warn('⚠️ Falha ao obter workflow da inbox:', e.message);
+              }
+            }
+            
+            if (activeWorkflowName) {
+              const agentInfo = await getAIAgentByWorkflow(activeWorkflowName);
+              agentId = agentInfo && agentInfo.id ? agentInfo.id : null;
+            }
+            
+            // Se não há agente IA configurado, ignorar transcrição
+            if (!agentId) {
+              console.log('⚠️ Nenhum agente IA configurado para este workflow. Ignorando transcrição.');
+            } else {
+              // Obter detalhes do agente para checar provider
+              const agentDetailsResp = await fetch(`http://ia-agent-dev:3006/agents/${agentId}`);
+              const agentDetails = agentDetailsResp.ok ? (await agentDetailsResp.json()).agent : null;
+              if (!agentDetails || agentDetails.api_provider !== 'groq') {
+                await sendChatwootMessage(conversationId, 'Esse agente não tem suporte para ouvir mensagens de áudio. Favor enviar mensagens de texto.', [], null, accountId, inboxId);
+              } else {
+                // Baixar arquivo de áudio da URL pública do Chatwoot
+                const url = audioAttachment.data_url || audioAttachment.download_url || audioAttachment.file_url || audioAttachment.url;
+                if (!url) {
+                  console.warn('⚠️ Não foi possível obter URL do arquivo de áudio.');
+                } else {
+                  const path = require('path');
+                  const fs = require('fs');
+                  const os = require('os');
+                  const axios = require('axios');
+                  const FormData = require('form-data');
+                  
+                  const tempDir = path.join(os.tmpdir(), 'chatwoot_audio');
+                  if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+                  const fileExt = (audioAttachment.file_type && audioAttachment.file_type.split('/')[1]) || 'mp3';
+                  const tempPath = path.join(tempDir, `audio_${Date.now()}.${fileExt}`);
+                  
+                  const resp = await axios.get(url, { responseType: 'stream', timeout: 30000 });
+                  await new Promise((resolve, reject) => {
+                    const writer = fs.createWriteStream(tempPath);
+                    resp.data.pipe(writer);
+                    writer.on('finish', resolve);
+                    writer.on('error', reject);
+                  });
+                  
+                  // Enviar para o ia-agent para transcrever
+                  const formData = new FormData();
+                  formData.append('audio_file', fs.createReadStream(tempPath));
+                  const transcribeResp = await axios.post(
+                    `http://ia-agent-dev:3006/agents/${agentId}/transcribe-audio`,
+                    formData,
+                    { headers: formData.getHeaders(), timeout: 120000 }
+                  );
+                  
+                  let transcript = null;
+                  if (transcribeResp && transcribeResp.data && transcribeResp.data.status === 'success') {
+                    transcript = transcribeResp.data.transcript;
+                  }
+                  
+                  // Limpar arquivo temporário
+                  setTimeout(() => { try { fs.unlinkSync(tempPath); } catch(e){} }, 5000);
+                  
+                  if (transcript) {
+                    // Enviar a transcrição como mensagem do usuário para o workflow
+                    const transcribedMsg = `🗣️ (Transcrição de áudio) ${transcript}`;
+                    await processUserMessage(contactId, conversationId, transcribedMsg, inboxId, accountId);
+                  } else {
+                    await sendChatwootMessage(conversationId, '❌ Não foi possível transcrever o áudio. Por favor, envie sua mensagem em texto.', [], null, accountId, inboxId);
+                  }
+                }
+              }
+            }
+          } catch (err) {
+            console.error('❌ Erro ao processar áudio:', err.message);
+            await sendChatwootMessage(conversationId, '❌ Ocorreu um erro ao processar seu áudio. Envie sua mensagem em texto, por favor.', [], null, accountId, inboxId);
+          }
+          // Passar para próxima mensagem
+          continue;
+        }
+      }
+      
       if (message.content) {
         if (message.message_type === 0) {  // 0 = incoming (usuário)
           await processUserMessage(contactId, conversationId, message.content, inboxId, accountId);
@@ -3302,9 +3420,43 @@ async function processAgentCommand(contactId, conversationId, agentMessage, inbo
       await removeAllLabelsFromContact(contactId, accountId);
       // Remover todos os labels da conversa
       await removeAllLabelsFromConversation(conversationId, accountId);
+      
+      // Limpar dados do Redis do agente IA (horários sugeridos e informações de agendamento)
+      try {
+        // Buscar o telefone do contato para limpar dados específicos do Redis
+        const contactResponse = await axios.get(
+          `${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/contacts/${contactId}`,
+          { headers: { 'api_access_token': CHATWOOT_API_TOKEN } }
+        );
+        
+        if (contactResponse.data && contactResponse.data.payload) {
+          const phoneNumber = contactResponse.data.payload.phone_number || '';
+          
+          // Buscar agente IA vinculado ao workflow (se houver)
+          const inboxWorkflow = await inboxWorkflowManager.getInboxWorkflow(accountId, inboxId);
+          if (inboxWorkflow && inboxWorkflow.workflow_name) {
+            const aiAgent = await getAIAgentByWorkflow(inboxWorkflow.workflow_name);
+            if (aiAgent && aiAgent.id) {
+              // Limpar horários sugeridos do Redis
+              const suggestedTimesKey = `agent:last_suggested_times:${aiAgent.id}:${phoneNumber}`;
+              await redis.del(suggestedTimesKey);
+              
+              // Limpar informações de agendamento do Redis
+              const schedulingInfoKey = `agent:last_scheduling_info:${aiAgent.id}`;
+              await redis.del(schedulingInfoKey);
+              
+              console.log(`✅ Dados do Redis limpos para agente IA ${aiAgent.id}`);
+            }
+          }
+        }
+      } catch (error) {
+        console.error('⚠️ Erro ao limpar dados do Redis:', error.message);
+        // Não bloquear o reset se houver erro ao limpar Redis
+      }
+      
       // Reativar o bot após reset
       await reactivateBotForConversation(conversationId, contactId, `agent_${agentId}_reset`);
-      await sendChatwootMessage(conversationId, '🔄 **Comando de Agente Executado**\n\nFluxo reiniciado com sucesso e todos os labels removidos (contato e conversa). O bot foi reativado e está pronto para uma nova conversa.', [], null, accountId, inboxId);
+      await sendChatwootMessage(conversationId, '🔄 **Comando de Agente Executado**\n\nFluxo reiniciado com sucesso! Todos os dados foram limpos:\n✅ Conversas e interações\n✅ Labels (contato e conversa)\n✅ Dados do agente IA (Redis)\n\nO bot foi reativado e está pronto para uma nova conversa.', [], null, accountId, inboxId);
       return;
     }
     
@@ -3452,6 +3604,39 @@ async function processUserMessage(contactId, conversationId, userMessage, inboxI
       // Remover todos os labels da conversa
       await removeAllLabelsFromConversation(conversationId, accountId);
       
+      // Limpar dados do Redis do agente IA (horários sugeridos e informações de agendamento)
+      try {
+        // Buscar o telefone do contato para limpar dados específicos do Redis
+        const contactResponse = await axios.get(
+          `${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/contacts/${contactId}`,
+          { headers: { 'api_access_token': CHATWOOT_API_TOKEN } }
+        );
+        
+        if (contactResponse.data && contactResponse.data.payload) {
+          const phoneNumber = contactResponse.data.payload.phone_number || '';
+          
+          // Buscar agente IA vinculado ao workflow (se houver)
+          const inboxWorkflow = await inboxWorkflowManager.getInboxWorkflow(accountId, inboxId);
+          if (inboxWorkflow && inboxWorkflow.workflow_name) {
+            const aiAgent = await getAIAgentByWorkflow(inboxWorkflow.workflow_name);
+            if (aiAgent && aiAgent.id) {
+              // Limpar horários sugeridos do Redis
+              const suggestedTimesKey = `agent:last_suggested_times:${aiAgent.id}:${phoneNumber}`;
+              await redis.del(suggestedTimesKey);
+              
+              // Limpar informações de agendamento do Redis
+              const schedulingInfoKey = `agent:last_scheduling_info:${aiAgent.id}`;
+              await redis.del(schedulingInfoKey);
+              
+              console.log(`✅ Dados do Redis limpos para agente IA ${aiAgent.id}`);
+            }
+          }
+        }
+      } catch (error) {
+        console.error('⚠️ Erro ao limpar dados do Redis:', error.message);
+        // Não bloquear o reset se houver erro ao limpar Redis
+      }
+      
       // Reativar o bot após reset
       console.log(`🔄 Iniciando reativação do bot para conversa ${conversationId}...`);
       const reactivateSuccess = await reactivateBotForConversation(conversationId, contactId, 'user_reset');
@@ -3461,7 +3646,7 @@ async function processUserMessage(contactId, conversationId, userMessage, inboxI
       const statusAfterReset = await getBotConversationStatus(conversationId, contactId);
       console.log(`🔍 Status do bot APÓS reset: bot_active=${statusAfterReset.bot_active}, paused_reason=${statusAfterReset.paused_reason}, reactivated_at=${statusAfterReset.reactivated_at}`);
       
-      await sendChatwootMessage(conversationId, 'Fluxo reiniciado com sucesso e todos os labels removidos (contato e conversa). Agora você pode iniciar a conversa novamente. Tente dar um "oi".', [], null, accountId);
+      await sendChatwootMessage(conversationId, 'Fluxo reiniciado com sucesso! Todos os dados foram limpos (conversas, labels e dados do agente IA). Agora você pode iniciar a conversa novamente. Tente dar um "oi".', [], null, accountId);
       return;
     }
     
@@ -3616,8 +3801,59 @@ async function processUserMessage(contactId, conversationId, userMessage, inboxI
           
           // Verificar se é workflow de agente IA
           if (workflow.type === 'ai_agent') {
-            console.log(`🤖 Workflow de agente IA detectado - não processar blocos estáticos`);
-            // Para workflows de agente IA, não processar blocos estáticos
+            console.log(`🤖 Workflow de agente IA detectado - processando mensagem de trigger diretamente com agente IA`);
+            
+            // Para workflows de agente IA, processar a mensagem de trigger diretamente com o agente
+            const aiAgent = await getAIAgentByWorkflow(inboxWorkflow.workflow_name);
+            
+            if (aiAgent) {
+              console.log(`🤖 Processando mensagem de trigger com Agente IA: ${aiAgent.name} (ID: ${aiAgent.id})`);
+              
+              try {
+                // Para mensagem de trigger, usar histórico vazio
+                const chatHistory = []; // Histórico vazio para mensagem de trigger
+                
+                console.log(`🤖 Enviando mensagem para agente IA, histórico: ${chatHistory.length} mensagens`);
+                
+                const aiResponse = await sendMessageToAIAgent(aiAgent.id, userMessage, chatHistory, contactId, accountId);
+                
+                if (aiResponse && (aiResponse.answer || aiResponse.response)) {
+                  // Usar answer se disponível, senão usar response (para compatibilidade)
+                  const responseText = aiResponse.answer || aiResponse.response;
+                  
+                  // Salvar interação usando o ID da conversa do workflow, não do Chatwoot
+                  await conversationManager.saveInteraction(conversation.id, contactId, 'ai_agent', userMessage, responseText, []);
+                  
+                  // Verificar se há arquivo .ics para enviar como anexo
+                  if (aiResponse.ics_content && aiResponse.ics_filename) {
+                    console.log(`📎 Enviando arquivo .ics: ${aiResponse.ics_filename}`);
+                    const icsAttachment = createTempIcsFile(aiResponse.ics_content, aiResponse.ics_filename);
+                    if (icsAttachment) {
+                      await sendChatwootMessageWithAttachment(conversationId, responseText, [], icsAttachment, 1000, accountId);
+                    } else {
+                      // Fallback: enviar apenas a mensagem se não conseguir criar o arquivo
+                      await sendChatwootMessage(conversationId, responseText, [], null, accountId, inboxId);
+                    }
+                  } else {
+                    // Enviar resposta do agente IA (sem anexo)
+                    await sendChatwootMessage(conversationId, responseText, [], null, accountId, inboxId);
+                  }
+                  
+                  console.log(`✅ Resposta do agente IA enviada com sucesso para mensagem de trigger`);
+                } else {
+                  console.error(`❌ Falha ao obter resposta do agente IA para mensagem de trigger`);
+                  await sendChatwootMessage(conversationId, 'Desculpe, não consegui processar sua mensagem no momento. Tente novamente.', [], null, accountId, inboxId);
+                }
+                
+              } catch (error) {
+                console.error(`❌ Erro ao processar mensagem de trigger com agente IA:`, error);
+                await sendChatwootMessage(conversationId, 'Desculpe, ocorreu um erro ao processar sua mensagem. Tente novamente.', [], null, accountId, inboxId);
+              }
+            } else {
+              console.error(`❌ Agente IA não encontrado para workflow: ${inboxWorkflow.workflow_name}`);
+              await sendChatwootMessage(conversationId, 'Desculpe, o agente de atendimento não está disponível no momento.', [], null, accountId, inboxId);
+            }
+            
             return;
           }
           
@@ -3720,13 +3956,14 @@ async function processUserMessage(contactId, conversationId, userMessage, inboxI
             }
             
             // Enviar mensagem para o agente IA
-            // Verificar se é primeira interação (sem histórico de interações)
-            const isFirstInteraction = interactions.rows.length === 0;
-            console.log(`🤖 Primeira interação com agente IA: ${isFirstInteraction}, histórico: ${chatHistory.length} mensagens`);
+            console.log(`🤖 Enviando mensagem para agente IA, histórico: ${chatHistory.length} mensagens`);
             
-            const aiResponse = await sendMessageToAIAgent(aiAgent.id, processedMessage, chatHistory, isFirstInteraction);
+            const aiResponse = await sendMessageToAIAgent(aiAgent.id, processedMessage, chatHistory, contactId, accountId);
             
-            if (aiResponse && aiResponse.response) {
+            if (aiResponse && (aiResponse.answer || aiResponse.response)) {
+              // Usar answer se disponível, senão usar response (para compatibilidade)
+              const responseText = aiResponse.answer || aiResponse.response;
+              
               // Verificar se deve transferir para atendimento humano
               if (aiResponse.should_transfer) {
                 console.log(`🔄 Agente IA detectou necessidade de transferência: ${aiResponse.transfer_reason}`);
@@ -3752,16 +3989,28 @@ async function processUserMessage(contactId, conversationId, userMessage, inboxI
               }
               
               // Salvar interação normal
-              await conversationManager.saveInteraction(
+                await conversationManager.saveInteraction(
                 conversation.id, // Usar ID da tabela workflow_conversations, não do Chatwoot
                 contactId, 
                 'ai_agent_response', 
                 processedMessage, 
-                aiResponse.response
+                responseText
               );
               
-              // Enviar resposta do agente IA
-              await sendChatwootMessage(conversationId, aiResponse.response, [], null, accountId, inboxId);
+              // Verificar se há arquivo .ics para enviar como anexo
+              if (aiResponse.ics_content && aiResponse.ics_filename) {
+                console.log(`📎 Enviando arquivo .ics: ${aiResponse.ics_filename}`);
+                const icsAttachment = createTempIcsFile(aiResponse.ics_content, aiResponse.ics_filename);
+                if (icsAttachment) {
+                  await sendChatwootMessageWithAttachment(conversationId, responseText, [], icsAttachment, 1000, accountId);
+                } else {
+                  // Fallback: enviar apenas a mensagem se não conseguir criar o arquivo
+                  await sendChatwootMessage(conversationId, responseText, [], null, accountId, inboxId);
+                }
+              } else {
+                // Enviar resposta do agente IA (sem anexo)
+                await sendChatwootMessage(conversationId, responseText, [], null, accountId, inboxId);
+              }
               return;
             } else {
               console.error('❌ Resposta inválida do agente IA:', aiResponse);
@@ -4519,7 +4768,7 @@ async function isTriggerMessage(message, inboxId = null, accountId = CHATWOOT_AC
   try {
     // Se não temos inbox específico, usar triggers padrão
     if (!inboxId) {
-      const defaultTriggers = ['oi', 'ola', 'olá', 'hello', 'start', 'iniciar'];
+      const defaultTriggers = ['oi', 'ola', 'olá', 'hello', 'start', 'iniciar', 'boa tarde', 'boa noite', 'bom dia', 'tarde', 'noite', 'dia'];
       return defaultTriggers.some(trigger => 
         message.toLowerCase().includes(trigger)
       );
@@ -4528,30 +4777,39 @@ async function isTriggerMessage(message, inboxId = null, accountId = CHATWOOT_AC
     // Buscar workflow específico da caixa de entrada
     const inboxWorkflow = await inboxWorkflowManager.getInboxWorkflow(accountId, inboxId);
     
-    if (inboxWorkflow && inboxWorkflow.workflow_config && inboxWorkflow.workflow_config.triggers) {
-      const triggers = inboxWorkflow.workflow_config.triggers;
-      
-      // Se o trigger é "*", aceitar qualquer mensagem
-      if (triggers.includes('*')) {
-        console.log(`🌟 Trigger universal (*) detectado para inbox ${inboxId} - qualquer mensagem aceita`);
+    if (inboxWorkflow && inboxWorkflow.workflow_config) {
+      // Se for workflow de agente IA, aceitar qualquer mensagem como trigger
+      if (inboxWorkflow.workflow_config.type === 'ai_agent') {
+        console.log(`🤖 Workflow de agente IA detectado para inbox ${inboxId} - qualquer mensagem aceita como trigger`);
         return true;
       }
       
-      // Verificar se a mensagem contém algum dos triggers definidos
-      const messageMatch = triggers.some(trigger => 
-        message.toLowerCase().includes(trigger.toLowerCase())
-      );
-      
-      if (messageMatch) {
-        console.log(`✅ Trigger encontrado para inbox ${inboxId}: mensagem "${message}" contém um dos triggers: [${triggers.join(', ')}]`);
+      // Para workflows normais, verificar triggers configurados
+      if (inboxWorkflow.workflow_config.triggers) {
+        const triggers = inboxWorkflow.workflow_config.triggers;
+        
+        // Se o trigger é "*", aceitar qualquer mensagem
+        if (triggers.includes('*')) {
+          console.log(`🌟 Trigger universal (*) detectado para inbox ${inboxId} - qualquer mensagem aceita`);
+          return true;
+        }
+        
+        // Verificar se a mensagem contém algum dos triggers definidos
+        const messageMatch = triggers.some(trigger => 
+          message.toLowerCase().includes(trigger.toLowerCase())
+        );
+        
+        if (messageMatch) {
+          console.log(`✅ Trigger encontrado para inbox ${inboxId}: mensagem "${message}" contém um dos triggers: [${triggers.join(', ')}]`);
+        }
+        
+        return messageMatch;
       }
-      
-      return messageMatch;
     }
     
     // Fallback para triggers padrão se não encontrar workflow
     console.log(`⚠️ Workflow não encontrado para inbox ${inboxId}, usando triggers padrão`);
-    const defaultTriggers = ['oi', 'ola', 'olá', 'hello', 'start', 'iniciar'];
+    const defaultTriggers = ['oi', 'ola', 'olá', 'hello', 'start', 'iniciar', 'boa tarde', 'boa noite', 'bom dia', 'tarde', 'noite', 'dia'];
     return defaultTriggers.some(trigger => 
       message.toLowerCase().includes(trigger)
     );
@@ -4559,7 +4817,7 @@ async function isTriggerMessage(message, inboxId = null, accountId = CHATWOOT_AC
   } catch (error) {
     console.error(`❌ Erro ao verificar trigger para inbox ${inboxId}:`, error);
     // Em caso de erro, usar triggers padrão
-    const defaultTriggers = ['oi', 'ola', 'olá', 'hello', 'start', 'iniciar'];
+    const defaultTriggers = ['oi', 'ola', 'olá', 'hello', 'start', 'iniciar', 'boa tarde', 'boa noite', 'bom dia', 'tarde', 'noite', 'dia'];
     return defaultTriggers.some(trigger => 
       message.toLowerCase().includes(trigger)
     );
@@ -6671,11 +6929,160 @@ async function getAIAgentByWorkflow(workflowName) {
 }
 
 // Enviar mensagem para agente IA
-async function sendMessageToAIAgent(agentId, message, conversationHistory = [], isFirstInteraction = false) {
+function extractWhatsAppFromMessage(message) {
   try {
-    // Usar o parâmetro passado ou verificar se é primeira interação (sem histórico)
-    if (!isFirstInteraction) {
-      isFirstInteraction = conversationHistory.length === 0;
+    // Padrões para WhatsApp: (11) 99999-9999, 11999999999, +55 11 99999-9999, etc.
+    const whatsappPatterns = [
+      /\(\d{2}\)\s?\d{4,5}-?\d{4}/g,  // (11) 99999-9999 ou (11)99999-9999
+      /\d{10,11}/g,  // 11999999999
+      /\+55\s?\d{2}\s?\d{4,5}-?\d{4}/g,  // +55 11 99999-9999
+      /whatsapp[:\s]*[\d\s\(\)\-\+]+/gi,  // whatsapp: (11) 99999-9999
+    ];
+    
+    for (const pattern of whatsappPatterns) {
+      const matches = message.match(pattern);
+      if (matches && matches.length > 0) {
+        // Limpar e formatar o número
+        let number = matches[0].replace(/[^\d]/g, ''); // Remove tudo exceto dígitos
+        
+        if (number.length >= 10) { // Número válido
+          // Formatar como (XX) XXXXX-XXXX se tiver 11 dígitos
+          if (number.length === 11) {
+            return `(${number.substring(0, 2)}) ${number.substring(2, 7)}-${number.substring(7)}`;
+          } else if (number.length === 10) {
+            return `(${number.substring(0, 2)}) ${number.substring(2, 6)}-${number.substring(6)}`;
+          } else {
+            return number;
+          }
+        }
+      }
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('Erro ao extrair WhatsApp da mensagem:', error);
+    return null;
+  }
+}
+
+// Função auxiliar para criar arquivo .ics temporário
+function createTempIcsFile(icsContent, filename) {
+  const fs = require('fs');
+  const path = require('path');
+  
+  try {
+    // Criar diretório temp se não existir
+    const tempDir = '/tmp/ics_files';
+    if (!fs.existsSync(tempDir)) {
+      fs.mkdirSync(tempDir, { recursive: true });
+    }
+    
+    // Gerar caminho único para o arquivo
+    const filePath = path.join(tempDir, filename);
+    
+    // Escrever conteúdo do arquivo
+    fs.writeFileSync(filePath, icsContent, 'utf8');
+    
+    return {
+      path: filePath,
+      originalname: filename,
+      mimetype: 'text/calendar',
+      size: Buffer.byteLength(icsContent, 'utf8')
+    };
+  } catch (error) {
+    console.error('Erro ao criar arquivo .ics temporário:', error);
+    return null;
+  }
+}
+
+async function sendMessageToAIAgent(agentId, message, conversationHistory = [], contactId = null, accountId = CHATWOOT_ACCOUNT_ID) {
+  try {
+    let whatsapp = null;
+    let contactName = null;
+    
+    // Se temos contactId, buscar informações do contato
+    if (contactId) {
+      try {
+        console.log(`🔍 Buscando contato ${contactId} na conta ${accountId}`);
+        
+        // Verificar se contactId é um número (ID real) ou string (número de telefone)
+        const isNumericId = /^\d+$/.test(contactId);
+        
+        let contactResponse;
+        if (isNumericId) {
+          // Buscar por ID numérico
+          contactResponse = await axios.get(
+            `${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/contacts/${contactId}`,
+            { headers: { 'api_access_token': CHATWOOT_API_TOKEN } }
+          );
+        } else {
+          // Buscar por número de telefone
+          contactResponse = await axios.get(
+            `${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/contacts/search`,
+            { 
+              headers: { 'api_access_token': CHATWOOT_API_TOKEN },
+              params: { q: contactId }
+            }
+          );
+        }
+        
+        if (contactResponse.data && contactResponse.data.payload) {
+          const contact = Array.isArray(contactResponse.data.payload) 
+            ? contactResponse.data.payload[0] 
+            : contactResponse.data.payload;
+            
+          const phoneNumber = contact.phone_number || contact.phone || contactId;
+          contactName = contact.name || null;
+          
+          // Formatar o número do Chatwoot para formato brasileiro
+          if (phoneNumber) {
+            const cleanNumber = phoneNumber.replace(/[^\d]/g, '');
+            if (cleanNumber.length >= 10) {
+              if (cleanNumber.length === 11) {
+                whatsapp = `(${cleanNumber.substring(0, 2)}) ${cleanNumber.substring(2, 7)}-${cleanNumber.substring(7)}`;
+              } else if (cleanNumber.length === 10) {
+                whatsapp = `(${cleanNumber.substring(0, 2)}) ${cleanNumber.substring(2, 6)}-${cleanNumber.substring(6)}`;
+              } else {
+                whatsapp = cleanNumber;
+              }
+              console.log(`📱 WhatsApp extraído do contato: ${phoneNumber} → ${whatsapp}`);
+            }
+          }
+          
+          if (contactName) {
+            console.log(`👤 Nome do contato: ${contactName}`);
+          }
+        }
+      } catch (error) {
+        console.error(`⚠️ Erro ao buscar informações do contato ${contactId} na conta ${accountId}:`, error.message);
+        if (error.response) {
+          console.error(`   Status: ${error.response.status}`);
+          console.error(`   Data:`, error.response.data);
+        }
+        
+        // Fallback: se contactId parece ser um número de telefone, usar diretamente
+        if (/^[\d\s\(\)\-\+]+$/.test(contactId)) {
+          const cleanNumber = contactId.replace(/[^\d]/g, '');
+          if (cleanNumber.length >= 10) {
+            if (cleanNumber.length === 11) {
+              whatsapp = `(${cleanNumber.substring(0, 2)}) ${cleanNumber.substring(2, 7)}-${cleanNumber.substring(7)}`;
+            } else if (cleanNumber.length === 10) {
+              whatsapp = `(${cleanNumber.substring(0, 2)}) ${cleanNumber.substring(2, 6)}-${cleanNumber.substring(6)}`;
+            } else {
+              whatsapp = cleanNumber;
+            }
+            console.log(`📱 WhatsApp extraído como fallback: ${contactId} → ${whatsapp}`);
+          }
+        }
+      }
+    }
+    
+    // Fallback: tentar extrair WhatsApp da mensagem se não tiver do contato
+    if (!whatsapp) {
+      whatsapp = extractWhatsAppFromMessage(message);
+      if (whatsapp) {
+        console.log(`📱 WhatsApp extraído da mensagem: ${whatsapp}`);
+      }
     }
     
     const response = await fetch(`http://ia-agent-dev:3006/agents/${agentId}/chat`, {
@@ -6686,7 +7093,8 @@ async function sendMessageToAIAgent(agentId, message, conversationHistory = [], 
       body: JSON.stringify({
         message: message,
         chat_history: conversationHistory,
-        is_first_interaction: isFirstInteraction
+        whatsapp: whatsapp,
+        contact_name: contactName
       })
     });
     

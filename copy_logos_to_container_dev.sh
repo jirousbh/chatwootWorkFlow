@@ -1,0 +1,120 @@
+#!/bin/bash
+
+# Script para copiar logos para o container chatwoot-rails-1
+# Arquivos PNG vão para /app/public/brand-assets
+# Arquivo ICO sobrescreve o atual em /app/public
+# Também sobrescreve favicon-16x16.png, favicon-32x32.png, favicon-96x96.png
+# E atualiza configurações no banco de dados
+
+CONTAINER_NAME="chatbot-workflows-dev"
+DB_CONTAINER_NAME="postgres-dev"
+# LOGOS_DIR="./logos"
+
+# echo "🚀 Iniciando cópia dos logos para o container ${CONTAINER_NAME}..."
+
+# # Verificar se o container está rodando
+# if ! docker ps | grep -q "${CONTAINER_NAME}"; then
+#     echo "❌ Erro: Container ${CONTAINER_NAME} não está rodando ou não existe."
+#     echo "📋 Containers disponíveis:"
+#     docker ps --format "table {{.Names}}\t{{.Status}}"
+#     exit 1
+# fi
+
+# # Verificar se o diretório logos existe
+# if [ ! -d "${LOGOS_DIR}" ]; then
+#     echo "❌ Erro: Diretório ${LOGOS_DIR} não encontrado."
+#     exit 1
+# fi
+
+# echo "✅ Container ${CONTAINER_NAME} encontrado e rodando."
+
+# Verificar se o container do banco está rodando para validação
+if ! docker ps | grep -q "${DB_CONTAINER_NAME}"; then
+    echo "❌ Erro: Container ${DB_CONTAINER_NAME} não está rodando ou não existe."
+    echo "📋 Containers disponíveis:"
+    docker ps --format "table {{.Names}}\t{{.Status}}"
+    echo "⚠️  Não é possível validar a condição necessária. Abortando execução."
+    exit 1
+fi
+
+# Verificar se a condição necessária está atendida na tabela installation_configs
+echo "🔍 Verificando condição necessária na tabela installation_configs..."
+EXPECTED_VALUE='"---!ruby/hash:ActiveSupport::HashWithIndifferentAccess\nvalue:Chatwoot\n"'
+CURRENT_VALUE=$(docker exec -e PGPASSWORD=invoAI@76825 "${DB_CONTAINER_NAME}" psql -U postgres -d chatwoot_production -t -c "SELECT serialized_value FROM installation_configs WHERE id=1;" 2>/dev/null | tr -d ' \n\r')
+
+if [ "$CURRENT_VALUE" != "$EXPECTED_VALUE" ]; then
+    echo "❌ Condição não atendida!"
+    echo "📋 Valor atual na tabela installation_configs (ID=1):"
+    echo "   '$CURRENT_VALUE'"
+    echo "📋 Valor esperado:"
+    echo "   '$EXPECTED_VALUE'"
+    echo "⚠️  O script só executa se o valor for exatamente 'Chatwoot'."
+    echo "🛑 Abortando execução."
+    exit 1
+fi
+
+echo "✅ Condição validada! Valor correto encontrado na tabela installation_configs."
+echo "🚀 Prosseguindo com as operações..."
+
+# Seção para atualizar configurações no banco de dados
+echo ""
+echo "🗄️  Iniciando atualização das configurações no banco de dados..."
+echo "📋 Acessando container ${DB_CONTAINER_NAME}..."
+
+# Verificar se o container do banco está rodando
+if ! docker ps | grep -q "${DB_CONTAINER_NAME}"; then
+    echo "❌ Erro: Container ${DB_CONTAINER_NAME} não está rodando ou não existe."
+    echo "📋 Containers disponíveis:"
+    docker ps --format "table {{.Names}}\t{{.Status}}"
+    echo "⚠️  Pulando atualização do banco de dados."
+else
+    echo "✅ Container ${DB_CONTAINER_NAME} encontrado e rodando."
+    
+    # Executar as queries SQL
+    echo "🔧 Executando queries de atualização no banco chatwoot_production..."
+    
+    # Array com as queries SQL
+    declare -a sql_queries=(
+        "UPDATE installation_configs SET locked = false;"
+        "UPDATE installation_configs SET serialized_value='\"--- !ruby/hash:ActiveSupport::HashWithIndifferentAccess\\nvalue: CRM InovAI\\n\"' WHERE id=1;"
+        # "UPDATE installation_configs SET serialized_value='\"--- !ruby/hash:ActiveSupport::HashWithIndifferentAccess\\nvalue: \\\"/brand-assets/logo_inovai_thumb.png\\\"\\n\"' WHERE id=2;"
+        # "UPDATE installation_configs SET serialized_value='\"--- !ruby/hash:ActiveSupport::HashWithIndifferentAccess\\nvalue: \\\"/brand-assets/logo_inovai.png\\\"\\n\"' WHERE id=3;"
+        # "UPDATE installation_configs SET serialized_value='\"--- !ruby/hash:ActiveSupport::HashWithIndifferentAccess\\nvalue: \\\"/brand-assets/logo_inovai.png\\\"\\n\"' WHERE id=4;"
+        "UPDATE installation_configs SET serialized_value='\"--- !ruby/hash:ActiveSupport::HashWithIndifferentAccess\\nvalue: https://www.inovaianalytics.com.br/\\n\"' WHERE id=5;"
+        "UPDATE installation_configs SET serialized_value='\"--- !ruby/hash:ActiveSupport::HashWithIndifferentAccess\\nvalue: https://www.inovaianalytics.com.br/\\n\"' WHERE id=6;"
+        "UPDATE installation_configs SET serialized_value='\"--- !ruby/hash:ActiveSupport::HashWithIndifferentAccess\\nvalue: CRM InovAI\\n\"' WHERE id=7;"
+        "UPDATE installation_configs SET serialized_value='\"--- !ruby/hash:ActiveSupport::HashWithIndifferentAccess\\nvalue: true\\n\"' WHERE id=71;"
+        "UPDATE installation_configs SET serialized_value='\"--- !ruby/hash:ActiveSupport::HashWithIndifferentAccess\\nvalue: true\\n\"' WHERE id=24;"
+    )
+    
+    # Executar cada query
+    total_queries=${#sql_queries[@]}
+    for ((i=0; i<total_queries; i++)); do
+        query="${sql_queries[$i]}"
+        echo "  📝 Executando query $((i+1))/${total_queries}..."
+        
+        if docker exec -e PGPASSWORD=invoAI@76925 "${DB_CONTAINER_NAME}" psql -U postgres -d chatwoot_production -c "$query"; then
+            echo "    ✅ Query $((i+1)) executada com sucesso!"
+        else
+            echo "    ❌ Erro ao executar query $((i+1))"
+            echo "    🔍 Query: $query"
+        fi
+    done
+    
+    echo ""
+    echo "✅ Atualizações do banco de dados concluídas!"
+    echo "💡 Configurações atualizadas:"
+    echo "   • ID 1 (INSTALLATION_NAME): CRM InovAI"
+    echo "   • ID 2 (LOGO_THUMBNAIL): /brand-assets/logo_inovai_thumb.png"
+    echo "   • ID 3 (LOGO): /brand-assets/logo_inovai.png"
+    echo "   • ID 4 (LOGO_DARK): /brand-assets/logo_inovai.png"
+    echo "   • ID 5 (BRAND_URL): https://www.inovaianalytics.com.br/"
+    echo "   • ID 6 (WIDGET_BRAND_URL): https://www.inovaianalytics.com.br/"
+    echo "   • ID 7 (BRAND_NAME): CRM InovAI"
+fi
+
+echo ""
+echo "🎉 Script completamente finalizado!"
+echo "✨ Todas as alterações foram aplicadas com sucesso!"
+echo ""
+echo "📅 Finalizado em: $(date '+%d/%m/%Y às %H:%M:%S')" 

@@ -11,20 +11,59 @@ import tempfile
 import shutil
 
 from agent_manager import AgentManager
+from improved_agent_manager import ImprovedAgentManager
 from groq_client import GroqClient
 
 app = Flask(__name__)
 CORS(app)
 
 # Configuração do banco de dados
-app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv(
+DATABASE_URL = os.getenv(
     'DATABASE_URL', 
     'postgresql://postgres:invoAI@76925@postgres-dev:5432/workflows_iaagent'
 )
+app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max file size
 
 db = SQLAlchemy(app)
+
+# Modelo do banco de dados para provedores de IA
+class IAProvider(db.Model):
+    __tablename__ = 'ia_providers'
+    
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name = db.Column(db.String(100), nullable=False, unique=True)
+    display_name = db.Column(db.String(100), nullable=False)
+    api_base_url = db.Column(db.String(255), nullable=False)
+    api_key = db.Column(db.Text, nullable=True)
+    is_active = db.Column(db.Boolean, default=True)
+    max_tokens = db.Column(db.Integer, default=4096)
+    supports_streaming = db.Column(db.Boolean, default=False)
+    supports_embeddings = db.Column(db.Boolean, default=False)
+    supports_vision = db.Column(db.Boolean, default=False)
+    default_model = db.Column(db.String(100), nullable=True)
+    description = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'name': self.name,
+            'display_name': self.display_name,
+            'api_base_url': self.api_base_url,
+            'api_key': self.api_key,
+            'is_active': self.is_active,
+            'max_tokens': self.max_tokens,
+            'supports_streaming': self.supports_streaming,
+            'supports_embeddings': self.supports_embeddings,
+            'supports_vision': self.supports_vision,
+            'default_model': self.default_model,
+            'description': self.description,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None
+        }
 
 # Modelo do banco de dados para agentes
 class Agent(db.Model):
@@ -32,8 +71,7 @@ class Agent(db.Model):
     name = db.Column(db.String(255), nullable=False)
     api_provider = db.Column(db.String(50), nullable=False, default='groq')
     model = db.Column(db.String(100), nullable=False)
-    summary_prompt = db.Column(db.Text, nullable=False)
-    custom_system_prompt = db.Column(db.Text, nullable=False)
+    system_prompt = db.Column(db.Text, nullable=False)
     pdf_filename = db.Column(db.String(255), nullable=True)
     vectorstore_path = db.Column(db.String(500), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
@@ -48,6 +86,8 @@ class Agent(db.Model):
     calendar_end_hour = db.Column(db.Integer, default=18)
     calendar_workdays = db.Column(db.String(20), default='1,2,3,4,5')  # 1=segunda, 7=domingo
     calendar_duration_minutes = db.Column(db.Integer, default=60)
+    use_google_meeting = db.Column(db.Boolean, default=False)  # Usar Google Meet para reuniões
+    temperature = db.Column(db.Numeric(3, 2), default=0.10)  # Temperatura do LLM (0.00 - 1.00)
 
     def to_dict(self):
         return {
@@ -55,8 +95,7 @@ class Agent(db.Model):
             'name': self.name,
             'api_provider': self.api_provider,
             'model': self.model,
-            'summary_prompt': self.summary_prompt,
-            'custom_system_prompt': self.custom_system_prompt,
+            'system_prompt': self.system_prompt,
             'pdf_filename': self.pdf_filename,
             'vectorstore_path': self.vectorstore_path,
             'created_at': self.created_at.isoformat(),
@@ -68,12 +107,18 @@ class Agent(db.Model):
             'calendar_start_hour': self.calendar_start_hour,
             'calendar_end_hour': self.calendar_end_hour,
             'calendar_workdays': self.calendar_workdays,
-            'calendar_duration_minutes': self.calendar_duration_minutes
+            'calendar_duration_minutes': self.calendar_duration_minutes,
+            'use_google_meeting': self.use_google_meeting,
+            'temperature': float(self.temperature) if self.temperature else 0.10
         }
 
 # Inicializar clientes
 groq_client = GroqClient()
 agent_manager = AgentManager()
+
+# Inicializar cliente genérico de provedores
+from ai_provider_client import AIProviderClient
+ai_provider_client = AIProviderClient(DATABASE_URL)
 
 # Criar tabelas
 with app.app_context():
@@ -90,26 +135,204 @@ def health_check():
 
 @app.route('/models', methods=['GET'])
 def list_models():
-    """Lista modelos disponíveis da Groq"""
+    """Lista modelos disponíveis de provedores de IA"""
     try:
-        provider = request.args.get('provider', 'groq')
+        provider = request.args.get('provider')
         
-        if provider == 'groq':
-            models = groq_client.list_models()
+        if provider:
+            # Listar modelos de um provedor específico
+            models = ai_provider_client.list_models(provider)
+            if not models:
+                return jsonify({
+                    'error': f'Provedor {provider} não encontrado ou inativo',
+                    'available_providers': [p['name'] for p in ai_provider_client.get_active_providers()]
+                }), 400
+            
             return jsonify({
-                'provider': 'groq',
+                'provider': provider,
                 'models': models,
+                'total_models': len(models),
                 'status': 'success'
             })
         else:
+            # Listar modelos de todos os provedores ativos
+            all_models = []
+            active_providers = ai_provider_client.get_active_providers()
+            
+            for provider in active_providers:
+                models = ai_provider_client.list_models(provider['name'])
+                all_models.extend(models)
+            
             return jsonify({
-                'error': 'Provider não suportado',
-                'supported_providers': ['groq']
-            }), 400
+                'providers': [p['name'] for p in active_providers],
+                'models': all_models,
+                'total_models': len(all_models),
+                'status': 'success'
+            })
             
     except Exception as e:
         return jsonify({
             'error': f'Erro ao listar modelos: {str(e)}'
+        }), 500
+
+@app.route('/providers/<provider_name>/models', methods=['GET'])
+def list_provider_models(provider_name):
+    """Lista modelos de um provedor específico"""
+    try:
+        models = ai_provider_client.list_models(provider_name)
+        if not models:
+            return jsonify({
+                'error': f'Provedor {provider_name} não encontrado ou inativo',
+                'available_providers': [p['name'] for p in ai_provider_client.get_active_providers()]
+            }), 400
+        
+        return jsonify({
+            'provider': provider_name,
+            'models': models,
+            'total_models': len(models),
+            'status': 'success'
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'error': f'Erro ao listar modelos do provedor {provider_name}: {str(e)}'
+        }), 500
+
+# Endpoints para gerenciar provedores de IA
+@app.route('/providers', methods=['GET'])
+def list_providers():
+    """Lista todos os provedores de IA"""
+    try:
+        providers = IAProvider.query.all()
+        return jsonify({
+            'providers': [provider.to_dict() for provider in providers],
+            'status': 'success'
+        })
+    except Exception as e:
+        return jsonify({
+            'error': f'Erro ao listar provedores: {str(e)}'
+        }), 500
+
+@app.route('/providers', methods=['POST'])
+def create_provider():
+    """Cria um novo provedor de IA"""
+    try:
+        data = request.get_json()
+        
+        # Validação dos campos obrigatórios
+        required_fields = ['name', 'display_name', 'api_base_url']
+        for field in required_fields:
+            if not data.get(field):
+                return jsonify({
+                    'error': f'Campo obrigatório: {field}'
+                }), 400
+        
+        # Verificar se o nome já existe
+        existing_provider = IAProvider.query.filter_by(name=data['name']).first()
+        if existing_provider:
+            return jsonify({
+                'error': f'Provedor com nome "{data["name"]}" já existe'
+            }), 400
+        
+        # Criar provedor
+        provider = IAProvider(
+            name=data['name'],
+            display_name=data['display_name'],
+            api_base_url=data['api_base_url'],
+            api_key=data.get('api_key'),
+            is_active=data.get('is_active', True),
+            max_tokens=data.get('max_tokens', 4096),
+            supports_streaming=data.get('supports_streaming', False),
+            supports_embeddings=data.get('supports_embeddings', False),
+            supports_vision=data.get('supports_vision', False),
+            default_model=data.get('default_model'),
+            description=data.get('description')
+        )
+        
+        db.session.add(provider)
+        db.session.commit()
+        
+        return jsonify({
+            'provider': provider.to_dict(),
+            'message': 'Provedor criado com sucesso',
+            'status': 'success'
+        }), 201
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({
+            'error': f'Erro ao criar provedor: {str(e)}'
+        }), 500
+
+@app.route('/providers/<provider_id>', methods=['PUT'])
+def update_provider(provider_id):
+    """Atualiza um provedor de IA"""
+    try:
+        provider = IAProvider.query.get_or_404(provider_id)
+        data = request.get_json()
+        
+        # Atualizar campos
+        if 'display_name' in data:
+            provider.display_name = data['display_name']
+        if 'api_base_url' in data:
+            provider.api_base_url = data['api_base_url']
+        if 'api_key' in data:
+            provider.api_key = data['api_key']
+        if 'is_active' in data:
+            provider.is_active = data['is_active']
+        if 'max_tokens' in data:
+            provider.max_tokens = data['max_tokens']
+        if 'supports_streaming' in data:
+            provider.supports_streaming = data['supports_streaming']
+        if 'supports_embeddings' in data:
+            provider.supports_embeddings = data['supports_embeddings']
+        if 'supports_vision' in data:
+            provider.supports_vision = data['supports_vision']
+        if 'default_model' in data:
+            provider.default_model = data['default_model']
+        if 'description' in data:
+            provider.description = data['description']
+        
+        provider.updated_at = datetime.utcnow()
+        db.session.commit()
+        
+        return jsonify({
+            'provider': provider.to_dict(),
+            'message': 'Provedor atualizado com sucesso',
+            'status': 'success'
+        })
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({
+            'error': f'Erro ao atualizar provedor: {str(e)}'
+        }), 500
+
+@app.route('/providers/<provider_id>', methods=['DELETE'])
+def delete_provider(provider_id):
+    """Remove um provedor de IA"""
+    try:
+        provider = IAProvider.query.get_or_404(provider_id)
+        
+        # Verificar se há agentes usando este provedor
+        agents_using_provider = Agent.query.filter_by(api_provider=provider.name).count()
+        if agents_using_provider > 0:
+            return jsonify({
+                'error': f'Não é possível remover o provedor. {agents_using_provider} agente(s) estão usando este provedor.'
+            }), 400
+        
+        db.session.delete(provider)
+        db.session.commit()
+        
+        return jsonify({
+            'message': 'Provedor removido com sucesso',
+            'status': 'success'
+        })
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({
+            'error': f'Erro ao remover provedor: {str(e)}'
         }), 500
 
 @app.route('/agents', methods=['GET'])
@@ -133,7 +356,7 @@ def create_agent():
         data = request.get_json()
         
         # Validação dos campos obrigatórios
-        required_fields = ['name', 'model', 'summary_prompt', 'custom_system_prompt']
+        required_fields = ['name', 'model', 'system_prompt']
         for field in required_fields:
             if field not in data or not data[field]:
                 return jsonify({
@@ -154,15 +377,16 @@ def create_agent():
             name=data['name'],
             api_provider=data.get('api_provider', 'groq'),
             model=data['model'],
-            summary_prompt=data['summary_prompt'],
-            custom_system_prompt=data['custom_system_prompt'],
+            system_prompt=data['system_prompt'],
             calendar_enabled=data.get('calendar_enabled', False),
             calendar_credentials=data.get('calendar_credentials'),
             calendar_id=data.get('calendar_id'),
             calendar_start_hour=data.get('calendar_start_hour', 9),
             calendar_end_hour=data.get('calendar_end_hour', 18),
             calendar_workdays=data.get('calendar_workdays', '1,2,3,4,5'),
-            calendar_duration_minutes=data.get('calendar_duration_minutes', 60)
+            calendar_duration_minutes=data.get('calendar_duration_minutes', 60),
+            use_google_meeting=data.get('use_google_meeting', False),
+            temperature=data.get('temperature', 0.10)
         )
         
         db.session.add(agent)
@@ -189,7 +413,7 @@ def update_agent(agent_id):
         
         
         # Validação dos campos obrigatórios
-        required_fields = ['name', 'model', 'summary_prompt', 'custom_system_prompt']
+        required_fields = ['name', 'model', 'system_prompt']
         for field in required_fields:
             if field not in data or not data[field]:
                 return jsonify({
@@ -209,8 +433,7 @@ def update_agent(agent_id):
         agent.name = data['name']
         agent.api_provider = data.get('api_provider', agent.api_provider)
         agent.model = data['model']
-        agent.summary_prompt = data['summary_prompt']
-        agent.custom_system_prompt = data['custom_system_prompt']
+        agent.system_prompt = data['system_prompt']
         agent.is_active = data.get('is_active', agent.is_active)
         agent.calendar_enabled = data.get('calendar_enabled', agent.calendar_enabled)
         agent.calendar_credentials = data.get('calendar_credentials', agent.calendar_credentials)
@@ -219,6 +442,8 @@ def update_agent(agent_id):
         agent.calendar_end_hour = data.get('calendar_end_hour', agent.calendar_end_hour)
         agent.calendar_workdays = data.get('calendar_workdays', agent.calendar_workdays)
         agent.calendar_duration_minutes = data.get('calendar_duration_minutes', agent.calendar_duration_minutes)
+        agent.use_google_meeting = data.get('use_google_meeting', agent.use_google_meeting)
+        agent.temperature = data.get('temperature', agent.temperature)
         agent.updated_at = datetime.utcnow()
         
         db.session.commit()
@@ -317,39 +542,22 @@ def chat_with_agent(agent_id):
         message = data.get('message', '')
         chat_history = data.get('chat_history', [])
         whatsapp = data.get('whatsapp', None)
+        contact_name = data.get('contact_name', None)
         
         if not message:
             return jsonify({
                 'error': 'Mensagem não fornecida'
             }), 400
         
-        # Verificar se é primeira interação (resumo)
-        is_first_interaction = data.get('is_first_interaction', False)
-        
-        if is_first_interaction:
-            # Usar summary_prompt
-            response = agent_manager.generate_summary(
-                agent_id,
-                agent.vectorstore_path,
-                agent.summary_prompt,
-                agent.model,
-                agent.api_provider
-            )
-            
-            return jsonify({
-                'response': response,
-                'agent_id': agent_id,
-                'status': 'success',
-                'should_transfer': False,
-                'transfer_reason': None
-            })
-        else:
-            # Usar custom_system_prompt para conversa normal
-            response_data = agent_manager.chat_with_agent(
+        # Usar fluxo melhorado se calendário estiver habilitado
+        if agent.calendar_enabled:
+            print(f"🤖 Usando fluxo melhorado com prioridade para agendamento")
+            improved_manager = ImprovedAgentManager()
+            response_data = improved_manager.chat_with_agent_improved(
                 agent_id,
                 agent.vectorstore_path,
                 message,
-                agent.custom_system_prompt,
+                agent.system_prompt,
                 agent.model,
                 agent.api_provider,
                 agent.calendar_credentials,
@@ -359,7 +567,32 @@ def chat_with_agent(agent_id):
                 agent.calendar_start_hour,
                 agent.calendar_end_hour,
                 agent.calendar_workdays,
-                agent.calendar_duration_minutes
+                agent.calendar_duration_minutes,
+                agent.use_google_meeting,
+                agent.temperature,
+                agent.calendar_enabled,
+                contact_name
+            )
+        else:
+            # Usar system_prompt para conversa normal (fluxo antigo)
+            print(f"🤖 Usando fluxo normal (calendário desabilitado)")
+            response_data = agent_manager.chat_with_agent(
+                agent_id,
+                agent.vectorstore_path,
+                message,
+                agent.system_prompt,
+                agent.model,
+                agent.api_provider,
+                agent.calendar_credentials,
+                agent.calendar_id,
+                chat_history,
+                whatsapp,
+                agent.calendar_start_hour,
+                agent.calendar_end_hour,
+                agent.calendar_workdays,
+                agent.calendar_duration_minutes,
+                agent.use_google_meeting,
+                agent.temperature
             )
             
         # Verificar se a resposta contém dados de arquivo .ics
@@ -372,8 +605,8 @@ def chat_with_agent(agent_id):
         print(f"   É dicionário: {isinstance(response_answer, dict)}")
         
         # Se a resposta é um dicionário com dados de arquivo .ics
-        if isinstance(response_answer, dict) and 'message' in response_answer:
-            response_text = response_answer['message']
+        if isinstance(response_answer, dict) and ('message' in response_answer or 'answer' in response_answer):
+            response_text = response_answer.get('message') or response_answer.get('answer')
             ics_content = response_answer.get('ics_content')
             ics_filename = response_answer.get('ics_filename')
             print(f"   ics_content: {'Sim' if ics_content else 'Não'}")
@@ -404,6 +637,72 @@ def chat_with_agent(agent_id):
         return jsonify({
             'error': f'Erro ao processar mensagem: {str(e)}'
         }), 500
+
+@app.route('/agents/<agent_id>/transcribe-audio', methods=['POST'])
+def transcribe_audio(agent_id):
+    """Transcreve um arquivo de áudio usando Groq Whisper.
+
+    - Suporta apenas agentes com provider 'groq'
+    - Requer multipart/form-data com campo 'audio_file'
+    - Usa modelo whisper-large-v3-turbo
+    """
+    try:
+        agent = Agent.query.get_or_404(agent_id)
+
+        # Guard para providers não suportados
+        if agent.api_provider != 'groq':
+            return jsonify({
+                'status': 'success',
+                'agent_id': agent_id,
+                'response': 'Esse agente não tem suporte para ouvir mensagens de áudio. Favor enviar mensagens de texto.',
+                'transcription_supported': False
+            })
+
+        if 'audio_file' not in request.files:
+            return jsonify({'error': 'Nenhum arquivo de áudio enviado (campo: audio_file)'}), 400
+
+        audio_file = request.files['audio_file']
+        if audio_file.filename == '':
+            return jsonify({'error': 'Nenhum arquivo selecionado'}), 400
+
+        # Validar tipo simples por extensão
+        allowed_ext = ('.mp3', '.wav', '.ogg', '.m4a')
+        filename = secure_filename(audio_file.filename)
+        if not any(filename.lower().endswith(ext) for ext in allowed_ext):
+            return jsonify({'error': 'Formato de áudio não suportado. Use mp3, wav, ogg ou m4a.'}), 400
+
+        # Salvar temporariamente
+        tmp_dir = tempfile.mkdtemp(prefix='audio_')
+        tmp_path = os.path.join(tmp_dir, filename)
+        audio_file.save(tmp_path)
+
+        try:
+            # Transcrever com Groq
+            transcript = groq_client.transcribe_audio(
+                file_path=tmp_path,
+                model='whisper-large-v3-turbo',
+                language='pt'
+            )
+
+            if not transcript:
+                return jsonify({'error': 'Falha ao transcrever áudio'}), 500
+
+            return jsonify({
+                'status': 'success',
+                'agent_id': agent_id,
+                'transcript': transcript,
+                'model': 'whisper-large-v3-turbo',
+                'provider': 'groq'
+            })
+        finally:
+            # Limpar arquivo temporário
+            try:
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+            except Exception:
+                pass
+
+    except Exception as e:
+        return jsonify({'error': f'Erro ao transcrever áudio: {str(e)}'}), 500
 
 @app.route('/agents/<agent_id>', methods=['GET'])
 def get_agent(agent_id):

@@ -173,6 +173,7 @@ else
     
     # Array com as queries SQL
     declare -a sql_queries=(
+        "UPDATE installation_configs SET locked = false;"
         "UPDATE installation_configs SET serialized_value='\"--- !ruby/hash:ActiveSupport::HashWithIndifferentAccess\\nvalue: CRM InovAI\\n\"' WHERE id=1;"
         "UPDATE installation_configs SET serialized_value='\"--- !ruby/hash:ActiveSupport::HashWithIndifferentAccess\\nvalue: \\\"/brand-assets/logo_inovai_thumb.png\\\"\\n\"' WHERE id=2;"
         "UPDATE installation_configs SET serialized_value='\"--- !ruby/hash:ActiveSupport::HashWithIndifferentAccess\\nvalue: \\\"/brand-assets/logo_inovai.png\\\"\\n\"' WHERE id=3;"

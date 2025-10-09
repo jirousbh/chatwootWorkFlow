@@ -65,7 +65,7 @@ class GroqClient:
             'playai-tts',     # Text-to-speech
             'llama-guard',    # Safety models
             'prompt-guard',   # Safety models
-            'gpt-oss',        # OpenAI OSS models (not available)
+            # 'gpt-oss',      # Removido: OpenAI OSS models agora estão disponíveis
         ]
         
         # Verificar se deve ser excluído
@@ -179,3 +179,66 @@ class GroqClient:
             return len(models) > 0
         except:
             return False
+
+    def transcribe_audio(self,
+                         file_path: str,
+                         model: str = 'whisper-large-v3-turbo',
+                         language: str = 'pt',
+                         prompt: Optional[str] = None) -> Optional[str]:
+        """Transcreve áudio usando o endpoint OpenAI-compatible da Groq.
+
+        Requer variável de ambiente GROQ_API_KEY.
+        """
+        try:
+            if not self.api_key:
+                print("GROQ_API_KEY ausente para transcrição")
+                return None
+
+            url = f"{self.base_url}/audio/transcriptions"
+
+            # Multipart form-data
+            headers = {
+                'Authorization': f'Bearer {self.api_key}'
+            }
+
+            data = {
+                'model': model,
+                'response_format': 'json',
+                'language': language
+            }
+
+            if prompt:
+                data['prompt'] = prompt
+
+            filename = os.path.basename(file_path)
+
+            # Tentar inferir mimetype simples
+            mimetype = 'application/octet-stream'
+            lower = filename.lower()
+            if lower.endswith('.mp3'):
+                mimetype = 'audio/mpeg'
+            elif lower.endswith('.wav'):
+                mimetype = 'audio/wav'
+            elif lower.endswith('.ogg'):
+                mimetype = 'audio/ogg'
+            elif lower.endswith('.m4a'):
+                mimetype = 'audio/mp4'
+
+            with open(file_path, 'rb') as f:
+                files = {
+                    'file': (filename, f, mimetype)
+                }
+
+                resp = requests.post(url, headers=headers, data=data, files=files, timeout=120)
+
+            if resp.status_code == 200:
+                payload = resp.json()
+                # OpenAI-compatible returns { text: "..." } para whisper
+                return payload.get('text') or payload.get('transcription')
+            else:
+                print(f"Erro na transcrição Groq: {resp.status_code} - {resp.text}")
+                return None
+
+        except Exception as e:
+            print(f"Erro ao transcrever áudio: {e}")
+            return None

@@ -142,7 +142,6 @@ def test_chat_summary(agent_id):
     
     chat_data = {
         "message": "",
-        "is_first_interaction": True
     }
     
     try:
@@ -171,7 +170,6 @@ def test_chat_question(agent_id):
     
     chat_data = {
         "message": "Qual é o assunto principal deste documento?",
-        "is_first_interaction": False
     }
     
     try:

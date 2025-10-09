@@ -9,7 +9,7 @@ import redis
 from datetime import datetime, timedelta
 from langchain_community.document_loaders.pdf import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores.faiss import FAISS
 from langchain_groq import ChatGroq
 from langchain.memory import ConversationBufferMemory
@@ -102,11 +102,11 @@ class AgentManager:
             return None
     
     def _get_or_create_chain(self, agent_id: str, vectorstore_path: str, 
-                           system_prompt: str, model: str, api_provider: str) -> Optional[ConversationalRetrievalChain]:
+                           system_prompt: str, model: str, api_provider: str, temperature: float = 0.10) -> Optional[ConversationalRetrievalChain]:
         """Obtém ou cria chain para um agente"""
         try:
             # Verificar cache
-            cache_key = f"{agent_id}_{vectorstore_path}"
+            cache_key = f"{agent_id}_{vectorstore_path}_{temperature}"
             if cache_key in self.agent_chains:
                 return self.agent_chains[cache_key]
             
@@ -119,18 +119,28 @@ class AgentManager:
             if api_provider == 'groq':
                 llm = ChatGroq(
                     model=model,
-                    temperature=0.1,
+                    temperature=temperature,
                     max_tokens=2048
                 )
             else:
                 print(f"Provider não suportado: {api_provider}")
                 return None
             
-            # Criar prompt template usando o padrão do ConversationalRetrievalChain
-            from langchain.chains.conversational_retrieval.prompts import CONDENSE_QUESTION_PROMPT, QA_PROMPT
+            # Criar prompt template personalizado usando o system_prompt
+            from langchain.prompts import PromptTemplate
             
-            # Usar o template padrão do LangChain que já tem as variáveis corretas
-            prompt_template = QA_PROMPT
+            # Template personalizado que inclui apenas o system_prompt do banco
+            prompt_template = PromptTemplate(
+                template=f"""{system_prompt}
+
+Contexto dos documentos:
+{{context}}
+
+Mensagem do usuário: {{question}}
+
+Resposta:""",
+                input_variables=["context", "question"]
+            )
             
             # Configurar memória
             memory = ConversationBufferMemory(
@@ -163,57 +173,17 @@ class AgentManager:
             print(f"Erro ao criar chain: {e}")
             return None
     
-    def generate_summary(self, agent_id: str, vectorstore_path: str, 
-                        summary_prompt: str, model: str, api_provider: str) -> str:
-        """Gera resumo do documento usando o summary_prompt"""
-        try:
-            # Carregar vectorstore
-            vectorstore = self.load_vectorstore(vectorstore_path)
-            if not vectorstore:
-                return "Erro: Não foi possível carregar os documentos."
-            
-            # Buscar documentos mais relevantes para o resumo
-            retriever = vectorstore.as_retriever(search_kwargs={"k": 8})
-            relevant_docs = retriever.invoke(summary_prompt)
-            
-            # Combinar contexto dos documentos
-            context = "\n\n".join([doc.page_content for doc in relevant_docs])
-            
-            # Usar Groq diretamente para o resumo
-            if api_provider == 'groq':
-                full_prompt = f"""Baseado nos seguintes documentos:
-
-{context}
-
-{summary_prompt}
-
-Responda em português brasileiro."""
-                
-                response = self.groq_client.generate_text(
-                    prompt=full_prompt,
-                    model=model,
-                    max_tokens=1024,
-                    temperature=0.3
-                )
-                
-                return response or "Não foi possível gerar o resumo."
-            else:
-                return "Provider não suportado para resumo."
-                
-        except Exception as e:
-            print(f"Erro ao gerar resumo: {e}")
-            return f"Erro ao gerar resumo: {str(e)}"
-    
     def chat_with_agent(self, agent_id: str, vectorstore_path: str, 
                         message: str, system_prompt: str, model: str, api_provider: str,
                         calendar_credentials: str = None, calendar_id: str = None, 
                         chat_history: list = None, whatsapp: str = None,
                         calendar_start_hour: int = 9, calendar_end_hour: int = 18,
-                        calendar_workdays: str = "1,2,3,4,5", calendar_duration_minutes: int = 60) -> dict:
+                        calendar_workdays: str = "1,2,3,4,5", calendar_duration_minutes: int = 60,
+                        use_google_meeting: bool = False, temperature: float = 0.10) -> dict:
         """Conversa com o agente usando o vectorstore"""
         try:
             # Obter ou criar chain
-            chain = self._get_or_create_chain(agent_id, vectorstore_path, system_prompt, model, api_provider)
+            chain = self._get_or_create_chain(agent_id, vectorstore_path, system_prompt, model, api_provider, temperature)
             
             if not chain:
                 return {
@@ -257,7 +227,10 @@ Responda em português brasileiro."""
             print(f"   Motivo: {transfer_analysis['reason']}")
             
             # Detectar intenção de agendamento
-            scheduling_analysis = self._detect_scheduling_intent(message, calendar_start_hour)
+            scheduling_analysis = self._detect_scheduling_intent(message, calendar_start_hour, calendar_workdays,
+                                                               agent_id, calendar_credentials, calendar_id,
+                                                               calendar_start_hour, calendar_end_hour, 
+                                                               calendar_duration_minutes)
 
             # Reutilizar data/hora detectadas anteriormente se esta for uma continuação
             if scheduling_analysis.get("has_scheduling_intent"):
@@ -270,7 +243,9 @@ Responda em português brasileiro."""
                     self._set_last_scheduling_info(agent_id, scheduling_analysis["datetime_info"])
             
             # Verificar se é uma resposta de confirmação de agendamento
+            print(f"🔍 DEBUG - Iniciando detecção de confirmação para mensagem: '{message}'")
             confirmation_response = self._detect_confirmation_response(message)
+            print(f"🔍 DEBUG - Resposta de confirmação detectada: {confirmation_response}")
             
             # Verificar se é uma continuação de agendamento ou nova solicitação
             is_scheduling_continuation = self._is_scheduling_continuation(message, scheduling_analysis)
@@ -285,7 +260,7 @@ Responda em português brasileiro."""
             if confirmation_response["confidence"] > 0.8:
                 print(f"🔍 Resposta de confirmação detectada: {confirmation_response['type']}")
                 result = self._process_confirmation_response(message, confirmation_response, agent_id, 
-                                                          calendar_credentials, calendar_id, chat_history, agent_config, whatsapp)
+                                                          calendar_credentials, calendar_id, chat_history, agent_config, whatsapp, use_google_meeting)
                 
                 # Verificar se o resultado inclui dados do arquivo .ics
                 if isinstance(result, dict) and "message" in result:
@@ -458,13 +433,20 @@ Responda em português brasileiro."""
                 'agendamento processado', 'sucesso', 'perfeito', 'confirmado',
                 'agendamento realizado com sucesso', 'compromisso criado',
                 'agendamento detectado', 'entendi que voce gostaria', 'para processar seu agendamento',
-                'preciso de mais informacoes', 'apos receber essas informacoes'
+                'preciso de mais informacoes', 'apos receber essas informacoes',
+                # Indicadores de gerenciamento de reuniões
+                'reuniao cancelada', 'reunião cancelada', 'nova solicitacao', 'nova solicitação',
+                'agora voce pode', 'agora você pode', 'por favor me informe', 'por favor me inform',
+                'alteracao de horario', 'alteração de horário', 'manter reuniao', 'manter reunião',
+                'reagendar', 'reagendamento', 'nova reuniao', 'nova reunião'
             ]
             
             # Verificar se é uma resposta de agendamento (mesmo que não seja sucesso completo)
             scheduling_indicators = [
                 'agendamento', 'reuniao', 'consulta', 'horario', 'data',
-                'agendar', 'marcar', 'calendario', 'evento'
+                'agendar', 'marcar', 'calendario', 'evento', 'cancelar',
+                'alterar', 'manter', 'nova data', 'novo horario', 'participantes',
+                'email', 'convite', 'reagendar', 'reagendamento'
             ]
             
             has_success = any(indicator in response_lower for indicator in success_indicators)
@@ -475,21 +457,37 @@ Responda em português brasileiro."""
             print(f"   É resposta de agendamento: {is_scheduling_response}")
             print(f"   Tem incapacidade: {has_incapacity}")
             
+            # Verificar se é uma resposta de gerenciamento de reuniões (começa com emojis específicos)
+            management_response_indicators = [
+                '✅ **reuniao cancelada', '🔄 **alteracao', '🔄 **alteração',
+                '✅ **reunião cancelada', '📅 **nova data', '🕒 **novo horario',
+                '👥 **participantes', '📧 **email', '**reuniao cancelada',
+                '**alteracao de horario', '**alteração de horário'
+            ]
+            
+            is_management_response = any(indicator in response_lower for indicator in management_response_indicators)
+            
+            print(f"🔍 DEBUG - Análise de indicadores:")
+            print(f"   Tem sucesso: {has_success}")
+            print(f"   É resposta de agendamento: {is_scheduling_response}")
+            print(f"   É resposta de gerenciamento: {is_management_response}")
+            print(f"   Tem incapacidade: {has_incapacity}")
+            
             # Só transferir se houver incapacidade E não houver sucesso E não for resposta de agendamento
-            # E não for uma resposta que está pedindo mais informações para agendamento
-            if has_incapacity and not has_success and not is_scheduling_response:
-                print(f"⚠️ Transferência detectada - Incapacidade sem sucesso e não é agendamento")
+            # E não for uma resposta de gerenciamento de reuniões
+            if has_incapacity and not has_success and not is_scheduling_response and not is_management_response:
+                print(f"⚠️ Transferência detectada - Incapacidade sem sucesso e não é agendamento/gerenciamento")
                 return {
                     "should_transfer": True,
                     "reason": f"Agente indicou incapacidade na resposta"
                 }
-            
-            # Se for uma resposta de agendamento, nunca transferir
-            if is_scheduling_response:
-                print(f"✅ Não transferir - É resposta de agendamento")
+
+            # Se for uma resposta de agendamento ou gerenciamento, nunca transferir
+            if is_scheduling_response or is_management_response:
+                print(f"✅ Não transferir - É resposta de agendamento/gerenciamento")
                 return {
                     "should_transfer": False,
-                    "reason": "Resposta de agendamento - não transferir"
+                    "reason": "Resposta de agendamento/gerenciamento - não transferir"
                 }
             
             print(f"✅ Não transferir - Agente funcionando normalmente")
@@ -505,75 +503,94 @@ Responda em português brasileiro."""
                 "reason": None
             }
 
-    def _detect_scheduling_intent(self, user_message: str, default_start_hour: int = 9) -> Dict[str, Any]:
-        """Detecta se o usuário quer agendar algo"""
+    def _detect_scheduling_intent(self, user_message: str, default_start_hour: int = 9, workdays: str = "1,2,3,4,5",
+                                 agent_id: str = None, calendar_credentials: str = None, calendar_id: str = None,
+                                 calendar_start_hour: int = 9, calendar_end_hour: int = 18, 
+                                 calendar_duration_minutes: int = 60) -> Dict[str, Any]:
+        """Detecta se o usuário quer agendar algo usando LLM"""
         try:
             print(f"🔍 DEBUG - Detectando intenção de agendamento para: {user_message}")
-            user_lower = self._normalize_text(user_message)
             
-            # PRIMEIRO: Verificar se é uma confirmação (não deve processar como nova intenção)
-            confirmation_keywords = ['confirmar', 'confirmacao', 'sim', 'ok', 'prosseguir']
-            is_confirmation = any(keyword in user_lower for keyword in confirmation_keywords)
+            # Usar LLM para detectar intenção de agendamento
+            from langchain_groq import ChatGroq
             
-            if is_confirmation:
-                print(f"🔍 DEBUG - Confirmação detectada, não processando como nova intenção")
+            llm = ChatGroq(model="llama-3.1-8b-instant", temperature=0)
+            
+            prompt = f"""
+Analise a seguinte mensagem do usuário e determine se ele quer agendar uma reunião/consulta.
+
+Mensagem: "{user_message}"
+
+Contexto: O usuário pode estar:
+1. Solicitando agendar uma reunião/consulta (ex: "quero agendar uma reunião", "marcar consulta para amanhã")
+2. Fazendo uma pergunta geral (ex: "quais são os produtos", "como funciona o CRM")
+3. Confirmando um agendamento (ex: "confirmar", "sim", "ok")
+
+Responda APENAS com JSON:
+{{
+    "has_scheduling_intent": true/false,
+    "is_confirmation": true/false,
+    "confidence": 0.0-1.0,
+    "reason": "explicação breve"
+}}
+
+Exemplos:
+- "quero agendar uma reunião para amanhã" → has_scheduling_intent: true, is_confirmation: false
+- "confirmar" → has_scheduling_intent: false, is_confirmation: true
+- "Quais são os produtos?" → has_scheduling_intent: false, is_confirmation: false
+- "marcar consulta" → has_scheduling_intent: true, is_confirmation: false
+"""
+
+            response = llm.invoke(prompt)
+            
+            try:
+                import json
+                result = json.loads(response.content)
+                
+                has_scheduling_intent = result.get("has_scheduling_intent", False)
+                is_confirmation = result.get("is_confirmation", False)
+                confidence = result.get("confidence", 0.0)
+                reason = result.get("reason", "")
+                
+                print(f"🤖 LLM - Detecção de intenção de agendamento:")
+                print(f"   Mensagem: '{user_message}'")
+                print(f"   Tem intenção de agendamento: {has_scheduling_intent}")
+                print(f"   É confirmação: {is_confirmation}")
+                print(f"   Confiança: {confidence}")
+                print(f"   Motivo: {reason}")
+                
+                # Se tem intenção de agendamento e não é confirmação, extrair data/hora
+                datetime_info = None
+                if has_scheduling_intent and not is_confirmation and confidence >= 0.7:
+                    datetime_info = self._extract_datetime_info(user_message, default_start_hour, workdays,
+                                                               agent_id, calendar_credentials, calendar_id,
+                                                               calendar_start_hour, calendar_end_hour, 
+                                                               calendar_duration_minutes)
+                    print(f"🔍 DEBUG - datetime_info extraída: {datetime_info}")
+                
                 return {
-                    "has_scheduling_intent": False,
-                    "datetime_info": None,
-                    "confidence": 0.0,
-                    "is_confirmation": True
-                }
-            
-            # Palavras-chave que indicam intenção de agendamento (SEM confirmações)
-            scheduling_keywords = [
-                # Solicitações diretas de agendamento
-                'agendar', 'agendamento', 'marcar', 'marcacao', 'agenda',
-                'reuniao', 'consulta', 'atendimento', 'visita',
-                'horario', 'data', 'quando', 'que dia', 'que hora',
-                
-                # Tempo específico
-                'amanha', 'hoje', 'proxima semana', 'sexta', 'segunda',
-                'terca', 'quarta', 'quinta', 'sabado', 'domingo',
-                'manha', 'tarde', 'noite', 'madrugada',
-                
-                # Ações de agendamento
-                'marcar consulta', 'agendar reuniao', 'marcar atendimento',
-                'agendar visita', 'marcar horario', 'agendar data',
-                'quero agendar', 'preciso agendar', 'posso agendar',
-                
-                # Disponibilidade
-                'voce tem horario', 'tem vaga', 'esta disponivel',
-                'qual horario', 'que horas', 'quando pode'
-            ]
-            
-            # Verificar se há palavras-chave de agendamento
-            has_scheduling_intent = any(keyword in user_lower for keyword in scheduling_keywords)
-            
-            if has_scheduling_intent:
-                # Tentar extrair informações de data/hora
-                datetime_info = self._extract_datetime_info(user_message, default_start_hour)
-                
-                print(f"🔍 DEBUG - Intenção de agendamento detectada! Confidence: {0.8 if datetime_info else 0.6}")
-                print(f"🔍 DEBUG - datetime_info: {datetime_info}")
-                return {
-                    "has_scheduling_intent": True,
+                    "has_scheduling_intent": has_scheduling_intent and confidence >= 0.7,
                     "datetime_info": datetime_info,
-                    "confidence": 0.8 if datetime_info else 0.6
+                    "confidence": confidence,
+                    "is_confirmation": is_confirmation
                 }
             
-            print(f"🔍 DEBUG - Nenhuma intenção de agendamento detectada")
+            except json.JSONDecodeError:
+                print(f"❌ Erro ao parsear resposta do LLM: {response.content}")
             return {
                 "has_scheduling_intent": False,
                 "datetime_info": None,
-                "confidence": 0.0
+                    "confidence": 0.0,
+                    "is_confirmation": False
             }
             
         except Exception as e:
-            print(f"Erro ao detectar intenção de agendamento: {e}")
+            print(f"❌ Erro ao detectar intenção de agendamento com LLM: {e}")
             return {
                 "has_scheduling_intent": False,
                 "datetime_info": None,
-                "confidence": 0.0
+                "confidence": 0.0,
+                "is_confirmation": False
             }
 
     def _extract_scheduling_info_with_llm(self, user_message: str, chat_history: list, agent_config: dict) -> Dict[str, Any]:
@@ -697,7 +714,10 @@ JSON:
             print(f"❌ Erro na extração com LLM: {e}")
             return {"has_scheduling_info": False, "confidence": 0.0}
 
-    def _extract_datetime_info(self, message: str, default_start_hour: int = 9) -> Dict[str, Any]:
+    def _extract_datetime_info(self, message: str, default_start_hour: int = 9, workdays: str = "1,2,3,4,5",
+                              agent_id: str = None, calendar_credentials: str = None, calendar_id: str = None,
+                              calendar_start_hour: int = 9, calendar_end_hour: int = 18, 
+                              calendar_duration_minutes: int = 60) -> Dict[str, Any]:
         """Extrai informações de data e hora da mensagem"""
         try:
             import re
@@ -781,21 +801,46 @@ JSON:
                 detected_date = datetime.now() + timedelta(days=1)
                 print(f"📅 Nenhuma data explícita detectada - usando amanhã: {detected_date.strftime('%d/%m/%Y')}")
             
+            # Verificar se a data detectada é um dia útil
+            workday_conflict = None
+            if not self._is_workday(detected_date, workdays):
+                print(f"⚠️ Data detectada não é dia útil ({detected_date.strftime('%d/%m/%Y')}) - buscando próximo dia útil")
+                original_date = detected_date
+                detected_date = self._get_next_workday(detected_date, workdays, agent_id, 
+                                                      calendar_credentials, calendar_id,
+                                                      calendar_start_hour, calendar_end_hour, 
+                                                      calendar_duration_minutes)
+                print(f"✅ Próximo dia útil encontrado: {detected_date.strftime('%d/%m/%Y')} (era {original_date.strftime('%d/%m/%Y')})")
+                
+                # Armazenar informações do conflito
+                workday_conflict = {
+                    "original_date": original_date.strftime('%d/%m/%Y'),
+                    "corrected_date": detected_date.strftime('%d/%m/%Y'),
+                    "original_weekday": self._get_weekday_name(original_date.weekday()),
+                    "corrected_weekday": self._get_weekday_name(detected_date.weekday())
+                }
+            
             # Se não detectou hora, usar horário de início do agente
             if not detected_hour:
                 detected_hour = default_start_hour
                 print(f"⏰ Usando horário padrão do agente: {default_start_hour}:00")
             
             # Criar datetime final (sempre há data agora)
-            final_datetime = detected_date.replace(hour=detected_hour, minute=detected_minute, second=0, microsecond=0)
+                final_datetime = detected_date.replace(hour=detected_hour, minute=detected_minute, second=0, microsecond=0)
             
-            print(f"✅ DateTime final: {final_datetime.strftime('%d/%m/%Y às %H:%M')}")
-            return {
-                "datetime": final_datetime.isoformat(),
-                "date": detected_date.strftime('%d/%m/%Y'),
-                "time": f"{detected_hour:02d}:{detected_minute:02d}",
-                "confidence": 0.8 if hour_match else 0.7
-            }
+                print(f"✅ DateTime final: {final_datetime.strftime('%d/%m/%Y às %H:%M')}")
+            result = {
+                    "datetime": final_datetime.isoformat(),
+                    "date": detected_date.strftime('%d/%m/%Y'),
+                    "time": f"{detected_hour:02d}:{detected_minute:02d}",
+                    "confidence": 0.8 if hour_match else 0.7
+                }
+            
+            # Adicionar informações do conflito se houver
+            if workday_conflict:
+                result["workday_conflict"] = workday_conflict
+            
+            return result
             
         except Exception as e:
             print(f"Erro ao extrair informações de data/hora: {e}")
@@ -808,37 +853,257 @@ JSON:
         if days_ahead <= 0:  # Target day already happened this week
             days_ahead += 7
         return days_ahead
+    
+    def _is_workday(self, date: datetime, workdays: str) -> bool:
+        """Verifica se a data é um dia útil baseado na configuração workdays"""
+        try:
+            # Converter workdays string para lista de inteiros
+            # workdays = "1,2,3,4,5" onde 1=segunda, 7=domingo
+            workday_list = [int(day.strip()) for day in workdays.split(',')]
+            
+            # Converter weekday do Python (0=segunda, 6=domingo) para formato do banco (1=segunda, 7=domingo)
+            weekday = date.weekday() + 1
+            
+            return weekday in workday_list
+        except Exception as e:
+            print(f"❌ Erro ao verificar dia útil: {e}")
+            return True  # Fallback: considerar como dia útil
+    
+    def _get_next_workday(self, start_date: datetime, workdays: str, agent_id: str = None, 
+                         calendar_credentials: str = None, calendar_id: str = None,
+                         calendar_start_hour: int = 9, calendar_end_hour: int = 18, 
+                         calendar_duration_minutes: int = 60) -> datetime:
+        """Encontra o próximo dia útil com horários disponíveis baseado na configuração workdays"""
+        current_date = start_date
+        max_days = 14  # Limite para evitar loop infinito
+        
+        for _ in range(max_days):
+            if self._is_workday(current_date, workdays):
+                # Se temos parâmetros de calendário, verificar disponibilidade
+                if agent_id and calendar_credentials and calendar_id:
+                    try:
+                        available_slots = self.get_available_slots(
+                            agent_id, calendar_credentials, calendar_id, current_date,
+                            calendar_start_hour, calendar_end_hour, calendar_duration_minutes
+                        )
+                        if available_slots and len(available_slots) > 0:
+                            print(f"✅ Dia útil com horários disponíveis encontrado: {current_date.strftime('%d/%m/%Y')} ({len(available_slots)} slots)")
+                            return current_date
+                        else:
+                            print(f"⚠️ Dia útil {current_date.strftime('%d/%m/%Y')} não tem horários disponíveis - buscando próximo")
+                    except Exception as e:
+                        print(f"⚠️ Erro ao verificar disponibilidade para {current_date.strftime('%d/%m/%Y')}: {e}")
+                        # Em caso de erro, considerar o dia como válido
+                        return current_date
+                else:
+                    # Se não temos parâmetros de calendário, retornar o primeiro dia útil
+                    return current_date
+            current_date += timedelta(days=1)
+        
+        # Se não encontrou em 14 dias, retornar a data original
+        return start_date
+    
+    def _get_weekday_name(self, weekday: int) -> str:
+        """Converte número do dia da semana (0=segunda) para nome"""
+        weekdays = {
+            0: "segunda-feira",
+            1: "terça-feira", 
+            2: "quarta-feira",
+            3: "quinta-feira",
+            4: "sexta-feira",
+            5: "sábado",
+            6: "domingo"
+        }
+        return weekdays.get(weekday, "dia desconhecido")
 
     def _is_scheduling_continuation(self, message: str, scheduling_analysis: dict) -> bool:
-        """Verifica se a mensagem é uma continuação de agendamento"""
+        """Verifica se a mensagem é uma continuação de agendamento usando LLM"""
         try:
-            message_lower = self._normalize_text(message)
+            # Usar LLM para detectar se é continuação de agendamento
+            from langchain_groq import ChatGroq
             
-            # Palavras-chave que indicam que é uma resposta às perguntas de agendamento
-            continuation_keywords = [
-                'reunião comercial', 'reunião técnica', 'consulta', 'demonstração', 'demonstracao',
-                'minutos', 'hora', 'horas', '30', '60', '90',
-                'somente eu', 'eu e mais', 'participantes', 'pessoas',
-                'novidades', 'assunto', 'discutir', 'conversar',
-                'comercial', 'técnica', 'tecnica', 'demonstração', 'demonstracao', 
-                'apresentação', 'apresentacao', 'produtos', 'serviços', 'servicos',
-                '@', 'email', 'hotmail', 'gmail', 'yahoo'  # Indicadores de email
+            llm = ChatGroq(model="llama-3.1-8b-instant", temperature=0)
+            
+            prompt = f"""
+Analise a seguinte mensagem do usuário e determine se é uma continuação de agendamento (resposta às perguntas sobre agendamento) ou uma nova solicitação/pergunta.
+
+Mensagem: "{message}"
+
+Contexto: O usuário pode estar:
+1. Respondendo às perguntas de agendamento (tipo de reunião, duração, participantes, email) - CONTINUAÇÃO
+2. Fazendo uma nova solicitação de agendamento (ex: "quero agendar", "marcar reunião") - NOVA SOLICITAÇÃO
+3. Fazendo uma pergunta geral sobre produtos, serviços, preços, etc. - PERGUNTA GERAL
+
+IMPORTANTE: Se a mensagem contém palavras como "quero agendar", "marcar", "agendar", "reunião para", é uma NOVA SOLICITAÇÃO, não continuação.
+
+Responda APENAS com JSON:
+{{
+    "is_scheduling_continuation": true/false,
+    "confidence": 0.0-1.0,
+    "reason": "explicação breve"
+}}
+
+Exemplos:
+- "reunião comercial, 1 hora, João Silva, joao@email.com" → is_scheduling_continuation: true (resposta às perguntas)
+- "30 minutos, somente eu" → is_scheduling_continuation: true (resposta às perguntas)
+- "quero agendar uma reunião para amanhã" → is_scheduling_continuation: false (nova solicitação)
+- "marcar consulta para sexta" → is_scheduling_continuation: false (nova solicitação)
+- "Quais são os produtos que vocês oferecem?" → is_scheduling_continuation: false (pergunta geral)
+- "Como funciona o CRM?" → is_scheduling_continuation: false (pergunta geral)
+"""
+
+            response = llm.invoke(prompt)
+            
+            try:
+                import json
+                result = json.loads(response.content)
+                
+                is_continuation = result.get("is_scheduling_continuation", False)
+                confidence = result.get("confidence", 0.0)
+                reason = result.get("reason", "")
+                
+                print(f"🤖 LLM - Detecção de continuação de agendamento:")
+                print(f"   Mensagem: '{message}'")
+                print(f"   É continuação: {is_continuation}")
+                print(f"   Confiança: {confidence}")
+                print(f"   Motivo: {reason}")
+                
+                # Só considerar como continuação se a confiança for alta
+                return is_continuation and confidence >= 0.7
+                
+            except json.JSONDecodeError:
+                print(f"❌ Erro ao parsear resposta do LLM: {response.content}")
+                return False
+                
+        except Exception as e:
+            print(f"❌ Erro ao verificar continuação de agendamento com LLM: {e}")
+            return False
+
+    def _is_reschedule_continuation(self, message: str, agent_id: str) -> bool:
+        """Verifica se a mensagem é uma continuação de alteração de horário"""
+        try:
+            # Verificar se há informações de agendamento no Redis que indicam reschedule
+            last_scheduling = self._get_last_scheduling_info(agent_id)
+            if not last_scheduling:
+                return False
+            
+            # Verificar se a última interação foi sobre alteração de horário
+            # Isso pode ser detectado pela presença de uma reunião existente
+            whatsapp = last_scheduling.get("whatsapp")
+            if not whatsapp:
+                return False
+            
+            # Se há WhatsApp e informações de data/hora, pode ser reschedule
+            has_datetime = last_scheduling.get("date") and last_scheduling.get("time")
+            
+            # Verificar se a mensagem contém informações de data/hora
+            message_lower = self._normalize_text(message)
+            datetime_indicators = [
+                'amanha', 'amanhã', 'hoje', 'ontem', 'segunda', 'terça', 'quarta', 'quinta', 'sexta',
+                ':', 'hora', 'horas', 'da manha', 'da tarde', 'da noite', 'manha', 'tarde', 'noite'
             ]
             
-            # Verificar se contém palavras-chave de continuação
-            has_continuation_keywords = any(keyword in message_lower for keyword in continuation_keywords)
+            has_datetime_info = any(indicator in message_lower for indicator in datetime_indicators)
             
-            print(f"🔍 DEBUG - Verificando continuação de agendamento:")
-            print(f"   Mensagem normalizada: '{message_lower}'")
-            print(f"   Palavras-chave encontradas: {[kw for kw in continuation_keywords if kw in message_lower]}")
-            print(f"   É continuação: {has_continuation_keywords}")
+            print(f"🔍 DEBUG - Verificando reschedule:")
+            print(f"   Tem dados de agendamento: {bool(last_scheduling)}")
+            print(f"   Tem data/hora: {has_datetime}")
+            print(f"   Mensagem tem info de data/hora: {has_datetime_info}")
             
-            # Se tem palavras-chave de continuação, é provável que seja uma resposta
-            return has_continuation_keywords
+            return has_datetime and has_datetime_info
             
         except Exception as e:
-            print(f"Erro ao verificar continuação de agendamento: {e}")
+            print(f"Erro ao verificar reschedule: {e}")
             return False
+
+    def _process_reschedule_continuation(self, message: str, agent_id: str, calendar_credentials: str, calendar_id: str) -> str:
+        """Processa a continuação de alteração de horário"""
+        try:
+            # Buscar dados do último agendamento
+            last_scheduling = self._get_last_scheduling_info(agent_id)
+            if not last_scheduling:
+                return "❌ Não encontrei informações do agendamento anterior."
+            
+            # Usar LLM para extrair novo horário da mensagem
+            from langchain_groq import ChatGroq
+            llm = ChatGroq(model="llama-3.1-8b-instant", temperature=0)
+            
+            prompt = f"""
+            Extraia informações de data e horário da seguinte mensagem: "{message}"
+            
+            Retorne apenas um JSON com as informações encontradas:
+            {{
+                "date": "DD/MM/YYYY" ou null se não encontrado,
+                "time": "HH:MM" ou null se não encontrado,
+                "has_info": true/false
+            }}
+            
+            Exemplos:
+            - "amanhã às 15:00" -> {{"date": "26/09/2025", "time": "15:00", "has_info": true}}
+            - "14:30" -> {{"date": null, "time": "14:30", "has_info": true}}
+            - "segunda-feira" -> {{"date": "30/09/2025", "time": null, "has_info": true}}
+            """
+            
+            response = llm.invoke(prompt)
+            result = response.content.strip()
+            
+            # Tentar extrair JSON da resposta
+            import json
+            try:
+                if result.startswith("```json"):
+                    result = result[7:-3]
+                elif result.startswith("```"):
+                    result = result[3:-3]
+                
+                extracted_info = json.loads(result)
+                
+                if extracted_info.get("has_info"):
+                    new_date = extracted_info.get("date")
+                    new_time = extracted_info.get("time")
+                    
+                    # Usar data existente se nova não for fornecida
+                    if not new_date:
+                        new_date = last_scheduling.get("date")
+                    
+                    # Usar horário existente se novo não for fornecido
+                    if not new_time:
+                        new_time = last_scheduling.get("time")
+                    
+                    # Atualizar dados no Redis
+                    updated_scheduling = last_scheduling.copy()
+                    updated_scheduling["date"] = new_date
+                    updated_scheduling["time"] = new_time
+                    updated_scheduling["datetime"] = f"{new_date} {new_time}"
+                    
+                    self._set_last_scheduling_info(agent_id, updated_scheduling)
+                    
+                    return f"""✅ **Novo Horário Confirmado**
+
+**Novo horário:** {new_date} às {new_time}
+
+Para confirmar a alteração da sua reunião, digite **"confirmar"**.
+
+Para cancelar a alteração, digite **"cancelar"**.
+
+Aguardo sua confirmação! 😊"""
+                else:
+                    return """❌ **Não entendi o novo horário**
+
+Por favor, me informe o novo horário de forma mais clara:
+
+**Exemplos:**
+- "amanhã às 15:00"
+- "14:30"
+- "segunda-feira de manhã"
+
+Aguardo o novo horário! 😊"""
+                    
+            except json.JSONDecodeError:
+                return "❌ Erro ao processar novo horário. Por favor, tente novamente."
+                
+        except Exception as e:
+            print(f"❌ Erro ao processar continuação de reschedule: {e}")
+            return "❌ Erro ao processar alteração de horário. Por favor, tente novamente."
 
     def _process_scheduling_information(self, message: str, scheduling_analysis: dict, 
                                         agent_id: str = None, calendar_credentials: str = None, 
@@ -846,6 +1111,11 @@ JSON:
                                         agent_config: dict = None, whatsapp: str = None) -> str:
         """Processa as informações de agendamento fornecidas pelo usuário usando LLM"""
         try:
+            # Verificar se é uma alteração de horário (reschedule)
+            if self._is_reschedule_continuation(message, agent_id):
+                print(f"🔄 Detectado como continuação de alteração de horário")
+                return self._process_reschedule_continuation(message, agent_id, calendar_credentials, calendar_id)
+            
             # Usar LLM para extrair informações mantendo contexto
             if chat_history and agent_config:
                 print(f"🤖 Usando LLM para extrair informações de agendamento...")
@@ -931,35 +1201,35 @@ Por favor, forneça os nomes das pessoas que participarão da reunião e tente n
             else:
                 # Fallback para parsing manual se não há histórico/contexto
                 print(f"⚠️ Sem contexto disponível, usando parsing manual...")
-                meeting_type = self._extract_meeting_type(message)
-                duration = self._extract_duration(message)
-                participants = self._extract_participants(message)
-                subject = self._extract_subject(message)
-                email = self._detect_email_in_message(message)  # Adicionar email
-                # Usar WhatsApp do parâmetro se disponível, senão extrair da mensagem
-                extracted_whatsapp = self._detect_whatsapp_in_message(message)
-                whatsapp = whatsapp or extracted_whatsapp
-                
-                # Validar se participantes foram fornecidos
-                if not participants:
-                    return """❌ **Informação obrigatória faltando!**
+            meeting_type = self._extract_meeting_type(message)
+            duration = self._extract_duration(message)
+            participants = self._extract_participants(message)
+            subject = self._extract_subject(message)
+            email = self._detect_email_in_message(message)  # Adicionar email
+            # Usar WhatsApp do parâmetro se disponível, senão extrair da mensagem
+            extracted_whatsapp = self._detect_whatsapp_in_message(message)
+            whatsapp = whatsapp or extracted_whatsapp
+            
+            # Validar se participantes foram fornecidos
+            if not participants:
+                return """❌ **Informação obrigatória faltando!**
 
 Para processar seu agendamento, preciso que você informe:
 
 👥 **Participantes:** (obrigatório - digite o nome das pessoas que participarão)
 
 Por favor, forneça os nomes das pessoas que participarão da reunião e tente novamente."""
-                
-                datetime_info = scheduling_analysis.get("datetime_info", {})
-                date = datetime_info.get("date", "data não especificada")
-                time = datetime_info.get("time", "horário não especificado")
-                datetime_str = datetime_info.get("datetime")
-                
-                # VERIFICAR CONFLITOS: Se tem WhatsApp, verificar se já tem reunião agendada
-                if whatsapp:
-                    existing_meetings = self._check_existing_meetings(whatsapp, calendar_credentials, calendar_id)
-                    if existing_meetings:
-                        return self._block_new_meeting_request(existing_meetings[0], date, time, meeting_type)
+            
+            datetime_info = scheduling_analysis.get("datetime_info", {})
+            date = datetime_info.get("date", "data não especificada")
+            time = datetime_info.get("time", "horário não especificado")
+            datetime_str = datetime_info.get("datetime")
+            
+            # VERIFICAR CONFLITOS: Se tem WhatsApp, verificar se já tem reunião agendada
+            if whatsapp:
+                existing_meetings = self._check_existing_meetings(whatsapp, calendar_credentials, calendar_id)
+                if existing_meetings:
+                    return self._block_new_meeting_request(existing_meetings[0], date, time, meeting_type)
             
             # Em vez de agendar diretamente, mostrar confirmação
             return self._generate_scheduling_confirmation(
@@ -1050,8 +1320,8 @@ Aguardo sua escolha! 😊"""
                 return self._handle_reschedule_meeting_simple(existing_meetings[0])
             elif option == "2":  # Cancelar e agendar nova
                 return self._handle_cancel_and_reschedule_simple(existing_meetings[0], calendar_credentials, calendar_id, agent_id)
-            elif option == "3":  # Agendar nova reunião (mesmo com existente)
-                return self._handle_schedule_new_meeting()
+            elif option == "3":  # Manter reunião existente
+                return self._handle_keep_existing_meeting(existing_meetings[0])
             else:
                 return "❌ Opção inválida. Por favor, escolha entre 1, 2 ou 3."
                 
@@ -1253,13 +1523,14 @@ Posso ajudá-lo com mais alguma coisa? 😊"""
             message_lower = self._normalize_text(message)
             
             # Palavras-chave para consulta de reuniões (sem acentos para corresponder à normalização)
+            # Evitando palavras que podem conflitar com solicitações de agendamento
             query_keywords = [
-                "minhas reunioes", "meus agendamentos", "consultar reuniao",
+                "minhas reunioes", "consultar reuniao",
                 "verificar reuniao", "listar reunioes", "quais reunioes",
                 "tenho reuniao", "reuniao agendada", "agendamento existente",
                 "mostrar reunioes", "reunioes futuras", "proximas reunioes",
                 "consultar agendamento", "ver agendamento", "meu agendamento",
-                "reuniao marcada", "consulta agendada", "agenda", "horarios",
+                "reuniao marcada", "consulta agendada", "horarios",
                 "tenho consulta", "consulta marcada", "consulta agendada",
                 "minhas consultas", "meus horarios", "agendamentos futuros",
                 "próximos agendamentos", "proximos agendamentos"
@@ -1356,12 +1627,12 @@ Encontrei **{len(existing_meetings)}** reunião(ões) agendada(s):
 
 1️⃣ **Alterar horário** de uma reunião
 2️⃣ **Cancelar** uma reunião
-3️⃣ **Agendar nova** reunião
+3️⃣ **Manter** reunião existente
 
 **Para gerenciar suas reuniões, digite:**
 - **"1"** - para alterar horário
 - **"2"** - para cancelar reunião
-- **"3"** - para agendar nova reunião
+- **"3"** - para manter reunião existente
 
 Aguardo sua escolha! 😊"""
             
@@ -1375,6 +1646,7 @@ Aguardo sua escolha! 😊"""
         """Detecta se a mensagem é uma resposta de confirmação de agendamento"""
         try:
             message_lower = self._normalize_text(message)
+            print(f"🔍 DEBUG - Detectando confirmação para mensagem: '{message}' -> '{message_lower}'")
             
             # Palavras-chave para confirmação
             confirm_keywords = [
@@ -1399,6 +1671,7 @@ Aguardo sua escolha! 😊"""
             
             # Verificar se é resposta de gerenciamento de reuniões
             if message_lower.strip() in management_keywords:
+                print(f"🔍 DEBUG - Resposta de gerenciamento detectada: '{message_lower.strip()}'")
                 return {"type": "meeting_management", "option": message_lower.strip(), "confidence": 0.95}
             elif any(keyword in message_lower for keyword in confirm_keywords):
                 return {"type": "confirm", "confidence": 0.9}
@@ -1406,6 +1679,8 @@ Aguardo sua escolha! 😊"""
                 return {"type": "cancel", "confidence": 0.9}
             elif any(keyword in message_lower for keyword in reschedule_keywords):
                 return {"type": "reschedule", "confidence": 0.9}
+            elif message_lower.strip() == "confirmar" and self._is_reschedule_continuation(message, agent_id):
+                return {"type": "reschedule_confirm", "confidence": 0.95}
             else:
                 return {"type": "unknown", "confidence": 0.0}
                 
@@ -1472,15 +1747,19 @@ Aguardo sua confirmação para prosseguir com o agendamento! 😊"""
 
     def _process_confirmation_response(self, message: str, confirmation_response: dict, 
                                      agent_id: str, calendar_credentials: str, calendar_id: str,
-                                     chat_history: list, agent_config: dict, whatsapp: str = None) -> str:
+                                     chat_history: list, agent_config: dict, whatsapp: str = None, use_google_meeting: bool = False) -> str:
         """Processa a resposta de confirmação do usuário"""
         try:
             confirmation_type = confirmation_response["type"]
+            print(f"🔍 DEBUG - Processando confirmação do tipo: {confirmation_type}")
             
             if confirmation_type == "meeting_management":
                 # Processar opção de gerenciamento de reuniões
                 option = confirmation_response.get("option")
-                return self._handle_meeting_management_option(option, agent_id, calendar_credentials, calendar_id, whatsapp)
+                print(f"🔍 DEBUG - Processando opção de gerenciamento: {option}")
+                result = self._handle_meeting_management_option(option, agent_id, calendar_credentials, calendar_id, whatsapp)
+                print(f"🔍 DEBUG - Resultado do gerenciamento: {result[:100]}...")
+                return result
                 
             elif confirmation_type == "confirm":
                 # Usuário confirmou - buscar dados do último agendamento e criar evento
@@ -1492,7 +1771,7 @@ Aguardo sua confirmação para prosseguir com o agendamento! 😊"""
                     return "❌ Não encontrei informações do agendamento anterior. Por favor, forneça os dados novamente."
                 
                 # Executar o agendamento real
-                return self._execute_final_scheduling(last_scheduling, agent_id, calendar_credentials, calendar_id)
+                return self._execute_final_scheduling(last_scheduling, agent_id, calendar_credentials, calendar_id, use_google_meeting)
                 
             elif confirmation_type == "cancel":
                 return """❌ **Agendamento Cancelado**
@@ -1515,6 +1794,10 @@ Claro! Vamos encontrar um horário que funcione melhor para você.
 
 Assim que você me informar, verificarei a disponibilidade e confirmarei o novo agendamento! 😊"""
                 
+            elif confirmation_type == "reschedule_confirm":
+                # Processar confirmação de alteração de horário
+                return self._process_reschedule_confirmation(agent_id, calendar_credentials, calendar_id)
+                
             else:
                 return """❓ **Não entendi sua resposta**
 
@@ -1530,8 +1813,81 @@ Aguardo sua resposta! 😊"""
             print(f"Erro ao processar resposta de confirmação: {e}")
             return f"❌ Erro ao processar confirmação. Por favor, tente novamente."
 
+    def _process_reschedule_confirmation(self, agent_id: str, calendar_credentials: str, calendar_id: str) -> str:
+        """Processa a confirmação de alteração de horário reutilizando dados da reunião existente"""
+        try:
+            # Buscar dados do último agendamento (que contém as informações da reunião existente)
+            last_scheduling = self._get_last_scheduling_info(agent_id)
+            if not last_scheduling:
+                return "❌ Não encontrei informações do agendamento anterior. Por favor, tente novamente."
+            
+            # Extrair dados da reunião existente
+            whatsapp = last_scheduling.get("whatsapp")
+            if not whatsapp:
+                return "❌ Não foi possível identificar o WhatsApp para alterar a reunião."
+            
+            # Buscar reunião existente
+            existing_meetings = self._check_existing_meetings(whatsapp, calendar_credentials, calendar_id)
+            if not existing_meetings:
+                return "❌ Não encontrei reunião existente para alterar."
+            
+            existing_meeting = existing_meetings[0]
+            
+            # Extrair dados do novo horário
+            new_date = last_scheduling.get("date")
+            new_time = last_scheduling.get("time")
+            datetime_str = last_scheduling.get("datetime")
+            
+            if not datetime_str:
+                try:
+                    from datetime import datetime
+                    date_obj = datetime.strptime(new_date, "%d/%m/%Y")
+                    time_obj = datetime.strptime(new_time, "%H:%M")
+                    final_datetime = date_obj.replace(hour=time_obj.hour, minute=time_obj.minute)
+                    datetime_str = final_datetime.isoformat()
+                except Exception as e:
+                    print(f"❌ Erro ao converter datetime: {e}")
+                    return "❌ Erro ao processar novo horário. Por favor, tente novamente."
+            
+            # Atualizar reunião existente com novo horário
+            calendar_service = GoogleCalendarService(calendar_credentials, calendar_id)
+            
+            # Calcular novo horário de fim (mantendo a duração original)
+            from datetime import datetime, timedelta
+            start_dt = datetime.fromisoformat(datetime_str)
+            end_dt = start_dt + timedelta(hours=1)  # Duração padrão de 1 hora
+            
+            # Extrair informações da reunião existente
+            existing_summary = existing_meeting.get('summary', 'Reunião')
+            existing_description = existing_meeting.get('description', '')
+            
+            # Atualizar reunião
+            success = calendar_service.update_meeting(
+                existing_meeting['id'],
+                start_dt,
+                end_dt,
+                existing_summary,
+                existing_description
+            )
+            
+            if success:
+                return f"""✅ **Reunião Alterada com Sucesso!**
+
+**Reunião:** {existing_summary}
+**Novo horário:** {new_date} às {new_time}
+
+A reunião foi atualizada no calendário com sucesso! 📅
+
+Posso ajudá-lo com mais alguma coisa? 😊"""
+            else:
+                return "❌ Erro ao alterar a reunião no calendário. Por favor, tente novamente."
+                
+        except Exception as e:
+            print(f"❌ Erro ao processar alteração de horário: {e}")
+            return "❌ Erro ao processar alteração de horário. Por favor, tente novamente."
+
     def _execute_final_scheduling(self, scheduling_data: dict, agent_id: str, 
-                                calendar_credentials: str, calendar_id: str) -> str:
+                                calendar_credentials: str, calendar_id: str, use_google_meeting: bool = False) -> str:
         """Executa o agendamento final após confirmação"""
         try:
             print(f"🔍 DEBUG - Dados recebidos para agendamento final:")
@@ -1570,12 +1926,14 @@ Aguardo sua resposta! 😊"""
                 scheduling_data.get("participants", "1 pessoa"),
                 agent_id, calendar_credentials, calendar_id,
                 scheduling_data.get("email"),
-                scheduling_data.get("whatsapp")
+                scheduling_data.get("whatsapp"),
+                use_google_meeting
             )
             
             if calendar_result["success"]:
                 # Preparar informações do evento
                 event_link = calendar_result.get("event_link", "Link não disponível")
+                meet_link = calendar_result.get("meet_link")
                 
                 # Verificar se email foi fornecido
                 email_message = ""
@@ -1583,6 +1941,11 @@ Aguardo sua resposta! 😊"""
                     email_message = f"\n📧 **Email registrado:** {scheduling_data.get('email')}\n📬 **Convite será enviado automaticamente**"
                 else:
                     email_message = "\n⚠️ **Email não fornecido** - entre em contato para receber o convite."
+                
+                # Google Meet não é exibido para Service Accounts
+                meet_message = ""
+                if meet_link:
+                    meet_message = f"\n\n🎥 **Link da Reunião Google Meet:**\n{meet_link}\n\n💡 **Dica:** Clique no link acima para entrar diretamente na reunião!"
                 
                 # Preparar mensagem de confirmação
                 confirmation_message = f"""✅ **Agendamento Confirmado!**
@@ -1593,7 +1956,7 @@ Perfeito! Processei seu agendamento com sucesso:
 🕒 **Horário:** {time}
 📋 **Tipo:** {scheduling_data.get('meeting_type', 'Reunião')}
 ⏱️ **Duração:** {scheduling_data.get('duration', '30 minutos')}
-👥 **Participantes:** {scheduling_data.get('participants', '1 pessoa')}{email_message}
+👥 **Participantes:** {scheduling_data.get('participants', '1 pessoa')}{email_message}{meet_message}
 
 📎 **Arquivo do Calendário:** Em anexo você encontrará um arquivo .ics que pode ser importado em qualquer aplicativo de calendário (Google Calendar, Outlook, Apple Calendar, etc.)
 
@@ -1696,7 +2059,8 @@ Por favor, tente novamente ou entre em contato conosco para assistência."""
     def _execute_calendar_operations(self, datetime_str: str, meeting_type: str, 
                                    duration: str, subject: str, participants: str, 
                                    agent_id: str = None, calendar_credentials: str = None, 
-                                   calendar_id: str = None, email: str = None, whatsapp: str = None) -> dict:
+                                   calendar_id: str = None, email: str = None, whatsapp: str = None,
+                                   use_google_meeting: bool = False) -> dict:
         """Executa as operações reais de calendário"""
         try:
             if not datetime_str:
@@ -1797,6 +2161,7 @@ WHATSAPP: {whatsapp or 'N/A'}
                 # attendees.append(email)  # Comentado devido à limitação da Service Account
             
             # Criar o evento com lembretes e email do cliente como participante
+            print(f"🔍 DEBUG - Criando evento com use_google_meeting: {use_google_meeting}")
             event_result = calendar_service.create_event(
                 summary=event_title,
                 start_datetime=start_datetime,
@@ -1807,8 +2172,10 @@ WHATSAPP: {whatsapp or 'N/A'}
                 reminders=[
                     {"method": "email", "minutes": 60},   # Lembrete 1 hora antes
                     {"method": "popup", "minutes": 30}    # Lembrete 30 min antes
-                ]
+                ],
+                use_google_meeting=use_google_meeting
             )
+            print(f"🔍 DEBUG - Resultado do evento: {event_result}")
             
             if event_result["success"]:
                 # Enviar notificação via Chatwoot (se configurado)
@@ -1840,7 +2207,7 @@ WHATSAPP: {whatsapp or 'N/A'}
                             'dateTime': end_datetime.isoformat()
                         }
                     }
-                    ics_content = calendar_service.generate_ics_file(event_data)
+                    ics_content = calendar_service.generate_ics_file(event_data, event_result.get("meet_link"))
                     if ics_content:
                         print(f"✅ Arquivo .ics gerado com sucesso")
                     else:
@@ -2100,7 +2467,17 @@ Obrigado pela compreensão! 🙏"""
                         print(f"Erro ao verificar disponibilidade: {e}")
                         availability_info = f"\n\nℹ️ *Verificarei a disponibilidade quando você fornecer os detalhes.*"
                 
-                return f"""Entendi que você gostaria de agendar algo para {date} às {time}.
+                # Verificar se houve conflito de dias úteis
+                workday_conflict_message = ""
+                if datetime_info.get("workday_conflict"):
+                    conflict = datetime_info["workday_conflict"]
+                    workday_conflict_message = f"""⚠️ **Não temos reunião disponível para {conflict['original_weekday']} ({conflict['original_date']})**
+
+Trabalhamos apenas de segunda a sexta-feira. Sugiro o próximo dia útil: **{conflict['corrected_weekday']} ({conflict['corrected_date']})**
+
+"""
+                
+                return f"""{workday_conflict_message}Entendi que você gostaria de agendar algo para {date} às {time}.
 
 Para processar seu agendamento, confirme as informações:
 
@@ -2114,7 +2491,7 @@ Para processar seu agendamento, confirme as informações:
 - Horário: {time}
 - Confiança na detecção: {confidence:.0%}
 
-Por favor, caso queira alterar horário e/ou informar e-mail digite abaixo ou digite somente confirmar para fazer o agendamento."""
+Por favor, informe o(s) nome(s) do(s) partipante(s) e caso queira alterar horário e/ou informar e-mail digite abaixo ou digite somente confirmar para fazer o agendamento."""
             else:
                 return f"""📅 **Agendamento Detectado**
 
@@ -2268,10 +2645,11 @@ Por favor, forneça os detalhes acima para que eu possa ajudá-lo com o agendame
 
     def create_calendar_event(self, agent_id: str, calendar_credentials: str, calendar_id: str,
                              summary: str, start_datetime: datetime, end_datetime: datetime = None,
-                             description: str = "", attendees: List[str] = None, location: str = "") -> Dict[str, Any]:
+                             description: str = "", attendees: List[str] = None, location: str = "",
+                             use_google_meeting: bool = False) -> Dict[str, Any]:
         """Cria evento no calendário de um agente específico"""
         calendar_service = self._get_calendar_service(agent_id, calendar_credentials, calendar_id)
-        return calendar_service.create_event(summary, start_datetime, end_datetime, description, attendees, location)
+        return calendar_service.create_event(summary, start_datetime, end_datetime, description, attendees, location, None, use_google_meeting)
 
     def check_calendar_availability(self, agent_id: str, calendar_credentials: str, calendar_id: str,
                                    start_datetime: datetime, end_datetime: datetime = None) -> Dict[str, Any]:

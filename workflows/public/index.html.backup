@@ -187,23 +187,17 @@
                                 </div>
                                 
                                 <div class="mb-3">
-                                    <label for="agentProvider" class="form-label">Provedor de IA *</label>
-                                    <select class="form-control" id="agentProvider" name="api_provider" required onchange="loadModelsForProvider()">
-                                        <option value="">Selecione um provedor...</option>
+                                    <label for="agentModel" class="form-label">Modelo IA *</label>
+                                    <select class="form-control" id="agentModel" name="model" required>
+                                        <option value="">Carregando modelos...</option>
                                     </select>
-                                    <small class="form-text text-muted">
-                                        Selecione o provedor de IA para carregar os modelos disponíveis
-                                    </small>
                                 </div>
                                 
                                 <div class="mb-3">
-                                    <label for="agentModel" class="form-label">Modelo IA *</label>
-                                    <select class="form-control" id="agentModel" name="model" required disabled>
-                                        <option value="">Selecione um provedor primeiro</option>
+                                    <label for="agentProvider" class="form-label">Provedor de IA</label>
+                                    <select class="form-control" id="agentProvider" name="api_provider">
+                                        <option value="groq" selected>Groq</option>
                                     </select>
-                                    <small class="form-text text-muted">
-                                        Os modelos serão carregados automaticamente após selecionar o provedor
-                                    </small>
                                 </div>
                                 
                                 <div class="mb-3">
@@ -339,23 +333,10 @@
                                                     <option value="2,3,4,5,6">Terça a Sábado</option>
                                                 </select>
                                             </div>
-                                            <div class="mb-3">
-                                                <label for="agentTemperature" class="form-label">Temperatura do LLM</label>
-                                                <input type="range" class="form-range" id="agentTemperature" name="temperature" 
-                                                       min="0.0" max="1.0" step="0.1" value="0.1">
-                                                <div class="d-flex justify-content-between">
-                                                    <small class="text-muted">0.0 (Determinístico)</small>
-                                                    <small class="text-muted" id="temperatureValue">0.1</small>
-                                                    <small class="text-muted">1.0 (Criativo)</small>
-                                                </div>
-                                                <small class="form-text text-muted">
-                                                    Controla a criatividade das respostas do agente
-                                                </small>
-                                            </div>
+                                            
                                             <div class="mb-3">
                                                 <div class="form-check">
                                                     <input class="form-check-input" type="checkbox" id="useGoogleMeeting" name="use_google_meeting">
-                                            
                                                     <label class="form-check-label" for="useGoogleMeeting">
                                                         <i class="fas fa-video me-1"></i>
                                                         <strong>Usar Google Meet</strong>
@@ -401,169 +382,6 @@
         </div>
     </div>
 
-    <!-- Provider Manager Div -->
-    <div id="providerManagerDiv" class="d-none position-fixed top-0 start-0 w-100 h-100 bg-white p-4 overflow-auto" style="z-index: 9999;">
-        <div class="container">
-            <div class="d-flex justify-content-between align-items-center mb-4">
-                <h3><i class="fas fa-server me-2"></i>Gerenciamento de Provedores IA</h3>
-                <button class="btn btn-secondary" id="closeProviderManager">
-                    <i class="fas fa-times"></i> Fechar
-                </button>
-            </div>
-            
-            <!-- Botão para criar novo provedor -->
-            <div class="mb-4">
-                <button class="btn btn-success" onclick="showCreateProviderForm()">
-                    <i class="fas fa-plus me-2"></i>Novo Provedor IA
-                </button>
-            </div>
-            
-            <!-- Lista de provedores -->
-            <div class="card">
-                <div class="card-header">
-                    <h6 class="mb-0">
-                        <i class="fas fa-list me-2"></i>Provedores IA Cadastrados
-                    </h6>
-                </div>
-                <div class="card-body">
-                    <div id="providersList">
-                        <div class="text-center">
-                            <div class="spinner-border" role="status">
-                                <span class="visually-hidden">Carregando...</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Provider Form Div -->
-    <div id="providerFormDiv" class="d-none position-fixed top-0 start-0 w-100 h-100 bg-white p-4 overflow-auto" style="z-index: 9999;">
-        <div class="container">
-            <div class="d-flex justify-content-between align-items-center mb-4">
-                <h3 id="providerFormTitle"><i class="fas fa-server me-2"></i>Novo Provedor IA</h3>
-                <button class="btn btn-secondary" onclick="hideProviderForm()">
-                    <i class="fas fa-times"></i> Fechar
-                </button>
-            </div>
-            
-            <form id="providerForm">
-                <div class="row">
-                    <div class="col-md-6">
-                        <div class="card">
-                            <div class="card-header">
-                                <h6 class="mb-0">Informações Básicas</h6>
-                            </div>
-                            <div class="card-body">
-                                <div class="mb-3">
-                                    <label for="providerName" class="form-label">Nome do Provedor *</label>
-                                    <input type="text" class="form-control" id="providerName" name="name" required 
-                                           placeholder="ex: groq, openai, anthropic">
-                                    <small class="form-text text-muted">
-                                        Nome único para identificar o provedor (sem espaços)
-                                    </small>
-                                </div>
-                                
-                                <div class="mb-3">
-                                    <label for="providerDisplayName" class="form-label">Nome de Exibição *</label>
-                                    <input type="text" class="form-control" id="providerDisplayName" name="display_name" required 
-                                           placeholder="ex: Groq, OpenAI, Anthropic">
-                                </div>
-                                
-                                <div class="mb-3">
-                                    <label for="providerApiUrl" class="form-label">URL da API *</label>
-                                    <input type="url" class="form-control" id="providerApiUrl" name="api_base_url" required 
-                                           placeholder="https://api.groq.com/openai/v1">
-                                </div>
-                                
-                                <div class="mb-3">
-                                    <label for="providerApiKey" class="form-label">Chave da API</label>
-                                    <input type="password" class="form-control" id="providerApiKey" name="api_key" 
-                                           placeholder="Cole aqui a chave da API">
-                                    <small class="form-text text-muted">
-                                        Chave de autenticação para acessar a API do provedor
-                                    </small>
-                                </div>
-                                
-                                <div class="mb-3">
-                                    <label for="providerDescription" class="form-label">Descrição</label>
-                                    <textarea class="form-control" id="providerDescription" name="description" rows="3" 
-                                              placeholder="Descrição do provedor e seus modelos..."></textarea>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <div class="col-md-6">
-                        <div class="card">
-                            <div class="card-header">
-                                <h6 class="mb-0">Configurações Técnicas</h6>
-                            </div>
-                            <div class="card-body">
-                                <div class="mb-3">
-                                    <div class="form-check">
-                                        <input class="form-check-input" type="checkbox" id="providerActive" name="is_active" checked>
-                                        <label class="form-check-label" for="providerActive">
-                                            Provedor ativo
-                                        </label>
-                                    </div>
-                                </div>
-                                
-                                <div class="mb-3">
-                                    <label for="providerMaxTokens" class="form-label">Máximo de Tokens</label>
-                                    <input type="number" class="form-control" id="providerMaxTokens" name="max_tokens" 
-                                           value="4096" min="1" max="100000">
-                                </div>
-                                
-                                <div class="mb-3">
-                                    <label for="providerDefaultModel" class="form-label">Modelo Padrão</label>
-                                    <input type="text" class="form-control" id="providerDefaultModel" name="default_model" 
-                                           placeholder="ex: llama-3.1-8b-instant">
-                                </div>
-                                
-                                <div class="mb-3">
-                                    <h6>Capacidades do Provedor</h6>
-                                    <div class="form-check">
-                                        <input class="form-check-input" type="checkbox" id="providerStreaming" name="supports_streaming">
-                                        <label class="form-check-label" for="providerStreaming">
-                                            Suporte a Streaming
-                                        </label>
-                                    </div>
-                                    <div class="form-check">
-                                        <input class="form-check-input" type="checkbox" id="providerEmbeddings" name="supports_embeddings">
-                                        <label class="form-check-label" for="providerEmbeddings">
-                                            Suporte a Embeddings
-                                        </label>
-                                    </div>
-                                    <div class="form-check">
-                                        <input class="form-check-input" type="checkbox" id="providerVision" name="supports_vision">
-                                        <label class="form-check-label" for="providerVision">
-                                            Suporte a Visão (Imagens)
-                                        </label>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                
-                <div class="row mt-4">
-                    <div class="col-12">
-                        <div class="d-flex gap-2">
-                            <button type="submit" class="btn btn-primary" id="saveProviderBtn">
-                                <i class="fas fa-save me-2"></i>Salvar Provedor
-                            </button>
-                            <button type="button" class="btn btn-secondary" onclick="hideProviderForm()">
-                                <i class="fas fa-times me-2"></i>Cancelar
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            </form>
-        </div>
-    </div>
-
     <!-- Main App -->
     <div id="app" class="d-none">
         <!-- Navigation -->
@@ -583,7 +401,6 @@
                             <li><hr class="dropdown-divider"></li>
                             <li><a class="dropdown-item text-dark" href="#" onclick="showChangePasswordDiv()"><i class="fas fa-key me-2"></i>Mudar senha</a></li>
                             <li id="menuGerenciarUsuariosItem" class="d-none"><a class="dropdown-item text-dark" href="#" onclick="window.app.showUserManagement()"><i class="fas fa-users me-2"></i>Gerenciar Usuários</a></li>
-                            <li id="menuGerenciarProvedoresItem" class="d-none"><a class="dropdown-item text-dark" href="#" onclick="window.app.showProviderManagement()"><i class="fas fa-server me-2"></i>Gerenciar Provedores IA</a></li>
                             <li><hr class="dropdown-divider"></li>
                             <li><a class="dropdown-item text-danger" href="#" onclick="logout()"><i class="fas fa-sign-out-alt me-2"></i>Sair</a></li>
                         </ul>

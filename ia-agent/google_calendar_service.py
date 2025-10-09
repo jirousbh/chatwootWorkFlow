@@ -56,7 +56,8 @@ class GoogleCalendarService:
                     description: str = "",
                     attendees: List[str] = None,
                     location: str = "",
-                    reminders: List[Dict[str, Any]] = None) -> Dict[str, Any]:
+                    reminders: List[Dict[str, Any]] = None,
+                    use_google_meeting: bool = False) -> Dict[str, Any]:
         """
         Cria um novo evento no calendário
         
@@ -68,6 +69,7 @@ class GoogleCalendarService:
             attendees: Lista de emails dos participantes
             location: Local do evento
             reminders: Lista de lembretes [{"method": "email", "minutes": 60}]
+            use_google_meeting: Se True, adiciona link do Google Meet ao evento
             
         Returns:
             Dict com informações do evento criado ou erro
@@ -112,6 +114,8 @@ class GoogleCalendarService:
             if attendees:
                 event_data['attendees'] = [{'email': email} for email in attendees]
             
+            # Nota: Google Meet será gerado como link genérico se solicitado
+            
             # Adicionar lembretes se especificados
             if reminders:
                 event_data['reminders'] = {
@@ -119,17 +123,24 @@ class GoogleCalendarService:
                     'overrides': reminders
                 }
             
-            # Criar evento
+            # Criar evento (sem tentar criar Google Meet automaticamente)
             event = self.service.events().insert(
                 calendarId=self.calendar_id,
                 body=event_data,
                 sendUpdates='all' if attendees else 'none'
             ).execute()
             
+            # Google Meet não é suportado com Service Accounts (apenas Google Workspace)
+            meet_link = None
+            if use_google_meeting:
+                print("⚠️ LOG SERVIDOR: Google Meet solicitado, mas não é suportado com Service Accounts (requer Google Workspace)")
+                print("⚠️ LOG SERVIDOR: Google Meet será ignorado - evento criado sem conferência")
+            
             return {
                 "success": True,
                 "event_id": event.get('id'),
                 "event_link": event.get('htmlLink'),
+                "meet_link": meet_link,
                 "start_time": event['start']['dateTime'],
                 "end_time": event['end']['dateTime'],
                 "summary": event.get('summary')
@@ -398,7 +409,7 @@ class GoogleCalendarService:
                 "error": f"Erro ao deletar evento: {e}"
             }
 
-    def generate_ics_file(self, event_data: dict) -> str:
+    def generate_ics_file(self, event_data: dict, meet_link: str = None) -> str:
         """Gera arquivo .ics (iCalendar) com os dados do evento"""
         try:
             from datetime import datetime
@@ -437,6 +448,10 @@ class GoogleCalendarService:
                 clean_description,
                 flags=re.IGNORECASE
             )
+            
+            # Adicionar link do Google Meet à descrição se disponível
+            if meet_link:
+                clean_description += f"\n\n🎥 Link da Reunião Google Meet:\n{meet_link}"
             
             # Limpar quebras de linha extras e formatar para .ics
             clean_description = re.sub(r'\n+', '\n', clean_description.strip())

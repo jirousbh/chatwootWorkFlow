@@ -6,7 +6,7 @@ echo "==> Parando os serviços de chatbot-workflows-dev..."
 docker-compose -f docker-compose-dev.yaml stop chatbot-workflows-dev
 
 echo "==> Removendo a imagem chatbot-workflows-dev..."
-docker-compose -f docker-compose-dev.yaml rm chatbot-workflows-dev
+docker-compose -f docker-compose-dev.yaml rm -f chatbot-workflows-dev
 
 echo "==> Buildando imagem chatbot-workflows-dev..."
 docker-compose -f docker-compose-dev.yaml build chatbot-workflows-dev

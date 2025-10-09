@@ -211,6 +211,17 @@ class ChatwootWorkflowsApp {
             }
         }
         
+        // Mostrar/ocultar menu de gerenciamento de provedores
+        const providerManagementItem = document.getElementById('menuGerenciarProvedoresItem');
+        
+        if (providerManagementItem) {
+            if (isAdmin) {
+                providerManagementItem.classList.remove('d-none');
+            } else {
+                providerManagementItem.classList.add('d-none');
+            }
+        }
+        
         // Configurar interface está completo
     }
 
@@ -239,7 +250,6 @@ class ChatwootWorkflowsApp {
     // Carregar dados nos selects do dashboard (conta e caixa)
     async loadDashboardSelects() {
         try {
-            console.log('🔄 Carregando selects do dashboard...');
             
             // Carregar contas
             const accounts = await this.apiRequest('/api/accounts');
@@ -253,15 +263,12 @@ class ChatwootWorkflowsApp {
 
     // Popular selects de conta no dashboard
     populateDashboardAccountSelects(accounts) {
-        console.log(`🔄 Populando selects do dashboard para role: ${this.user.role}`);
         
         // Usar IDs diferentes baseado no role
         const selectId = this.user.role === 'admin' ? 'accountSelect' : 'userAccountSelect';
         
-        console.log(`📋 ID do select a popular: ${selectId}`);
         
         const select = document.getElementById(selectId);
-        console.log(`🔍 Procurando elemento: ${selectId}`, select ? '✅ Encontrado' : '❌ Não encontrado');
         
         if (select) {
             select.innerHTML = '<option value="">Selecione uma conta...</option>';
@@ -270,31 +277,22 @@ class ChatwootWorkflowsApp {
                 option.value = account.id;
                 option.textContent = account.name;
                 select.appendChild(option);
-                console.log(`📋 Adicionada conta: ${account.name} (ID: ${account.id})`);
             });
-            console.log(`✅ Select ${selectId} populado com ${accounts.length} contas`);
         } else {
-            console.error(`❌ Elemento ${selectId} não encontrado no DOM!`);
         }
     }
 
     // Validar se conta e caixa foram selecionadas
     async validateAccountAndInboxSelection() {
-        console.log(`🔍 Validando seleção para role: ${this.user.role}`);
         
         // Usar IDs diferentes baseado no role
         const accountSelectId = this.user.role === 'admin' ? 'accountSelect' : 'userAccountSelect';
         const inboxSelectId = this.user.role === 'admin' ? 'inboxSelect' : 'userInboxSelect';
-        
-        console.log(`📋 Procurando elementos: ${accountSelectId}, ${inboxSelectId}`);
+    
         
         const accountSelect = document.getElementById(accountSelectId);
         const inboxSelect = document.getElementById(inboxSelectId);
         
-        console.log(`🔍 Elementos encontrados:`, {
-            accountSelect: accountSelect ? '✅' : '❌',
-            inboxSelect: inboxSelect ? '✅' : '❌'
-        });
         
         if (!accountSelect || !inboxSelect) {
             console.error('❌ Elementos de seleção não encontrados');
@@ -304,11 +302,6 @@ class ChatwootWorkflowsApp {
         
         const selectedAccount = accountSelect.value;
         const selectedInbox = inboxSelect.value;
-        
-        console.log(`📋 Valores selecionados:`, {
-            account: selectedAccount,
-            inbox: selectedInbox
-        });
         
         if (!selectedAccount) {
             console.warn('⚠️ Conta não selecionada');
@@ -326,7 +319,6 @@ class ChatwootWorkflowsApp {
         
         // Validar se a caixa de entrada é uma API oficial do WhatsApp ou EvolutionAPI
         try {
-            console.log('🔍 Validando se a caixa de entrada é uma API oficial do WhatsApp ou EvolutionAPI...');
             
             // Buscar informações da caixa de entrada
             const inboxes = this.inboxes || [];
@@ -1468,6 +1460,16 @@ class ChatwootWorkflowsApp {
         }
     }
 
+    async showProviderManagement() {
+        try {
+            await loadProviders();
+            showProviderManager();
+        } catch (error) {
+            console.error('Erro ao carregar provedores:', error);
+            showAlert('Erro ao carregar provedores', 'danger');
+        }
+    }
+
     renderUserManagementModal(users, accounts) {
         // Criar modal se não existir
         let modal = document.getElementById('userManagementModal');
@@ -1669,16 +1671,15 @@ class ChatwootWorkflowsApp {
             
             // 2. Carregar inboxes de todas as contas
             this.inboxes = [];
-            console.log(`🔄 Carregando inboxes para ${this.accounts.length} contas...`);
             
             for (const account of this.accounts) {
                 try {
-                    console.log(`🔍 Carregando inboxes da conta: ${account.name} (ID: ${account.id})`);
+                    
                     const inboxes = await this.apiRequest(`/api/accounts/${account.id}/inboxes`);
                     
                     if (Array.isArray(inboxes) && inboxes.length > 0) {
                         this.inboxes = this.inboxes.concat(inboxes);
-                        console.log(`✅ ${inboxes.length} inboxes carregadas da conta ${account.name}`);
+                        
                     } else {
                         console.warn(`⚠️ Nenhuma inbox encontrada para conta ${account.name}`);
                     }
@@ -1687,14 +1688,6 @@ class ChatwootWorkflowsApp {
                 }
             }
             
-            console.log(`📋 Total de inboxes carregadas: ${this.inboxes.length}`);
-            if (this.inboxes.length > 0) {
-                console.log('✅ Inboxes disponíveis:', this.inboxes.map(inbox => ({ 
-                    id: inbox.id, 
-                    name: inbox.name, 
-                    account_id: inbox.account_id 
-                })));
-            }
             
             // 3. Populações dos selects (importante fazer depois de carregar dados)
             // Não popular selects do dashboard aqui, pois já são carregados por loadDashboardSelects
@@ -1713,7 +1706,7 @@ class ChatwootWorkflowsApp {
                 // Para usuários comuns, inicializar como array vazio
                 // Templates serão carregados quando selecionarem conta/inbox específica
                 this.workflowTemplates = [];
-                console.log('ℹ️ Usuário comum: templates serão carregados por conta/inbox específica');
+                
             }
             
             // 5. Carregar fluxos ativos apenas para admins
@@ -1722,10 +1715,9 @@ class ChatwootWorkflowsApp {
             } else {
                 // Para usuários comuns, inicializar como array vazio
                 this.activeWorkflows = [];
-                console.log('ℹ️ Usuário comum: workflows ativos não são exibidos');
             }
             
-            console.log(`✅ Dados carregados: ${this.accounts.length} contas, ${this.inboxes.length} caixas`);
+            
         } catch (error) {
             console.error('❌ Erro ao carregar dados iniciais:', error);
         }
@@ -1733,16 +1725,15 @@ class ChatwootWorkflowsApp {
 
     async loadAccounts() {
         try {
-            console.log(`🔄 Iniciando carregamento de contas para usuário: ${this.user.username} (${this.user.role})`);
+            
             this.accounts = await this.apiRequest('/api/accounts');
             
-            console.log(`📋 Contas carregadas: ${this.accounts.length} contas para ${this.user.role}`);
+            
             
             if (this.accounts && this.accounts.length > 0) {
-                console.log('✅ Contas disponíveis:', this.accounts.map(acc => ({ id: acc.id, name: acc.name })));
+               // console.log('✅ Contas disponíveis:', this.accounts.map(acc => ({ id: acc.id, name: acc.name })));
             } else {
-                console.warn('⚠️ Nenhuma conta retornada pela API');
-                console.log('🔍 Resposta completa da API:', this.accounts);
+                console.warn('⚠️ Nenhuma conta retornada pela API', this.accounts);
             }
         } catch (error) {
             console.error('❌ Erro ao carregar contas:', error);
@@ -1772,7 +1763,7 @@ class ChatwootWorkflowsApp {
         try {
             // Verificar se o usuário tem permissão para carregar templates globais
             if (this.user.role !== 'admin') {
-                console.log('ℹ️ Usuário comum: não carregando templates globais');
+                
                 this.workflowTemplates = [];
                 this.populateTemplateSelect();
                 return;
@@ -1780,7 +1771,7 @@ class ChatwootWorkflowsApp {
             
             // Para carregar templates globais, precisamos de uma conta e inbox selecionada
             // Como isso é chamado durante a inicialização, vamos pular e carregar depois
-            console.log('ℹ️ Carregamento de templates será feito quando conta/inbox for selecionada');
+            
             this.workflowTemplates = [];
             this.populateTemplateSelect();
         } catch (error) {
@@ -1795,13 +1786,13 @@ class ChatwootWorkflowsApp {
         try {
             // Verificar se o usuário tem permissão para carregar workflows ativos
             if (this.user.role !== 'admin') {
-                console.log('ℹ️ Usuário comum: não carregando workflows ativos globais');
+                
                 this.activeWorkflows = [];
                 this.populateActiveWorkflows();
                 return;
             }
             
-            console.log(`🔄 Carregando workflows ativos (força: ${forceRefresh})`);
+            
             
             const headers = {};
             if (forceRefresh) {
@@ -1812,7 +1803,7 @@ class ChatwootWorkflowsApp {
             this.activeWorkflows = await this.apiRequest('/api/inbox-workflows', { headers });
             this.populateActiveWorkflows();
             
-            console.log(`✅ ${this.activeWorkflows.length} workflows carregados`);
+           
         } catch (error) {
             console.error('❌ Erro ao carregar fluxos ativos:', error);
             // Inicializar como array vazio para evitar erros posteriores
@@ -1840,7 +1831,6 @@ class ChatwootWorkflowsApp {
             // Se o editor estiver aberto, atualizar também
             const editorVisible = !document.getElementById('workflowEditor').classList.contains('d-none');
             if (editorVisible) {
-                console.log('🔄 Editor está aberto, atualizando com novo fluxo...');
                 await this.loadActiveWorkflowForEditor(accountId, inboxId);
             }
         } catch (error) {
@@ -1934,7 +1924,7 @@ class ChatwootWorkflowsApp {
                 'Selecione uma conta e caixa de entrada primeiro';
             option.disabled = true;
             select.appendChild(option);
-            console.log('📋 Nenhum template disponível para carregar');
+           
         }
     }
 
@@ -2008,7 +1998,7 @@ class ChatwootWorkflowsApp {
             container.appendChild(item);
         });
         
-        console.log(`📋 ${this.activeWorkflows.length} workflows ativos carregados`);
+       
     }
 
     async showWorkflowEditor() {
@@ -2623,9 +2613,12 @@ class ChatwootWorkflowsApp {
 
         // Adicionar indicador de salvando
         const saveButton = document.querySelector('button[onclick="saveWorkflow()"]');
-        const originalText = saveButton.innerHTML;
-        saveButton.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Salvando...';
-        saveButton.disabled = true;
+        let originalText = null;
+        if (saveButton) {
+            originalText = saveButton.innerHTML;
+            saveButton.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Salvando...';
+            saveButton.disabled = true;
+        }
 
         try {
             const workflowConfig = JSON.parse(configText);
@@ -2678,9 +2671,11 @@ class ChatwootWorkflowsApp {
             console.error('❌ Erro ao salvar fluxo:', error);
             this.showAlert('Erro ao salvar fluxo: ' + error.message, 'danger');
         } finally {
-            // Restaurar botão
-            saveButton.innerHTML = originalText;
-            saveButton.disabled = false;
+            // Restaurar botão se existir
+            if (saveButton && originalText) {
+                saveButton.innerHTML = originalText;
+                saveButton.disabled = false;
+            }
         }
     }
 
@@ -3453,7 +3448,6 @@ class ChatwootWorkflowsApp {
                 option.value = account.id;
                 option.textContent = account.name;
                 accountSelect.appendChild(option);
-                console.log(`📋 Adicionada conta: ${account.name} (ID: ${account.id})`);
             });
             accountSelect.disabled = false;
             console.log(`✅ ${accounts.length} contas carregadas no select unificado`);
@@ -4246,7 +4240,7 @@ function updateSelectedInbox(inboxId) {
 // Função para inicializar event listeners das campanhas
 function initCampanhasEventListeners() {
     try {
-        console.log('Inicializando event listeners de campanhas...');
+        
         
         // Verificar se os elementos existem antes de adicionar listeners
         const btnCriarCampanha = document.getElementById('btnCriarCampanha');
@@ -4255,15 +4249,6 @@ function initCampanhasEventListeners() {
         const agendarEnvio = document.getElementById('agendarEnvio');
         const menuListarCampanhas = document.getElementById('menuListarCampanhas');
         const metodoEnvioRadios = document.getElementsByName('metodoEnvio');
-
-        console.log('Elementos encontrados:', {
-            btnCriarCampanha: !!btnCriarCampanha,
-            closeCampanha: !!closeCampanha,
-            formCampanha: !!formCampanha,
-            agendarEnvio: !!agendarEnvio,
-            menuListarCampanhas: !!menuListarCampanhas,
-            metodoEnvioRadios: metodoEnvioRadios.length
-        });
 
         if (btnCriarCampanha) {
             btnCriarCampanha.addEventListener('click', async function() {
@@ -4465,7 +4450,7 @@ function initCampanhasEventListeners() {
             });
         }
         
-        console.log('Event listeners de campanhas inicializados com sucesso!');
+      
     } catch (error) {
         console.error('Erro na função initCampanhasEventListeners:', error);
     }
@@ -7344,6 +7329,14 @@ async function showCreateAIAgentForm() {
     const formElement = document.getElementById('aiAgentForm');
     if (formElement) {
         formElement.reset();
+        
+        // Resetar configurações de calendário
+        const calendarEnabled = document.getElementById('calendarEnabled');
+        const calendarConfig = document.getElementById('calendarConfig');
+        if (calendarEnabled && calendarConfig) {
+            calendarEnabled.checked = false;
+            calendarConfig.classList.add('d-none');
+        }
     }
     
     const activeCheckbox = document.getElementById('agentActive');
@@ -7352,7 +7345,7 @@ async function showCreateAIAgentForm() {
     }
     
     // Carregar modelos disponíveis
-    await loadAvailableModels();
+    await loadAvailableProviders();
     
     // Mostrar formulário
     const formDiv = document.getElementById('aiAgentFormDiv');
@@ -7390,27 +7383,65 @@ async function editAIAgent(agentId) {
         const nameInput = document.getElementById('agentName');
         if (nameInput) nameInput.value = agent.name;
         
-        const providerSelect = document.getElementById('agentProvider');
-        if (providerSelect) providerSelect.value = agent.api_provider;
+        // Preencher configurações de calendário
+        const calendarEnabled = document.getElementById('calendarEnabled');
+        const calendarConfig = document.getElementById('calendarConfig');
+        if (calendarEnabled && calendarConfig) {
+            calendarEnabled.checked = agent.calendar_enabled || false;
+            if (agent.calendar_enabled) {
+                calendarConfig.classList.remove('d-none');
+            } else {
+                calendarConfig.classList.add('d-none');
+            }
+        }
         
-        const summaryPromptTextarea = document.getElementById('agentSummaryPrompt');
-        if (summaryPromptTextarea) summaryPromptTextarea.value = agent.summary_prompt;
+        const calendarIdInput = document.getElementById('calendarId');
+        if (calendarIdInput) calendarIdInput.value = agent.calendar_id || '';
+        
+        const calendarCredentialsTextarea = document.getElementById('calendarCredentials');
+        if (calendarCredentialsTextarea) calendarCredentialsTextarea.value = agent.calendar_credentials || '';
+        
+        const calendarStartHourInput = document.getElementById('calendarStartHour');
+        if (calendarStartHourInput) calendarStartHourInput.value = agent.calendar_start_hour || 9;
+        
+        const calendarEndHourInput = document.getElementById('calendarEndHour');
+        if (calendarEndHourInput) calendarEndHourInput.value = agent.calendar_end_hour || 18;
+        
+        const calendarDurationInput = document.getElementById('calendarDuration');
+        if (calendarDurationInput) calendarDurationInput.value = agent.calendar_duration_minutes || 60;
+        
+        const calendarWorkdaysSelect = document.getElementById('calendarWorkdays');
+        if (calendarWorkdaysSelect) calendarWorkdaysSelect.value = agent.calendar_workdays || '1,2,3,4,5';
+        
+        const useGoogleMeetingCheckbox = document.getElementById('useGoogleMeeting');
+        if (useGoogleMeetingCheckbox) useGoogleMeetingCheckbox.checked = agent.use_google_meeting || false;
+        
+        const temperatureInput = document.getElementById('agentTemperature');
+        if (temperatureInput) temperatureInput.value = agent.temperature || 0.10;
         
         const systemPromptTextarea = document.getElementById('agentSystemPrompt');
-        if (systemPromptTextarea) systemPromptTextarea.value = agent.custom_system_prompt;
+        if (systemPromptTextarea) systemPromptTextarea.value = agent.system_prompt;
         
         const activeCheckbox = document.getElementById('agentActive');
         if (activeCheckbox) activeCheckbox.checked = agent.is_active;
         
-        // Carregar modelos e selecionar o atual
-        await loadAvailableModels();
+        // Carregar provedores e selecionar o atual
+        await loadAvailableProviders();
         
-        const modelSelect = document.getElementById('agentModel');
-        if (modelSelect) {
-            // Aguardar um pouco para garantir que os modelos foram carregados
-            setTimeout(() => {
-                modelSelect.value = agent.model;
-            }, 100);
+        const providerSelect = document.getElementById('agentProvider');
+        if (providerSelect) {
+            providerSelect.value = agent.api_provider;
+            
+            // Carregar modelos do provedor selecionado
+            await loadModelsForProvider();
+            
+            // Selecionar o modelo após carregar
+            const modelSelect = document.getElementById('agentModel');
+            if (modelSelect) {
+                setTimeout(() => {
+                    modelSelect.value = agent.model;
+                }, 500); // Aguardar mais tempo para garantir que os modelos foram carregados
+            }
         }
         
         // Mostrar formulário
@@ -7428,11 +7459,71 @@ async function editAIAgent(agentId) {
 }
 
 // Carregar modelos disponíveis
-async function loadAvailableModels() {
+// Carregar provedores de IA disponíveis
+async function loadAvailableProviders() {
     try {
-        const response = await fetch('/api/ai-models', {
+        const response = await fetch('http://localhost:3006/providers', {
+            method: 'GET',
             headers: {
-                'Authorization': 'Bearer ' + localStorage.getItem('authToken')
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        if (!response.ok) {
+            throw new Error('Erro ao carregar provedores');
+        }
+        
+        const data = await response.json();
+        const providers = data.providers || [];
+        
+        const select = document.getElementById('agentProvider');
+        if (select) {
+            select.innerHTML = '<option value="">Selecione um provedor...</option>';
+            
+            providers.forEach(provider => {
+                if (provider.is_active) {
+                    const option = document.createElement('option');
+                    option.value = provider.name;
+                    option.textContent = `${provider.display_name} (${provider.name})`;
+                    select.appendChild(option);
+                }
+            });
+        }
+        
+    } catch (error) {
+        console.error('Erro ao carregar provedores:', error);
+        const select = document.getElementById('agentProvider');
+        if (select) {
+            select.innerHTML = '<option value="">Erro ao carregar provedores</option>';
+        }
+    }
+}
+
+// Carregar modelos de um provedor específico (função global)
+window.loadModelsForProvider = async function loadModelsForProvider() {
+    const providerSelect = document.getElementById('agentProvider');
+    const modelSelect = document.getElementById('agentModel');
+    
+    if (!providerSelect || !modelSelect) {
+        return;
+    }
+    
+    const selectedProvider = providerSelect.value;
+    
+    if (!selectedProvider) {
+        modelSelect.innerHTML = '<option value="">Selecione um provedor primeiro</option>';
+        modelSelect.disabled = true;
+        return;
+    }
+    
+    try {
+        modelSelect.innerHTML = '<option value="">Carregando modelos...</option>';
+        modelSelect.disabled = true;
+        
+        const response = await fetch(`http://localhost:3006/providers/${selectedProvider}/models`, {
+            method: 'GET',
+            headers: {
+                'Content-Type': 'application/json'
             }
         });
         
@@ -7441,27 +7532,31 @@ async function loadAvailableModels() {
         }
         
         const data = await response.json();
-        availableModels = data.models || [];
+        const models = data.models || [];
         
-        const select = document.getElementById('agentModel');
-        if (select) {
-            select.innerHTML = '<option value="">Selecione um modelo...</option>';
-            
-            availableModels.forEach(model => {
-                const option = document.createElement('option');
-                option.value = model.id || model.name;
-                option.textContent = `${model.name} - ${model.description || model.id}`;
-                select.appendChild(option);
-            });
-        }
+        modelSelect.innerHTML = '<option value="">Selecione um modelo...</option>';
+        
+        models.forEach(model => {
+            const option = document.createElement('option');
+            option.value = model.id;
+            option.textContent = `${model.id} - ${model.description}`;
+            modelSelect.appendChild(option);
+        });
+        
+        modelSelect.disabled = false;
         
     } catch (error) {
         console.error('Erro ao carregar modelos:', error);
-        const select = document.getElementById('agentModel');
-        if (select) {
-            select.innerHTML = '<option value="">Erro ao carregar modelos</option>';
-        }
+        modelSelect.innerHTML = '<option value="">Erro ao carregar modelos</option>';
+        modelSelect.disabled = true;
     }
+};
+
+// Função legada - manter para compatibilidade
+async function loadAvailableModels() {
+    // Esta função agora é substituída por loadModelsForProvider
+    // Mas mantemos para compatibilidade com código existente
+    await loadAvailableProviders();
 }
 
 // Fechar formulário de agente IA
@@ -7470,6 +7565,26 @@ function hideAIAgentForm() {
     if (formDiv) {
         formDiv.classList.add('d-none');
     }
+    
+    // Resetar formulário
+    const form = document.getElementById('aiAgentForm');
+    if (form) {
+        form.reset();
+    }
+    
+    // Resetar selects
+    const providerSelect = document.getElementById('agentProvider');
+    const modelSelect = document.getElementById('agentModel');
+    
+    if (providerSelect) {
+        providerSelect.innerHTML = '<option value="">Selecione um provedor...</option>';
+    }
+    
+    if (modelSelect) {
+        modelSelect.innerHTML = '<option value="">Selecione um provedor primeiro</option>';
+        modelSelect.disabled = true;
+    }
+    
     currentEditingAgent = null;
 }
 
@@ -7514,10 +7629,32 @@ document.addEventListener('DOMContentLoaded', function() {
         aiAgentForm.addEventListener('submit', handleAIAgentSubmit);
     }
     
+    // Event listener para checkbox de calendário
+    const calendarEnabled = document.getElementById('calendarEnabled');
+    const calendarConfig = document.getElementById('calendarConfig');
+    if (calendarEnabled && calendarConfig) {
+        calendarEnabled.addEventListener('change', function() {
+            if (this.checked) {
+                calendarConfig.classList.remove('d-none');
+            } else {
+                calendarConfig.classList.add('d-none');
+            }
+        });
+    }
+    
     // Validação de arquivo PDF
     const agentPdfFile = document.getElementById('agentPdfFile');
     if (agentPdfFile) {
         agentPdfFile.addEventListener('change', validatePdfFile);
+    }
+    
+    // Atualizar valor da temperatura quando o slider mudar
+    const temperatureSlider = document.getElementById('agentTemperature');
+    const temperatureValue = document.getElementById('temperatureValue');
+    if (temperatureSlider && temperatureValue) {
+        temperatureSlider.addEventListener('input', function() {
+            temperatureValue.textContent = this.value;
+        });
     }
 });
 
@@ -7583,9 +7720,17 @@ async function handleAIAgentSubmit(event) {
             name: formData.get('name'),
             api_provider: formData.get('api_provider'),
             model: formData.get('model'),
-            summary_prompt: formData.get('summary_prompt'),
-            custom_system_prompt: formData.get('custom_system_prompt'),
-            is_active: formData.get('is_active') === 'on'
+            system_prompt: formData.get('system_prompt'),
+            is_active: formData.get('is_active') === 'on',
+            calendar_enabled: formData.has('calendar_enabled'),
+            calendar_credentials: formData.get('calendar_credentials'),
+            calendar_id: formData.get('calendar_id'),
+            calendar_start_hour: parseInt(formData.get('calendar_start_hour')) || 9,
+            calendar_end_hour: parseInt(formData.get('calendar_end_hour')) || 18,
+            calendar_workdays: formData.get('calendar_workdays') || '1,2,3,4,5',
+            calendar_duration_minutes: parseInt(formData.get('calendar_duration_minutes')) || 60,
+            use_google_meeting: formData.has('use_google_meeting'),
+            temperature: parseFloat(formData.get('temperature')) || 0.10
         };
         const requestBody = JSON.stringify(agentData);
         
@@ -7843,3 +7988,331 @@ async function saveWorkflowWithAI() {
         window.app.showAlert('Erro ao salvar workflow: ' + error.message, 'danger');
     }
 }
+
+// ===== FUNÇÕES DE GERENCIAMENTO DE PROVEDORES IA =====
+
+// Variáveis globais para provedores
+let currentProviderId = null;
+let providers = [];
+
+// Mostrar gerenciador de provedores
+function showProviderManager() {
+    document.getElementById('providerManagerDiv').classList.remove('d-none');
+    document.getElementById('app').classList.add('d-none');
+}
+
+// Esconder gerenciador de provedores
+function hideProviderManager() {
+    document.getElementById('providerManagerDiv').classList.add('d-none');
+    document.getElementById('app').classList.remove('d-none');
+}
+
+// Mostrar formulário de criação/edição de provedor
+function showCreateProviderForm() {
+    currentProviderId = null;
+    document.getElementById('providerFormTitle').innerHTML = '<i class="fas fa-server me-2"></i>Novo Provedor IA';
+    document.getElementById('providerForm').reset();
+    document.getElementById('providerActive').checked = true;
+    document.getElementById('providerMaxTokens').value = '4096';
+    
+    // Limpar checkboxes de capacidades
+    document.getElementById('providerStreaming').checked = false;
+    document.getElementById('providerEmbeddings').checked = false;
+    document.getElementById('providerVision').checked = false;
+    
+    document.getElementById('providerManagerDiv').classList.add('d-none');
+    document.getElementById('providerFormDiv').classList.remove('d-none');
+}
+
+// Esconder formulário de provedor
+function hideProviderForm() {
+    document.getElementById('providerFormDiv').classList.add('d-none');
+    document.getElementById('providerManagerDiv').classList.remove('d-none');
+    currentProviderId = null;
+}
+
+// Carregar lista de provedores
+async function loadProviders() {
+    try {
+        const response = await fetch('http://localhost:3006/providers', {
+            method: 'GET',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        if (!response.ok) {
+            throw new Error(`Erro ${response.status}: ${response.statusText}`);
+        }
+        
+        const data = await response.json();
+        providers = data.providers;
+        displayProviders(providers);
+        
+    } catch (error) {
+        console.error('Erro ao carregar provedores:', error);
+        showAlert('Erro ao carregar provedores: ' + error.message, 'danger');
+    }
+}
+
+// Exibir lista de provedores
+function displayProviders(providersList) {
+    const providersListDiv = document.getElementById('providersList');
+    
+    if (!providersList || providersList.length === 0) {
+        providersListDiv.innerHTML = `
+            <div class="text-center text-muted">
+                <i class="fas fa-server fa-3x mb-3"></i>
+                <h5>Nenhum provedor cadastrado</h5>
+                <p>Clique em "Novo Provedor IA" para adicionar o primeiro provedor.</p>
+            </div>
+        `;
+        return;
+    }
+    
+    const providersHtml = providersList.map(provider => `
+        <div class="card mb-3">
+            <div class="card-body">
+                <div class="row align-items-center">
+                    <div class="col-md-8">
+                        <div class="d-flex align-items-center mb-2">
+                            <h6 class="mb-0 me-3">${provider.display_name}</h6>
+                            <span class="badge ${provider.is_active ? 'bg-success' : 'bg-secondary'}">
+                                ${provider.is_active ? 'Ativo' : 'Inativo'}
+                            </span>
+                        </div>
+                        <p class="text-muted mb-2">
+                            <strong>Nome:</strong> ${provider.name} | 
+                            <strong>URL:</strong> ${provider.api_base_url}
+                        </p>
+                        <p class="text-muted mb-2">
+                            <strong>Capacidades:</strong>
+                            ${provider.supports_streaming ? '<span class="badge bg-info me-1">Streaming</span>' : ''}
+                            ${provider.supports_embeddings ? '<span class="badge bg-info me-1">Embeddings</span>' : ''}
+                            ${provider.supports_vision ? '<span class="badge bg-info me-1">Visão</span>' : ''}
+                        </p>
+                        ${provider.description ? `<p class="text-muted mb-0"><small>${provider.description}</small></p>` : ''}
+                    </div>
+                    <div class="col-md-4 text-end">
+                        <div class="btn-group" role="group">
+                            <button class="btn btn-outline-primary btn-sm" onclick="editProvider('${provider.id}')" title="Editar">
+                                <i class="fas fa-edit"></i>
+                            </button>
+                            <button class="btn btn-outline-info btn-sm" onclick="viewProviderModels('${provider.name}')" title="Ver Modelos">
+                                <i class="fas fa-list"></i>
+                            </button>
+                            <button class="btn btn-outline-danger btn-sm" onclick="deleteProvider('${provider.id}', '${provider.display_name}')" title="Excluir">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `).join('');
+    
+    providersListDiv.innerHTML = providersHtml;
+}
+
+// Editar provedor
+function editProvider(providerId) {
+    const provider = providers.find(p => p.id === providerId);
+    if (!provider) {
+        showAlert('Provedor não encontrado', 'danger');
+        return;
+    }
+    
+    currentProviderId = providerId;
+    document.getElementById('providerFormTitle').innerHTML = '<i class="fas fa-server me-2"></i>Editar Provedor IA';
+    
+    // Preencher formulário
+    document.getElementById('providerName').value = provider.name;
+    document.getElementById('providerDisplayName').value = provider.display_name;
+    document.getElementById('providerApiUrl').value = provider.api_base_url;
+    document.getElementById('providerApiKey').value = provider.api_key || '';
+    document.getElementById('providerDescription').value = provider.description || '';
+    document.getElementById('providerActive').checked = provider.is_active;
+    document.getElementById('providerMaxTokens').value = provider.max_tokens;
+    document.getElementById('providerDefaultModel').value = provider.default_model || '';
+    
+    // Preencher checkboxes de capacidades
+    document.getElementById('providerStreaming').checked = provider.supports_streaming;
+    document.getElementById('providerEmbeddings').checked = provider.supports_embeddings;
+    document.getElementById('providerVision').checked = provider.supports_vision;
+    
+    document.getElementById('providerManagerDiv').classList.add('d-none');
+    document.getElementById('providerFormDiv').classList.remove('d-none');
+}
+
+// Ver modelos do provedor
+async function viewProviderModels(providerName) {
+    try {
+        const response = await fetch(`http://localhost:3006/providers/${providerName}/models`, {
+            method: 'GET',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        if (!response.ok) {
+            throw new Error(`Erro ${response.status}: ${response.statusText}`);
+        }
+        
+        const data = await response.json();
+        
+        // Criar modal para mostrar modelos
+        const modalHtml = `
+            <div class="modal fade" id="providerModelsModal" tabindex="-1">
+                <div class="modal-dialog modal-lg">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title">
+                                <i class="fas fa-list me-2"></i>Modelos do Provedor: ${providerName}
+                            </h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                        </div>
+                        <div class="modal-body">
+                            <p><strong>Total de modelos:</strong> ${data.total_models}</p>
+                            <div class="table-responsive">
+                                <table class="table table-striped">
+                                    <thead>
+                                        <tr>
+                                            <th>ID do Modelo</th>
+                                            <th>Descrição</th>
+                                            <th>Max Tokens</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        ${data.models.map(model => `
+                                            <tr>
+                                                <td><code>${model.id}</code></td>
+                                                <td>${model.description}</td>
+                                                <td>${model.max_tokens.toLocaleString()}</td>
+                                            </tr>
+                                        `).join('')}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fechar</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        // Remover modal existente se houver
+        const existingModal = document.getElementById('providerModelsModal');
+        if (existingModal) {
+            existingModal.remove();
+        }
+        
+        // Adicionar modal ao DOM
+        document.body.insertAdjacentHTML('beforeend', modalHtml);
+        
+        // Mostrar modal
+        const modal = new bootstrap.Modal(document.getElementById('providerModelsModal'));
+        modal.show();
+        
+    } catch (error) {
+        console.error('Erro ao carregar modelos:', error);
+        showAlert('Erro ao carregar modelos: ' + error.message, 'danger');
+    }
+}
+
+// Excluir provedor
+async function deleteProvider(providerId, providerName) {
+    if (!confirm(`Tem certeza que deseja excluir o provedor "${providerName}"?\n\nEsta ação não pode ser desfeita.`)) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`http://localhost:3006/providers/${providerId}`, {
+            method: 'DELETE',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.error || `Erro ${response.status}: ${response.statusText}`);
+        }
+        
+        showAlert('Provedor excluído com sucesso!', 'success');
+        await loadProviders();
+        
+    } catch (error) {
+        console.error('Erro ao excluir provedor:', error);
+        showAlert('Erro ao excluir provedor: ' + error.message, 'danger');
+    }
+}
+
+// Salvar provedor (criar ou atualizar)
+async function handleProviderSubmit(event) {
+    event.preventDefault();
+    
+    const formData = new FormData(event.target);
+    const providerData = {
+        name: formData.get('name'),
+        display_name: formData.get('display_name'),
+        api_base_url: formData.get('api_base_url'),
+        api_key: formData.get('api_key'),
+        description: formData.get('description'),
+        is_active: formData.get('is_active') === 'on',
+        max_tokens: parseInt(formData.get('max_tokens')),
+        default_model: formData.get('default_model'),
+        supports_streaming: formData.get('supports_streaming') === 'on',
+        supports_embeddings: formData.get('supports_embeddings') === 'on',
+        supports_vision: formData.get('supports_vision') === 'on'
+    };
+    
+    try {
+        const url = currentProviderId 
+            ? `http://localhost:3006/providers/${currentProviderId}`
+            : 'http://localhost:3006/providers';
+        
+        const method = currentProviderId ? 'PUT' : 'POST';
+        
+        const response = await fetch(url, {
+            method: method,
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(providerData)
+        });
+        
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.error || `Erro ${response.status}: ${response.statusText}`);
+        }
+        
+        const data = await response.json();
+        
+        const action = currentProviderId ? 'atualizado' : 'criado';
+        
+        showAlert(`Provedor ${action} com sucesso!`, 'success');
+        hideProviderForm();
+        await loadProviders();
+        
+    } catch (error) {
+        console.error('Erro ao salvar provedor:', error);
+        showAlert('Erro ao salvar provedor: ' + error.message, 'danger');
+    }
+}
+
+// Event listeners para provedores
+document.addEventListener('DOMContentLoaded', function() {
+    // Formulário de provedor
+    const providerForm = document.getElementById('providerForm');
+    if (providerForm) {
+        providerForm.addEventListener('submit', handleProviderSubmit);
+    }
+    
+    // Botão fechar gerenciador de provedores
+    const closeProviderManagerBtn = document.getElementById('closeProviderManager');
+    if (closeProviderManagerBtn) {
+        closeProviderManagerBtn.addEventListener('click', hideProviderManager);
+    }
+});
