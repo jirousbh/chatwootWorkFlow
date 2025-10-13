@@ -17,6 +17,7 @@ const multer = require('multer');
 const upload = multer({ dest: 'uploads/' });
 const csv = require('csv-parser');
 const FormData = require('form-data');
+const { env } = require('process');
 
 // ===== SISTEMA DE LOGS DUPLO =====
 // Logs aparecem tanto no console (docker logs) quanto em arquivos
@@ -31,6 +32,9 @@ if (!fs.existsSync(logDir)) {
 const CHATWOOT_BASE_URL = process.env.CHATWOOT_BASE_URL || 'https://crm.inovaianalytics.com.br';
 const CHATWOOT_API_TOKEN = process.env.CHATWOOT_API_TOKEN;
 const CHATWOOT_ACCOUNT_ID = process.env.CHATWOOT_ACCOUNT_ID || '1'; // Mantido para compatibilidade
+
+const IA_AGENT_URL = process.env.IA_AGENT_URL || 'http://ia-agent-dev:3006';
+const IA_AGENT_PORT = process.env.IA_AGENT_PORT || '3006';
 
 // Cache de contas disponíveis
 let availableAccounts = [];
@@ -262,7 +266,7 @@ app.use(helmet({
       styleSrc: ["'self'", "'unsafe-inline'", "https://cdn.jsdelivr.net", "https://cdnjs.cloudflare.com"],
       fontSrc: ["'self'", "https://cdnjs.cloudflare.com", "data:"],
       imgSrc: ["'self'", "data:"],
-      connectSrc: ["'self'", "http://localhost:3006", "https://localhost:3006", "https://cdn.jsdelivr.net"],
+      connectSrc: ["'self'", "http://localhost:*", "https://localhost:*", "https://cdn.jsdelivr.net"],
       frameSrc: ["'none'"],
       objectSrc: ["'none'"],
       upgradeInsecureRequests: []
@@ -1214,25 +1218,16 @@ async function assignConversationToTeamMember(conversationId, teamId, options = 
       return;
     }
 
-    // Buscar todos os agentes
-    const allAgents = await getChatwootAgents(accountId);
+    // Buscar agentes específicos do time usando o endpoint correto
+    const teamAgents = await getChatwootTeamAgents(teamId, accountId);
     
-    // Filtrar agentes que pertencem ao time especificado e não são administradores
-    const teamMembers = allAgents.filter(agent => {
-      // Verificar se o agente pertence ao time
-      const belongsToTeam = agent.teams && agent.teams.some(team => team.id === teamId);
-      
-      // Verificar se não é administrador (role !== 'administrator')
-      const isNotAdmin = agent.role !== 'administrator';
-      
-      // Verificar se está ativo
-      const isActive = agent.available_name !== 'offline' && agent.status !== 'offline';
-      
-      return belongsToTeam && isNotAdmin && isActive;
+    // Filtrar apenas agentes não-administradores
+    const teamMembers = teamAgents.filter(agent => {
+      return agent.role !== 'administrator';
     });
 
     if (teamMembers.length === 0) {
-      console.log(`⚠️ Nenhum agente disponível encontrado no time ${teamId} (não-administradores e ativos)`);
+      console.log(`⚠️ Nenhum agente encontrado no time ${teamId} (não-administradores)`);
       
       // Se não houver agentes disponíveis, atribuir ao time
       console.log(`🔄 Atribuindo conversa ao time ${teamId} (sem agente específico)`);
@@ -1243,7 +1238,7 @@ async function assignConversationToTeamMember(conversationId, teamId, options = 
     let selectedAgent;
 
     // Estratégia de seleção de agente
-    const strategy = options.strategy || 'round_robin'; // 'round_robin', 'least_busy', 'random'
+    const strategy = options.strategy || 'least_busy'; // 'round_robin', 'least_busy', 'random'
     
     switch (strategy) {
       case 'least_busy':
@@ -1380,6 +1375,7 @@ async function selectLeastBusyAgent(teamMembers, accountId = CHATWOOT_ACCOUNT_ID
           );
           
           const conversations = response.data.payload || [];
+          
           return {
             agent,
             activeConversations: conversations.length
@@ -1605,6 +1601,21 @@ async function removeAllLabelsFromConversation(conversationId, accountId = CHATW
       console.error(`   Status: ${error.response.status}`);
       console.error(`   URL: ${error.config?.url}`);
     }
+  }
+}
+
+// Função para buscar agentes de um time específico
+async function getChatwootTeamAgents(teamId, accountId = CHATWOOT_ACCOUNT_ID) {
+  try {
+    const response = await axios.get(
+      `${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/teams/${teamId}/team_members`,
+      { headers: { 'api_access_token': CHATWOOT_API_TOKEN } }
+    );
+    
+    return response.data || [];
+  } catch (error) {
+    console.error('Erro ao buscar agentes do time:', error.response?.data || error.message);
+    return [];
   }
 }
 
@@ -2086,7 +2097,7 @@ class ConversationManager {
         // Verificar se deve atribuir a um membro específico do time
         if (button.assign_team_member === true) {
           const options = {
-            strategy: button.assignment_strategy || 'round_robin' // 'round_robin', 'least_busy', 'random'
+            strategy: button.assignment_strategy || 'least_busy' // 'round_robin', 'least_busy', 'random'
           };
           await assignConversationToTeamMember(conversationId, button.assign_team, options, accountId);
         } else {
@@ -2143,7 +2154,7 @@ class ConversationManager {
         // Verificar se deve atribuir a um membro específico do time
         if (block.assign_team_member === true) {
           const options = {
-            strategy: block.assignment_strategy || 'round_robin' // 'round_robin', 'least_busy', 'random'
+            strategy: block.assignment_strategy || 'least_busy' // 'round_robin', 'least_busy', 'random'
           };
           await assignConversationToTeamMember(conversationId, block.assign_team, options, accountId);
         } else {
@@ -3130,7 +3141,7 @@ async function processChatwootConversation(conversation, accountId = CHATWOOT_AC
               console.log('⚠️ Nenhum agente IA configurado para este workflow. Ignorando transcrição.');
             } else {
               // Obter detalhes do agente para checar provider
-              const agentDetailsResp = await fetch(`http://ia-agent-dev:3006/agents/${agentId}`);
+              const agentDetailsResp = await fetch(`${IA_AGENT_URL}/agents/${agentId}`);
               const agentDetails = agentDetailsResp.ok ? (await agentDetailsResp.json()).agent : null;
               if (!agentDetails || agentDetails.api_provider !== 'groq') {
                 await sendChatwootMessage(conversationId, 'Esse agente não tem suporte para ouvir mensagens de áudio. Favor enviar mensagens de texto.', [], null, accountId, inboxId);
@@ -3163,7 +3174,7 @@ async function processChatwootConversation(conversation, accountId = CHATWOOT_AC
                   const formData = new FormData();
                   formData.append('audio_file', fs.createReadStream(tempPath));
                   const transcribeResp = await axios.post(
-                    `http://ia-agent-dev:3006/agents/${agentId}/transcribe-audio`,
+                    `${IA_AGENT_URL}/agents/${agentId}/transcribe-audio`,
                     formData,
                     { headers: formData.getHeaders(), timeout: 120000 }
                   );
@@ -5682,6 +5693,23 @@ app.get('/api/ai-models', authenticateToken, async (req, res) => {
   }
 });
 
+// Rota para obter configurações do sistema
+app.get('/api/config', (req, res) => {
+  try {
+    res.json({
+      success: true,
+      config: {
+        ia_agent_url: IA_AGENT_URL,
+        ia_agent_port: IA_AGENT_PORT,
+        chatwoot_base_url: CHATWOOT_BASE_URL
+      }
+    });
+  } catch (error) {
+    console.error('Erro ao obter configurações:', error);
+    res.status(500).json({ success: false, error: 'Erro interno do servidor' });
+  }
+});
+
 // Rota para listar agentes IA
 app.get('/api/ai-agents', authenticateToken, authorizeAccount, async (req, res) => {
   try {
@@ -6749,7 +6777,7 @@ app.get('/api/diagnose-auto-followup', authenticateToken, async (req, res) => {
 // Obter modelos disponíveis da API de agentes IA
 async function getAvailableAIModels() {
   try {
-    const response = await fetch('http://ia-agent-dev:3006/models');
+    const response = await fetch(`${IA_AGENT_URL}/models`);
     if (!response.ok) {
       throw new Error(`Erro na API de agentes: ${response.status}`);
     }
@@ -6764,7 +6792,7 @@ async function getAvailableAIModels() {
 // Listar todos os agentes IA
 async function getAllAIAgents() {
   try {
-    const response = await fetch('http://ia-agent-dev:3006/agents');
+    const response = await fetch(`${IA_AGENT_URL}/agents`);
     if (!response.ok) {
       throw new Error(`Erro na API de agentes: ${response.status}`);
     }
@@ -6779,7 +6807,7 @@ async function getAllAIAgents() {
 // Obter agente IA por ID
 async function getAIAgentById(agentId) {
   try {
-    const response = await fetch(`http://ia-agent-dev:3006/agents/${agentId}`);
+    const response = await fetch(`${IA_AGENT_URL}/agents/${agentId}`);
     if (!response.ok) {
       if (response.status === 404) {
         return null;
@@ -6797,7 +6825,7 @@ async function getAIAgentById(agentId) {
 // Criar novo agente IA
 async function createAIAgent(agentData, userId) {
   try {
-    const response = await fetch('http://ia-agent-dev:3006/agents', {
+    const response = await fetch(`${IA_AGENT_URL}/agents`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -6820,7 +6848,7 @@ async function createAIAgent(agentData, userId) {
 // Atualizar agente IA
 async function updateAIAgent(agentId, agentData, userId) {
   try {
-    const response = await fetch(`http://ia-agent-dev:3006/agents/${agentId}`, {
+    const response = await fetch(`${IA_AGENT_URL}/agents/${agentId}`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
@@ -6847,7 +6875,7 @@ async function deleteAIAgent(agentId) {
     await pool.query('DELETE FROM workflow_ai_agents WHERE ai_agent_id = $1', [agentId]);
     
     // Depois deletar o agente via API
-    const response = await fetch(`http://ia-agent-dev:3006/agents/${agentId}`, {
+    const response = await fetch(`${IA_AGENT_URL}/agents/${agentId}`, {
       method: 'DELETE'
     });
     
@@ -7085,7 +7113,7 @@ async function sendMessageToAIAgent(agentId, message, conversationHistory = [], 
       }
     }
     
-    const response = await fetch(`http://ia-agent-dev:3006/agents/${agentId}/chat`, {
+    const response = await fetch(`${IA_AGENT_URL}/agents/${agentId}/chat`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

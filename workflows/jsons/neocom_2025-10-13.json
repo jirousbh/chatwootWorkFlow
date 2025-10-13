@@ -1,0 +1,154 @@
+{
+    "name": "Fluxo Técnico NEOCOM",
+    "blocks": {
+      "bloco_01": {
+        "id": "bloco_01",
+        "name": "Mensagem Inicial",
+        "buttons": [
+          {
+            "text": "Telefonia Móvel",
+            "next_block": "bloco_05",
+            "assign_labels": [
+              "interesse_telefonia_movel"
+            ]
+          },
+          {
+            "text": "Internet Banda Larga",
+            "next_block": "bloco_04",
+            "assign_labels": [
+              "interesse_banda_larga"
+            ]
+          },
+          {
+            "text": "Link Dedicado",
+            "next_block": "bloco_02",
+            "assign_labels": [
+              "interesse_link_dedicado"
+            ]
+          }
+        ],
+        "message": "😊 Olá {{nome}}, me chamo Letícia e falo da Neocom (AGENTE AUTORIZADO CLARO EMPRESAS).\n\n📲 Sua empresa merece mais: traga seu número para a Claro!\n\n✅ Planos empresariais com mais benefícios\n✅ Cobertura de qualidade e atendimento dedicado\n✅ Ofertas exclusivas para quem traz seu número\n\nA troca é simples, rápida e você mantém seu número! Fale com a Neocom e descubra como migrar para a Claro com vantagens especiais.",
+        "assign_labels": [
+          "inicio_atendimento"
+        ]
+      },
+      "bloco_02": {
+        "id": "bloco_02",
+        "name": "Link Dedicado",
+        "message": "🚀📶 Sua empresa merece um Link Dedicado de verdade!\n\nCom a Claro Empresas, você tem velocidade garantida e suporte premium 👨‍💻\n\n👉 Me manda o CNPJ pra eu verificar o melhor plano pra você!",
+        "next_block": "bloco_07",
+        "assign_labels": [
+          "link_dedicado_interesse",
+          "link_dedicado_aguardando_cnpj"
+        ],
+        "contact_labels": [
+          "prospect_link_dedicado"
+        ]
+      },
+      "bloco_04": {
+        "id": "bloco_04",
+        "name": "Internet Banda Larga",
+        "message": "🤗 Perfeito!\n\n🌐✨ Conecte sua empresa com o máximo de velocidade e qualidade!\n\nMe envia o CNPJ pra eu verificar as melhorias e vantagens disponíveis 🚀",
+        "next_block": "bloco_07",
+        "assign_labels": [
+          "banda_larga_interesse",
+          "banda_larga_aguardando_cnpj"
+        ],
+        "contact_labels": [
+          "prospect_banda_larga"
+        ]
+      },
+      "bloco_05": {
+        "id": "bloco_05",
+        "name": "Telefonia Móvel",
+        "message": "📱💬 Perfeito! Tudo bem? 😄\n\nTemos soluções de telefonia móvel Claro que reduzem custos e aumentam a eficiência da sua comunicação 🚀\n\n👉 Me passa o CNPJ da sua empresa pra eu verificar as melhorias disponíveis pra você? 😉",
+        "next_block": "bloco_06",
+        "assign_labels": [
+          "telefonia_movel",
+          "telefonia_aguardando_cnpj"
+        ],
+        "contact_labels": [
+          "prospect_telefonia_movel"
+        ]
+      },
+      "bloco_06": {
+        "id": "bloco_06",
+        "name": "Verificar Operadora",
+        "buttons": [
+          {
+            "text": "Tim",
+            "next_block": "atendimento_humano_01",
+            "assign_labels": [
+              "interesse_telefonia_movel"
+            ]
+          },
+          {
+            "text": "Vivo",
+            "next_block": "atendimento_humano_01",
+            "assign_labels": [
+              "interesse_telefonia_movel"
+            ]
+          },
+          {
+            "text": "Claro",
+            "next_block": "atendimento_humano_01",
+            "assign_labels": [
+              "interesse_telefonia_movel"
+            ]
+          }
+        ],
+        "message": "Show! 😍 Agora me diz rapidinho:\n\n📶 Qual operadora você usa hoje?\n\nQuero ver o que dá pra melhorar no seu plano atual 💪",
+        "next_block": "atendimento_humano_02",
+        "assign_labels": [
+          "telefonia_aguardando_operadora"
+        ]
+      },
+      "bloco_07": {
+        "id": "bloco_07",
+        "name": "Solicitar Endereço",
+        "message": "🚀 Só mais um passo!\n\nMe envia o endereço completo pra eu verificar a disponibilidade e as melhores ofertas aí na sua área 📡",
+        "next_block": "atendimento_humano_02",
+        "assign_labels": [
+          "solicitar_endereco",
+          "aguardando_endereco"
+        ],
+        "contact_labels": [
+          "prospect_solicitar_endereco"
+        ]
+      },
+      "atendimento_humano_01": {
+        "id": "atendimento_humano_01",
+        "name": "Atendimento Humano NEOCOM",
+        "message": "Perfeito! Vou te conectar agora mesmo com nossa equipe especializada que vai te ajudar com todas as informações e elaborar a melhor proposta para sua empresa! 😊\n\nEm instantes você receberá o contato de um de nossos consultores.",
+        "pause_bot": true,
+        "assign_team": 6,
+        "assign_team_member": true,
+        "assignment_strategy": "least_busy",
+        "assign_labels": [
+          "transferido_especialista"
+        ],
+        "contact_labels": [
+          "atendimento_especializado"
+        ]
+      },
+      "atendimento_humano_02": {
+        "id": "atendimento_humano_02",
+        "name": "Atendimento Humano NEOCOM",
+        "message": "Perfeito! Vou te conectar agora mesmo com nossa equipe especializada que vai te ajudar com todas as informações e elaborar a melhor proposta para sua empresa! 😊\n\nEm instantes você receberá o contato de um de nossos consultores.",
+        "pause_bot": true,
+        "assign_team": 7,
+        "assign_team_member": true,
+        "assignment_strategy": "least_busy",
+        "assign_labels": [
+          "transferido_especialista"
+        ],
+        "contact_labels": [
+          "atendimento_especializado"
+        ]
+      }
+    },
+    "triggers": [
+      "*"
+    ],
+    "auto_followup": {}
+  }

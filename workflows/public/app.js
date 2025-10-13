@@ -95,6 +95,10 @@ class ChatwootWorkflowsApp {
         this.inboxes = [];
         this.workflowTemplates = [];
         this.activeWorkflows = [];
+        this.config = {
+            ia_agent_url: 'http://localhost:3006', // Fallback padrão
+            ia_agent_port: '3006' // Fallback padrão
+        };
         
         this.init();
     }
@@ -103,9 +107,28 @@ class ChatwootWorkflowsApp {
 
     async init() {
         if (this.token) {
+            await this.loadConfig();
             await this.checkAuth();
         } else {
             this.showLogin();
+        }
+    }
+
+    async loadConfig() {
+        try {
+            const response = await fetch('/api/config');
+            if (response.ok) {
+                const data = await response.json();
+                if (data.success) {
+                    this.config = data.config;
+                    console.log('✅ Configurações carregadas do backend:', this.config);
+                    console.log(`🔗 IA Agent URL: ${this.config.ia_agent_url}`);
+                    console.log(`🔗 IA Agent Port: ${this.config.ia_agent_port}`);
+                }
+            }
+        } catch (error) {
+            console.warn('⚠️ Não foi possível carregar configurações, usando fallback:', error);
+            console.log('🔗 Usando fallback - URL:', this.config.ia_agent_url, 'Port:', this.config.ia_agent_port);
         }
     }
 
@@ -7462,7 +7485,7 @@ async function editAIAgent(agentId) {
 // Carregar provedores de IA disponíveis
 async function loadAvailableProviders() {
     try {
-        const response = await fetch('http://localhost:3006/providers', {
+        const response = await fetch(`http://localhost:${window.app.config.ia_agent_port}/providers`, {
             method: 'GET',
             headers: {
                 'Content-Type': 'application/json'
@@ -7520,7 +7543,7 @@ window.loadModelsForProvider = async function loadModelsForProvider() {
         modelSelect.innerHTML = '<option value="">Carregando modelos...</option>';
         modelSelect.disabled = true;
         
-        const response = await fetch(`http://localhost:3006/providers/${selectedProvider}/models`, {
+        const response = await fetch(`http://localhost:${window.app.config.ia_agent_port}/providers/${selectedProvider}/models`, {
             method: 'GET',
             headers: {
                 'Content-Type': 'application/json'
@@ -7796,7 +7819,7 @@ async function uploadPdfToAgent(agentId, pdfFile) {
         }
         
         // Upload direto para a API do ia-agent (sem proxy)
-        const response = await fetch(`http://localhost:3006/agents/${agentId}/upload-pdf`, {
+        const response = await fetch(`http://localhost:${window.app.config.ia_agent_port}/agents/${agentId}/upload-pdf`, {
             method: 'POST',
             body: formData
         });
@@ -8034,7 +8057,7 @@ function hideProviderForm() {
 // Carregar lista de provedores
 async function loadProviders() {
     try {
-        const response = await fetch('http://localhost:3006/providers', {
+        const response = await fetch(`http://localhost:${window.app.config.ia_agent_port}/providers`, {
             method: 'GET',
             headers: {
                 'Content-Type': 'application/json'
@@ -8147,7 +8170,7 @@ function editProvider(providerId) {
 // Ver modelos do provedor
 async function viewProviderModels(providerName) {
     try {
-        const response = await fetch(`http://localhost:3006/providers/${providerName}/models`, {
+        const response = await fetch(`http://localhost:${window.app.config.ia_agent_port}/providers/${providerName}/models`, {
             method: 'GET',
             headers: {
                 'Content-Type': 'application/json'
@@ -8228,7 +8251,7 @@ async function deleteProvider(providerId, providerName) {
     }
     
     try {
-        const response = await fetch(`http://localhost:3006/providers/${providerId}`, {
+        const response = await fetch(`http://localhost:${window.app.config.ia_agent_port}/providers/${providerId}`, {
             method: 'DELETE',
             headers: {
                 'Content-Type': 'application/json'
@@ -8270,8 +8293,8 @@ async function handleProviderSubmit(event) {
     
     try {
         const url = currentProviderId 
-            ? `http://localhost:3006/providers/${currentProviderId}`
-            : 'http://localhost:3006/providers';
+            ? `http://localhost:${window.app.config.ia_agent_port}/providers/${currentProviderId}`
+            : `http://localhost:${window.app.config.ia_agent_port}/providers`;
         
         const method = currentProviderId ? 'PUT' : 'POST';
         

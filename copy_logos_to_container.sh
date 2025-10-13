@@ -6,8 +6,8 @@
 # Também sobrescreve favicon-16x16.png, favicon-32x32.png, favicon-96x96.png
 # E atualiza configurações no banco de dados
 
-CONTAINER_NAME="chatwoot-rails-1"
-DB_CONTAINER_NAME="chatwoot-postgres-1"
+CONTAINER_NAME="rails-prd"
+DB_CONTAINER_NAME="postgres-prd"
 LOGOS_DIR="./logos"
 
 echo "🚀 Iniciando cópia dos logos para o container ${CONTAINER_NAME}..."

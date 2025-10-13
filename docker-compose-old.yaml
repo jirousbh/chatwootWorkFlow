@@ -1,26 +1,18 @@
 version: '3'
 
-networks:
-  chatwoot-prd:
-    name: chatwoot-prd-network
-    driver: bridge
-
 services:
   base: &base
     image: chatwoot/chatwoot:latest
     env_file: .envinovai ## Change this file for customized env variables
     volumes:
       - ./data/storage:/app/storage
-    networks:
-      - chatwoot-prd
 
   rails:
     <<: *base
-    container_name: rails-prd
     env_file: .envinovai ## Change this file for customized env variables
     depends_on:
-      - postgres-prd
-      - redis-prd
+      - postgres
+      - redis
     ports:
       - '127.0.0.1:4500:4500'
     environment:
@@ -30,24 +22,19 @@ services:
     entrypoint: docker/entrypoints/rails.sh
     command: ['bundle', 'exec', 'rails', 's', '-p', '4500', '-b', '0.0.0.0']
     restart: always
-    networks:
-      - chatwoot-prd
 
   sidekiq:
     <<: *base
-    container_name: sidekiq-prd
     env_file: .envinovai ## Change this file for customized env variables
     depends_on:
-      - postgres-prd
-      - redis-prd
+      - postgres
+      - redis
     environment:
       - NODE_ENV=production
       - RAILS_ENV=production
       - INSTALLATION_ENV=docker
     command: ['bundle', 'exec', 'sidekiq', '-C', 'config/sidekiq.yml']
     restart: always
-    networks:
-      - chatwoot-prd
 
   # Evolution API - WhatsApp API Service
   evolution_api:
@@ -55,8 +42,8 @@ services:
     image: evoapicloud/evolution-api:latest
     restart: always
     depends_on:
-      - redis-prd
-      - postgres-prd
+      - redis
+      - postgres
     ports:
       - '127.0.0.1:8080:8080'
     volumes:
@@ -65,11 +52,8 @@ services:
       - .env-evolution
     expose:
       - 8080
-    networks:
-      - chatwoot-prd
 
-  postgres-prd:
-    container_name: postgres-prd
+  postgres:
     image: pgvector/pgvector:pg16
     restart: always
     ports:
@@ -82,11 +66,8 @@ services:
       # Please provide your own password.
       - POSTGRES_PASSWORD=invoAI@76825
       - TZ=America/Sao_Paulo
-    networks:
-      - chatwoot-prd
 
-  redis-prd:
-    container_name: redis-prd
+  redis:
     image: redis:alpine
     restart: always
     command: redis-server --requirepass invoAI@76825
@@ -96,12 +77,9 @@ services:
       - '127.0.0.1:6390:6379'
     environment:
       - REDIS_PASSWORD=invoAI@76825
-    networks:
-      - chatwoot-prd
 
   # Sistema de Workflows de Chatbot
-  chatbot-workflows-prd:
-    container_name: chatbot-workflows-prd
+  chatbot-workflows:
     build: ./workflows
     ports:
       - '127.0.0.1:3001:3001'
@@ -116,10 +94,8 @@ services:
       - ./data/workflows-uploads:/app/uploads
     restart: unless-stopped
     depends_on:
-      - postgres-prd
-      - redis-prd
-    networks:
-      - chatwoot-prd
+      - postgres
+      - redis
 
 volumes:
   evolution_instances:
