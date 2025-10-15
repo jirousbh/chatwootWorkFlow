@@ -2,7 +2,7 @@ version: '3'
 
 networks:
   chatwoot-dev:
-    name: chatwoot-dev-network
+    name: chatwoot-dev
     driver: bridge
 
 services:
