@@ -29,7 +29,7 @@ if (!fs.existsSync(logDir)) {
 }
 
 // ===== CONFIGURAÇÕES GLOBAIS =====
-const CHATWOOT_BASE_URL = process.env.CHATWOOT_BASE_URL || 'https://crm.inovaianalytics.com.br';
+const CHATWOOT_BASE_URL = process.env.CHATWOOT_BASE_URL || 'https://crm-dev.inovaianalytics.com.br';
 const CHATWOOT_API_TOKEN = process.env.CHATWOOT_API_TOKEN;
 const CHATWOOT_ACCOUNT_ID = process.env.CHATWOOT_ACCOUNT_ID || '1'; // Mantido para compatibilidade
 
@@ -1264,8 +1264,19 @@ async function assignConversationToTeamMember(conversationId, teamId, options = 
       return;
     }
 
-    // Atribuir conversa ao agente selecionado
-    await assignConversationToAgent(conversationId, selectedAgent.id, accountId);
+    // Primeiro, atribuir ao time
+    await axios.post(
+      `${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/conversations/${conversationId}/assignments`,
+      { team_id: teamId },
+      { headers: { 'api_access_token': CHATWOOT_API_TOKEN } }
+    );
+    
+    // Depois, atribuir ao agente específico
+    await axios.post(
+      `${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/conversations/${conversationId}/assignments`,
+      { assignee_id: selectedAgent.id },
+      { headers: { 'api_access_token': CHATWOOT_API_TOKEN } }
+    );
     
     console.log(`✅ Conversa ${conversationId} atribuída ao agente ${selectedAgent.name} (${selectedAgent.id}) do time ${teamId}`);
     

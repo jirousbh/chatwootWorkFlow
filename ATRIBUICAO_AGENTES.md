@@ -12,22 +12,22 @@ O sistema agora suporta atribuição automática de conversas para agentes espec
 - Não exclui administradores
 
 ### `assignConversationToTeamMember(conversationId, teamId, options)`
-- Atribui a conversa a um **agente específico** do time
-- Filtra apenas agentes não-administradores e ativos
+- Atribui a conversa a um **agente específico** do time **E ao time**
+- Filtra apenas agentes não-administradores
 - Usa estratégias organizadas de distribuição
-- Fallback para atribuição ao time se não houver agentes disponíveis
+- Fallback para atribuição apenas ao time se não houver agentes disponíveis
 
 ## Estratégias de Atribuição
 
-### 1. Round Robin (`round_robin`) - Padrão
-- Distribui as conversas de forma rotativa entre os agentes
-- Mantém controle no banco de dados para garantir distribuição equilibrada
-- Ideal para times com carga de trabalho similar
-
-### 2. Menos Ocupado (`least_busy`)
+### 1. Menos Ocupado (`least_busy`) - Padrão
 - Atribui ao agente com menos conversas ativas
 - Verifica a carga de trabalho real de cada agente
 - Ideal para balanceamento dinâmico de carga
+
+### 2. Round Robin (`round_robin`)
+- Distribui as conversas de forma rotativa entre os agentes
+- Mantém controle no banco de dados para garantir distribuição equilibrada
+- Ideal para times com carga de trabalho similar
 
 ### 3. Aleatório (`random`)
 - Seleção aleatória entre agentes disponíveis
@@ -43,7 +43,7 @@ O sistema agora suporta atribuição automática de conversas para agentes espec
   next_block: "technical_support",
   assign_team: 1, // ID do time
   assign_team_member: true, // Ativar atribuição para agente específico
-  assignment_strategy: "round_robin" // Estratégia (opcional)
+  assignment_strategy: "least_busy" // Estratégia (opcional, padrão: least_busy)
 }
 ```
 
@@ -56,7 +56,7 @@ O sistema agora suporta atribuição automática de conversas para agentes espec
   message: "Você será direcionado para um especialista...",
   assign_team: 1,
   assign_team_member: true,
-  assignment_strategy: "least_busy",
+  assignment_strategy: "least_busy", // Padrão: least_busy
   pause_bot: true // Pausar bot após atribuição
 }
 ```
@@ -73,7 +73,7 @@ POST /apiworkflow/conversations/{conversationId}/assign-team-member
 ```json
 {
   "teamId": 1,
-  "strategy": "round_robin"
+  "strategy": "least_busy"
 }
 ```
 
@@ -115,7 +115,7 @@ GET /apiworkflow/teams/{teamId}/agents
           next_block: "technical_support",
           assign_team: 1,
           assign_team_member: true,
-          assignment_strategy: "round_robin"
+          assignment_strategy: "least_busy"
         },
         {
           text: "Vendas",
@@ -132,7 +132,7 @@ GET /apiworkflow/teams/{teamId}/agents
       message: "Direcionando para especialista...",
       assign_team: 1,
       assign_team_member: true,
-      assignment_strategy: "round_robin",
+      assignment_strategy: "least_busy",
       pause_bot: true
     }
   ]
@@ -145,7 +145,8 @@ A função `assignConversationToTeamMember` aplica os seguintes filtros:
 
 1. **Pertence ao time**: Agente deve estar no time especificado
 2. **Não é administrador**: `role !== 'administrator'`
-3. **Está ativo**: `status !== 'offline'` e `available_name !== 'offline'`
+
+**Nota**: Agentes offline também são incluídos na atribuição, permitindo que conversas sejam atribuídas mesmo quando o agente não está disponível no momento.
 
 ## Fallback
 
@@ -177,10 +178,11 @@ CREATE TABLE team_round_robin (
 4. **Fallback Seguro**: Sistema continua funcionando mesmo sem agentes disponíveis
 5. **Organização**: Atribuição automática e organizada
 6. **Monitoramento**: Logs detalhados para acompanhamento
+7. **Dupla Atribuição**: Conversa fica atribuída tanto ao agente quanto ao time
 
 ## Considerações
 
 - A estratégia `least_busy` faz consultas adicionais à API do Chatwoot
 - O round-robin mantém estado no banco de dados
 - Administradores são sempre excluídos da atribuição automática
-- O sistema verifica disponibilidade em tempo real 
+- Agentes offline podem receber atribuições (não há filtro por status de disponibilidade) 
