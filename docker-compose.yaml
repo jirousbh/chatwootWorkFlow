@@ -131,7 +131,7 @@ services:
     environment:
       - TZ=America/Sao_Paulo
     volumes:
-      - ./data/ia-agent:/data/ia-agent  # Volume para dados dos agentes
+      - ./data/ia-agent:/data/ia-agent-dev  # Volume para dados dos agentes
     restart: unless-stopped
     depends_on:
       - postgres-prd
