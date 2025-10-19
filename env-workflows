@@ -16,5 +16,5 @@ POSTGRES_PASSWORD=invoAI@76825
 WORKFLOWS_PORT=3001 
 
 # Configurações do Agente de IA
-IA_AGENT_URL=http://ia-agent-prd:3008
+IA_AGENT_URL=http://ia-agent-prd:3006
 IA_AGENT_PORT=3008

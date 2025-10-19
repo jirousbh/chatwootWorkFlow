@@ -1,0 +1,1 @@
+docker compose -f docker-compose-dev.yaml run --rm rails bundle exec rails db:chatwoot_prepare
