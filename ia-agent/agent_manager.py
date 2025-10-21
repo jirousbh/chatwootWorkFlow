@@ -12,9 +12,10 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores.faiss import FAISS
 from langchain_groq import ChatGroq
-from langchain.memory import ConversationBufferMemory
-from langchain.chains.conversational_retrieval.base import ConversationalRetrievalChain
-from langchain.prompts import PromptTemplate
+# Nova estrutura de memória do LangChain v1.0
+from langgraph.checkpoint.memory import InMemorySaver
+from langchain.agents import create_agent, AgentState
+from langchain_core.prompts import PromptTemplate
 from groq_client import GroqClient
 from google_calendar_service import GoogleCalendarService
 
@@ -29,6 +30,8 @@ class AgentManager:
         )
         # Cache de chains por agente
         self.agent_chains = {}
+        # Checkpointer para memória de conversação (LangChain v1.0)
+        self.checkpointer = InMemorySaver()
         # Cache de serviços de calendário por agente
         self.calendar_services = {}
         # Último evento criado por agente (para anexar email depois)
@@ -102,7 +105,7 @@ class AgentManager:
             return None
     
     def _get_or_create_chain(self, agent_id: str, vectorstore_path: str, 
-                           system_prompt: str, model: str, api_provider: str, temperature: float = 0.10) -> Optional[ConversationalRetrievalChain]:
+                           system_prompt: str, model: str, api_provider: str, temperature: float = 0.10) -> Optional[dict]:
         """Obtém ou cria chain para um agente"""
         try:
             # Verificar cache
@@ -127,7 +130,7 @@ class AgentManager:
                 return None
             
             # Criar prompt template personalizado usando o system_prompt
-            from langchain.prompts import PromptTemplate
+            from langchain_core.prompts import PromptTemplate
             
             # Template personalizado que inclui apenas o system_prompt do banco
             prompt_template = PromptTemplate(
@@ -142,27 +145,56 @@ Resposta:""",
                 input_variables=["context", "question"]
             )
             
-            # Configurar memória
-            memory = ConversationBufferMemory(
-                return_messages=True,
-                memory_key="chat_history",
-                output_key="answer"
-            )
+            # TODO: Implementar nova estrutura de memória do LangChain v1.0
+            # Configurar memória (temporariamente desabilitado)
+            # memory = ConversationBufferMemory(
+            #     return_messages=True,
+            #     memory_key="chat_history",
+            #     output_key="answer"
+            # )
             
             # Criar retriever
             retriever = vectorstore.as_retriever(
                 search_kwargs={"k": 4}  # Buscar 4 chunks mais relevantes
             )
             
-            # Criar chain com configuração corrigida
-            chain = ConversationalRetrievalChain.from_llm(
-                llm=llm,
-                memory=memory,
-                retriever=retriever,
-                return_source_documents=True,
-                verbose=False,
-                combine_docs_chain_kwargs={"prompt": prompt_template}
-            )
+            # Solução temporária: retornar configuração básica sem chain
+            # chain = ConversationalRetrievalChain.from_llm(
+            #     llm=llm,
+            #     memory=memory,
+            #     retriever=retriever,
+            #     return_source_documents=True,
+            #     verbose=False,
+            #     combine_docs_chain_kwargs={"prompt": prompt_template}
+            # )
+            
+            # Criar agente com nova estrutura do LangChain v1.0
+            try:
+                # Criar agente com checkpointer para memória
+                agent = create_agent(
+                    llm,
+                    tools=[],  # Por enquanto sem tools, pode ser expandido depois
+                    checkpointer=self.checkpointer,
+                    system_prompt=system_prompt
+                )
+                
+                chain = {
+                    "agent": agent,
+                    "llm": llm,
+                    "retriever": retriever,
+                    "system_prompt": system_prompt,
+                    "prompt_template": prompt_template,
+                    "checkpointer": self.checkpointer
+                }
+            except Exception as agent_error:
+                print(f"Erro ao criar agente: {agent_error}")
+                # Fallback para estrutura simples
+                chain = {
+                    "llm": llm,
+                    "retriever": retriever,
+                    "system_prompt": system_prompt,
+                    "prompt_template": prompt_template
+                }
             
             # Armazenar no cache
             self.agent_chains[cache_key] = chain
@@ -172,6 +204,38 @@ Resposta:""",
         except Exception as e:
             print(f"Erro ao criar chain: {e}")
             return None
+    
+    def _simple_chat_processing(self, chain: dict, message: str) -> str:
+        """Processamento simples de chat sem memória (fallback)"""
+        try:
+            # Usar retriever para buscar contexto relevante
+            if "retriever" in chain:
+                try:
+                    # Tentar método invoke primeiro (LangChain v1.0)
+                    docs = chain["retriever"].invoke(message)
+                except AttributeError:
+                    try:
+                        # Fallback para método antigo
+                        docs = chain["retriever"].get_relevant_documents(message)
+                    except AttributeError:
+                        # Se nenhum método funcionar, usar lista vazia
+                        docs = []
+                
+                context = "\n".join([doc.page_content for doc in docs[:3]])
+            else:
+                context = ""
+            
+            # Usar LLM diretamente
+            if "llm" in chain:
+                system_prompt = chain.get("system_prompt", "")
+                full_prompt = f"{system_prompt}\n\nContexto: {context}\n\nPergunta: {message}\n\nResposta:"
+                response = chain["llm"].invoke(full_prompt)
+                return response.content if hasattr(response, 'content') else str(response)
+            else:
+                return "Erro: LLM não disponível."
+        except Exception as e:
+            print(f"Erro no processamento simples: {e}")
+            return "Erro ao processar mensagem."
     
     def chat_with_agent(self, agent_id: str, vectorstore_path: str, 
                         message: str, system_prompt: str, model: str, api_provider: str,
@@ -192,9 +256,34 @@ Resposta:""",
                     "transfer_reason": None
                 }
             
-            # Processar mensagem
-            response = chain.invoke({"question": message})
-            answer = response.get("answer", "Não foi possível gerar uma resposta.")
+            # Processar mensagem com nova estrutura
+            if "agent" in chain:
+                # Usar agente com memória (LangChain v1.0)
+                try:
+                    # Criar thread_id único para esta conversa
+                    thread_id = f"{agent_id}_{hash(message) % 10000}"
+                    
+                    # Invocar agente com memória
+                    response = chain["agent"].invoke(
+                        {"messages": [{"role": "user", "content": message}]},
+                        {"configurable": {"thread_id": thread_id}}
+                    )
+                    # Extrair resposta corretamente do AIMessage
+                    if "messages" in response and response["messages"]:
+                        last_message = response["messages"][-1]
+                        if hasattr(last_message, 'content'):
+                            answer = last_message.content
+                        else:
+                            answer = str(last_message)
+                    else:
+                        answer = "Não foi possível gerar uma resposta."
+                except Exception as e:
+                    print(f"Erro ao usar agente com memória: {e}")
+                    # Fallback para processamento simples
+                    answer = self._simple_chat_processing(chain, message)
+            else:
+                # Fallback para estrutura antiga
+                answer = self._simple_chat_processing(chain, message)
             
             # PRIMEIRO: Verificar se é uma consulta de reuniões existentes (prioridade máxima)
             print(f"🔍 DEBUG - Iniciando detecção de consulta de reuniões...")
