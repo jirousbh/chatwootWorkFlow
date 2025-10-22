@@ -7485,7 +7485,8 @@ async function editAIAgent(agentId) {
 // Carregar provedores de IA disponíveis
 async function loadAvailableProviders() {
     try {
-        const response = await fetch(`http://localhost:${window.app.config.ia_agent_port}/providers`, {
+        // Usar o endpoint local do chatbot-workflow-system
+        const response = await fetch('/providers', {
             method: 'GET',
             headers: {
                 'Content-Type': 'application/json'
@@ -7543,7 +7544,7 @@ window.loadModelsForProvider = async function loadModelsForProvider() {
         modelSelect.innerHTML = '<option value="">Carregando modelos...</option>';
         modelSelect.disabled = true;
         
-        const response = await fetch(`http://localhost:${window.app.config.ia_agent_port}/providers/${selectedProvider}/models`, {
+        const response = await fetch(`/providers/${selectedProvider}/models`, {
             method: 'GET',
             headers: {
                 'Content-Type': 'application/json'
@@ -7561,8 +7562,8 @@ window.loadModelsForProvider = async function loadModelsForProvider() {
         
         models.forEach(model => {
             const option = document.createElement('option');
-            option.value = model.id;
-            option.textContent = `${model.id} - ${model.description}`;
+            option.value = model.name;
+            option.textContent = `${model.name} (${model.description})`;
             modelSelect.appendChild(option);
         });
         

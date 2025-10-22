@@ -8750,6 +8750,72 @@ app.get('/public-preview/:id', async (req, res) => {
   }
 });
 
+// Endpoints para providers de IA
+app.get('/providers', async (req, res) => {
+  try {
+    // Fazer requisição para o agente de IA
+    const response = await fetch(`${IA_AGENT_URL}/providers`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(`Erro ao buscar providers do agente de IA: ${response.status}`);
+    }
+
+    const data = await response.json();
+    
+    // Retornar os dados do agente de IA
+    res.json({
+      success: true,
+      providers: data.providers || []
+    });
+  } catch (error) {
+    console.error('Erro ao buscar providers:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Erro interno do servidor',
+      details: error.message
+    });
+  }
+});
+
+app.get('/providers/:name/models', async (req, res) => {
+  try {
+    const { name } = req.params;
+    
+    // Fazer requisição para o agente de IA
+    const response = await fetch(`${IA_AGENT_URL}/providers/${name}/models`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(`Erro ao buscar modelos do provider ${name}: ${response.status}`);
+    }
+
+    const data = await response.json();
+    
+    // Retornar os dados do agente de IA
+    res.json({
+      success: true,
+      provider: name,
+      models: data.models || []
+    });
+  } catch (error) {
+    console.error('Erro ao buscar modelos do provider:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Erro interno do servidor',
+      details: error.message
+    });
+  }
+});
+
 // Health check
 app.get('/health', (req, res) => {
   res.json({ 

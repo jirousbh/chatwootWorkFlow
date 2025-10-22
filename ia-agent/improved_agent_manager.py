@@ -258,34 +258,9 @@ Assim que receber seu WhatsApp, poderei verificar sua agenda e sugerir horários
                     "transfer_reason": None
                 }
             
-            # Processar mensagem com IA usando nova estrutura
-            if "agent" in chain:
-                # Usar agente com memória (LangChain v1.0)
-                try:
-                    # Criar thread_id único para esta conversa
-                    thread_id = f"{agent_id}_{hash(message) % 10000}"
-                    
-                    # Invocar agente com memória
-                    response = chain["agent"].invoke(
-                        {"messages": [{"role": "user", "content": message}]},
-                        {"configurable": {"thread_id": thread_id}}
-                    )
-                    # Extrair resposta corretamente do AIMessage
-                    if "messages" in response and response["messages"]:
-                        last_message = response["messages"][-1]
-                        if hasattr(last_message, 'content'):
-                            answer = last_message.content
-                        else:
-                            answer = str(last_message)
-                    else:
-                        answer = "Não foi possível gerar uma resposta."
-                except Exception as e:
-                    print(f"Erro ao usar agente com memória: {e}")
-                    # Fallback para processamento simples
-                    answer = self._simple_chat_processing(chain, message)
-            else:
-                # Fallback para estrutura antiga
-                answer = self._simple_chat_processing(chain, message)
+            # Processar mensagem com IA usando _simple_chat_processing (que funciona perfeitamente)
+            print(f"🔍 DEBUG - Usando _simple_chat_processing para garantir uso do vectorstore")
+            answer = self._simple_chat_processing(chain, message)
             
             # Detectar se deve transferir para humano
             transfer_analysis = self._analyze_transfer_need(message, answer)
@@ -1407,12 +1382,22 @@ Resposta:""",
             
             # Criar agente com nova estrutura do LangChain v1.0
             try:
-                # Criar agente com checkpointer para memória
+                # Criar agente com checkpointer para memória E retriever
+                from langchain.agents import create_agent
+                
+                # System prompt que inclui instruções para usar o contexto
+                enhanced_system_prompt = f"""{system_prompt}
+
+IMPORTANTE: Você tem acesso ao contexto dos documentos através da variável {{context}}. 
+Sempre use as informações dos documentos para responder às perguntas do usuário.
+Se não encontrar a informação nos documentos, diga claramente que não encontrou essa informação em sua base de dados."""
+                
+                # Criar agente com retriever integrado
                 agent = create_agent(
                     llm,
                     tools=[],  # Por enquanto sem tools, pode ser expandido depois
-                    checkpointer=self.checkpointer,
-                    system_prompt=system_prompt
+                    system_prompt=enhanced_system_prompt,
+                    checkpointer=self.checkpointer
                 )
                 
                 chain = {
@@ -1450,28 +1435,41 @@ Resposta:""",
                 try:
                     # Tentar método invoke primeiro (LangChain v1.0)
                     docs = chain["retriever"].invoke(message)
+                    print(f"🔍 DEBUG - Retriever encontrou {len(docs)} documentos")
+                    if docs:
+                        print(f"   Primeiro doc: {docs[0].page_content[:100]}...")
                 except AttributeError:
                     try:
                         # Fallback para método antigo
                         docs = chain["retriever"].get_relevant_documents(message)
+                        print(f"🔍 DEBUG - Retriever (método antigo) encontrou {len(docs)} documentos")
                     except AttributeError:
                         # Se nenhum método funcionar, usar lista vazia
                         docs = []
+                        print("🔍 DEBUG - Retriever falhou, usando lista vazia")
                 
                 context = "\n".join([doc.page_content for doc in docs[:3]])
+                print(f"🔍 DEBUG - Contexto extraído: {len(context)} caracteres")
             else:
                 context = ""
+                print("🔍 DEBUG - Sem retriever na chain!")
             
             # Usar LLM diretamente
             if "llm" in chain:
                 system_prompt = chain.get("system_prompt", "")
-                full_prompt = f"{system_prompt}\n\nContexto: {context}\n\nPergunta: {message}\n\nResposta:"
+                full_prompt = f"{system_prompt}\n\nContexto dos documentos:\n{context}\n\nMensagem do usuário: {message}\n\nResposta:"
+                print(f"🔍 DEBUG - Enviando prompt para LLM...")
                 response = chain["llm"].invoke(full_prompt)
-                return response.content if hasattr(response, 'content') else str(response)
+                answer = response.content if hasattr(response, 'content') else str(response)
+                print(f"🔍 DEBUG - Resposta do LLM: {answer[:100]}...")
+                return answer
             else:
+                print("🔍 DEBUG - Sem LLM na chain!")
                 return "Erro: LLM não disponível."
         except Exception as e:
-            print(f"Erro no processamento simples: {e}")
+            print(f"❌ Erro no processamento simples: {e}")
+            import traceback
+            traceback.print_exc()
             return "Erro ao processar mensagem."
     
     def load_vectorstore(self, vectorstore_path: str) -> Optional[FAISS]:
