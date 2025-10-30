@@ -27,10 +27,15 @@ REDIS_PORT="6390"
 REDIS_PASSWORD="invoAI@76825"
 
 # Pastas para backup
+# DATA_DIRS=(
+#     "data/evolution_instances"
+#     "data/redis"
+#     "data/storage"
+# )
+
 DATA_DIRS=(
     "data/evolution_instances"
     "data/redis"
-    "data/storage"
 )
 
 # Função para log

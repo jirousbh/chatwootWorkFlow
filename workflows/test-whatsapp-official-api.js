@@ -21,9 +21,21 @@ function isWhatsAppAPIInbox(inbox) {
   return inbox.channel_type === 'Channel::Whatsapp';
 }
 
+// Função utilitária para identificar caixas de entrada do tipo Website
+function isWebsiteInbox(inbox) {
+  return inbox.channel_type === 'Channel::Website' || 
+         inbox.channel_type === 'Channel::Web' ||
+         inbox.channel_type === 'Channel::LiveChat' ||
+         inbox.channel_type === 'Channel::WebWidget' ||
+         (inbox.name && inbox.name.toLowerCase().includes('website')) ||
+         (inbox.name && inbox.name.toLowerCase().includes('site')) ||
+         (inbox.name && inbox.name.toLowerCase().includes('web')) ||
+         (inbox.name && inbox.name.toLowerCase().includes('livechat'));
+}
+
 // Função utilitária para verificar se uma caixa é suportada
 function isSupportedInbox(inbox) {
-  return isWhatsAppAPIInbox(inbox) || isEvolutionAPIInbox(inbox);
+  return isWhatsAppAPIInbox(inbox) || isEvolutionAPIInbox(inbox) || isWebsiteInbox(inbox);
 }
 
 // Configurações

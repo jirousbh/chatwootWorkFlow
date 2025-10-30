@@ -80,8 +80,20 @@ function isEvolutionAPIInbox(inbox) {
             inbox.provider_config.webhook_url.includes('evolution'));
 }
 
+// Função utilitária para identificar caixas de entrada do tipo Website
+function isWebsiteInbox(inbox) {
+    return inbox.channel_type === 'Channel::Website' || 
+           inbox.channel_type === 'Channel::Web' ||
+           inbox.channel_type === 'Channel::LiveChat' ||
+           inbox.channel_type === 'Channel::WebWidget' ||
+           (inbox.name && inbox.name.toLowerCase().includes('website')) ||
+           (inbox.name && inbox.name.toLowerCase().includes('site')) ||
+           (inbox.name && inbox.name.toLowerCase().includes('web')) ||
+           (inbox.name && inbox.name.toLowerCase().includes('livechat'));
+}
+
 function isSupportedInbox(inbox) {
-    return isWhatsAppAPIInbox(inbox) || isEvolutionAPIInbox(inbox);
+    return isWhatsAppAPIInbox(inbox) || isEvolutionAPIInbox(inbox) || isWebsiteInbox(inbox);
 }
 
 // Chatwoot Workflows Frontend Application
@@ -362,7 +374,7 @@ class ChatwootWorkflowsApp {
                                  // Verificar se é uma caixa suportada (WhatsApp API ou EvolutionAPI)
                  if (!isSupportedInbox(inboxInfo)) {
                      console.warn(`⚠️ Caixa de entrada não é suportada: ${inboxInfo.channel_type}`);
-                     this.showAlert(`Esta caixa de entrada (${inboxInfo.name}) não é suportada. Apenas caixas do WhatsApp API e Evolution API são suportadas para campanhas.`, 'warning');
+                     this.showAlert(`Esta caixa de entrada (${inboxInfo.name}) não é suportada. Apenas caixas do WhatsApp API, Evolution API e Website são suportadas para campanhas.`, 'warning');
                      return false;
                  }
                  
@@ -377,7 +389,7 @@ class ChatwootWorkflowsApp {
                  // Verificar se é uma caixa suportada (WhatsApp API ou EvolutionAPI)
                  if (!isSupportedInbox(selectedInboxInfo)) {
                      console.warn(`⚠️ Caixa de entrada não é suportada: ${selectedInboxInfo.channel_type}`);
-                     this.showAlert(`Esta caixa de entrada (${selectedInboxInfo.name}) não é suportada. Apenas caixas do WhatsApp API e Evolution API são suportadas para campanhas.`, 'warning');
+                     this.showAlert(`Esta caixa de entrada (${selectedInboxInfo.name}) não é suportada. Apenas caixas do WhatsApp API, Evolution API e Website são suportadas para campanhas.`, 'warning');
                      return false;
                  }
                  
@@ -977,6 +989,9 @@ class ChatwootWorkflowsApp {
                     } else if (isEvolutionAPIInbox(inbox)) {
                         option.textContent = `🔄 ${inbox.name} (Evolution API)`;
                         console.log(`📋 Caixa Evolution API adicionada: ${inbox.name} (ID: ${inbox.id})`);
+                    } else if (isWebsiteInbox(inbox)) {
+                        option.textContent = `🌐 ${inbox.name} (Website)`;
+                        console.log(`📋 Caixa Website adicionada: ${inbox.name} (ID: ${inbox.id})`);
                     } else {
                         option.textContent = `❌ ${inbox.name} (Não suportado)`;
                         option.disabled = true;
@@ -1115,6 +1130,9 @@ class ChatwootWorkflowsApp {
                 } else if (isEvolutionAPIInbox(inbox)) {
                     option.textContent = `🔄 ${inbox.name} (Evolution API)`;
                     console.log(`📋 Caixa Evolution API adicionada: ${inbox.name} (ID: ${inbox.id})`);
+                } else if (isWebsiteInbox(inbox)) {
+                    option.textContent = `🌐 ${inbox.name} (Website)`;
+                    console.log(`📋 Caixa Website adicionada: ${inbox.name} (ID: ${inbox.id})`);
                 } else {
                     option.textContent = `❌ ${inbox.name} (Não suportado)`;
                     option.disabled = true;
@@ -1905,6 +1923,8 @@ class ChatwootWorkflowsApp {
                 option.textContent = `📱 ${inbox.name} (WhatsApp API)`;
             } else if (isEvolutionAPIInbox(inbox)) {
                 option.textContent = `🔄 ${inbox.name} (Evolution API)`;
+            } else if (isWebsiteInbox(inbox)) {
+                option.textContent = `🌐 ${inbox.name} (Website)`;
             } else {
                 option.textContent = `❌ ${inbox.name} (Não suportado)`;
                 option.disabled = true;
@@ -3540,6 +3560,8 @@ class ChatwootWorkflowsApp {
                         option.textContent = `📱 ${inbox.name} (WhatsApp API)`;
                     } else if (isEvolutionAPIInbox(inbox)) {
                         option.textContent = `🔄 ${inbox.name} (Evolution API)`;
+                    } else if (isWebsiteInbox(inbox)) {
+                        option.textContent = `🌐 ${inbox.name} (Website)`;
                     } else {
                         option.textContent = `❌ ${inbox.name} (Não suportado)`;
                         option.disabled = true;
@@ -7820,7 +7842,7 @@ async function uploadPdfToAgent(agentId, pdfFile) {
         }
         
         // Upload direto para a API do ia-agent (sem proxy)
-        const response = await fetch(`http://localhost:${window.app.config.ia_agent_port}/agents/${agentId}/upload-pdf`, {
+        const response = await fetch(`/agents/${agentId}/upload-pdf`, {
             method: 'POST',
             body: formData
         });
@@ -8058,7 +8080,7 @@ function hideProviderForm() {
 // Carregar lista de provedores
 async function loadProviders() {
     try {
-        const response = await fetch(`http://localhost:${window.app.config.ia_agent_port}/providers`, {
+        const response = await fetch('/providers', {
             method: 'GET',
             headers: {
                 'Content-Type': 'application/json'
@@ -8171,7 +8193,7 @@ function editProvider(providerId) {
 // Ver modelos do provedor
 async function viewProviderModels(providerName) {
     try {
-        const response = await fetch(`http://localhost:${window.app.config.ia_agent_port}/providers/${providerName}/models`, {
+        const response = await fetch(`/providers/${providerName}/models`, {
             method: 'GET',
             headers: {
                 'Content-Type': 'application/json'
@@ -8252,7 +8274,7 @@ async function deleteProvider(providerId, providerName) {
     }
     
     try {
-        const response = await fetch(`http://localhost:${window.app.config.ia_agent_port}/providers/${providerId}`, {
+        const response = await fetch(`/providers/${providerId}`, {
             method: 'DELETE',
             headers: {
                 'Content-Type': 'application/json'
@@ -8294,8 +8316,8 @@ async function handleProviderSubmit(event) {
     
     try {
         const url = currentProviderId 
-            ? `http://localhost:${window.app.config.ia_agent_port}/providers/${currentProviderId}`
-            : `http://localhost:${window.app.config.ia_agent_port}/providers`;
+            ? `/providers/${currentProviderId}`
+            : '/providers';
         
         const method = currentProviderId ? 'PUT' : 'POST';
         

@@ -75,7 +75,7 @@ SMTP_DOMAIN=localhost
 # Set the value as "localhost" or your SMTP address in other environments
 # If SMTP_ADDRESS is empty, Chatwoot would try to use sendmail(postfix)
 SMTP_ADDRESS=mail.inovaianalytics.com.br
-SMTP_PORT=465
+SMTP_PORT=587
 SMTP_USERNAME=noreply@inovaianalytics.com.br
 SMTP_PASSWORD=InovAI@76825
 # plain,login,cram_md5

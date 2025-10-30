@@ -543,6 +543,9 @@ def chat_with_agent(agent_id):
         chat_history = data.get('chat_history', [])
         whatsapp = data.get('whatsapp', None)
         contact_name = data.get('contact_name', None)
+        conversation_id = data.get('conversation_id', None)
+        account_id = data.get('account_id', None)
+        inbox_id = data.get('inbox_id', None)
         
         if not message:
             return jsonify({
@@ -571,7 +574,10 @@ def chat_with_agent(agent_id):
                 agent.use_google_meeting,
                 agent.temperature,
                 agent.calendar_enabled,
-                contact_name
+                contact_name,
+                conversation_id,
+                account_id,
+                inbox_id
             )
         else:
             # Usar system_prompt para conversa normal (fluxo antigo)

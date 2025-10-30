@@ -512,7 +512,36 @@ END:VCALENDAR"""
                 # Verificar se o evento contém o WhatsApp na descrição
                 description = event.get('description', '')
                 
-                if whatsapp_number in description:
+                # Tentar extrair WhatsApp da descrição (formato: <!-- METADATA_START --> WHATSAPP: numero <!-- METADATA_END -->)
+                whatsapp_in_description = None
+                import re
+                metadata_pattern = r'<!-- METADATA_START -->\s*WHATSAPP:\s*([^<]+)\s*<!-- METADATA_END -->'
+                match = re.search(metadata_pattern, description)
+                if match:
+                    whatsapp_in_description = match.group(1).strip()
+                
+                # Normalizar WhatsApp da busca
+                search_whatsapp_normalized = re.sub(r'[^\d]', '', whatsapp_number)
+                if not search_whatsapp_normalized.startswith('55') and len(search_whatsapp_normalized) >= 10:
+                    search_whatsapp_normalized = f"55{search_whatsapp_normalized}"
+                
+                # Verificar se encontrou WhatsApp na descrição
+                found_match = False
+                if whatsapp_in_description:
+                    # Normalizar WhatsApp da descrição
+                    desc_whatsapp_normalized = re.sub(r'[^\d]', '', whatsapp_in_description)
+                    if not desc_whatsapp_normalized.startswith('55') and len(desc_whatsapp_normalized) >= 10:
+                        desc_whatsapp_normalized = f"55{desc_whatsapp_normalized}"
+                    
+                    # Comparar números normalizados
+                    if desc_whatsapp_normalized == search_whatsapp_normalized:
+                        found_match = True
+                else:
+                    # Fallback: buscar por substring se não encontrar no metadata
+                    if whatsapp_number in description or search_whatsapp_normalized in description:
+                        found_match = True
+                
+                if found_match:
                     # Extrair dados do evento
                     start = event['start'].get('dateTime', event['start'].get('date'))
                     end = event['end'].get('dateTime', event['end'].get('date'))
@@ -523,9 +552,10 @@ END:VCALENDAR"""
                         'start': start,
                         'end': end,
                         'description': description,
-                        'whatsapp': whatsapp_number,
+                        'whatsapp': whatsapp_in_description if whatsapp_in_description else whatsapp_number,
                         'created': event.get('created'),
-                        'updated': event.get('updated')
+                        'updated': event.get('updated'),
+                        'attendees': event.get('attendees', [])  # Incluir participantes com emails
                     }
                     
                     whatsapp_meetings.append(meeting_data)

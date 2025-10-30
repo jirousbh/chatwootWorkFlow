@@ -1,3 +1,68 @@
+// ===== Helper: Limpar Redis da conversa para o Agente IA =====
+async function clearAgentRedisForConversation(aiAgentId, accountId, inboxId, conversationId, phoneNumber) {
+  if (!aiAgentId) return;
+  try {
+    // Novas chaves escopadas por conta/caixa/conversa
+    const conversationScoped = [];
+    if (accountId && inboxId && conversationId) {
+      conversationScoped.push(
+        `agent:whatsapp:${accountId}:${inboxId}:${conversationId}`,
+        `agent:email:${accountId}:${inboxId}:${conversationId}`,
+        `agent:real_name:${accountId}:${inboxId}:${conversationId}`
+      );
+    }
+    // Chaves antigas escopadas por agente+conversa (legado)
+    conversationScoped.push(
+      `agent:whatsapp:${aiAgentId}:${conversationId}`,
+      `agent:email:${aiAgentId}:${conversationId}`,
+      `agent:real_name:${aiAgentId}:${conversationId}`
+    );
+    // Chaves dependentes do telefone
+    const phoneScoped = [];
+    if (phoneNumber) {
+      phoneScoped.push(
+        `agent:last_suggested_times:${aiAgentId}:${phoneNumber}`,
+        `agent:last_event:${aiAgentId}:${phoneNumber}`
+      );
+    }
+    // Padrões (necessário buscar e apagar)
+    const patterns = [];
+    if (accountId && inboxId && conversationId) {
+      patterns.push(`agent:existing_meeting_email:${accountId}:${inboxId}:${conversationId}:*`);
+    }
+    patterns.push(`agent:existing_meeting_email:${aiAgentId}:${conversationId}:*`);
+
+    // Chaves legadas (pré-escopo por conversa) — apagar para evitar resíduo
+    const legacyKeys = [
+      `agent:whatsapp:${aiAgentId}`,
+      `agent:email:${aiAgentId}`,
+      `agent:real_name:${aiAgentId}`,
+      // Informações antigas genéricas
+      `agent:last_scheduling_info:${aiAgentId}`
+    ];
+
+    // Deletar chaves diretas
+    const directKeys = [...conversationScoped, ...phoneScoped, ...legacyKeys];
+    if (directKeys.length) {
+      await redis.del(directKeys);
+    }
+
+    // Deletar por padrão
+    for (const pattern of patterns) {
+      try {
+        const keys = await redis.keys(pattern);
+        if (keys && keys.length) await redis.del(keys);
+      } catch (e) {
+        console.warn(`⚠️ Erro ao apagar chaves por padrão ${pattern}:`, e.message);
+      }
+    }
+
+    console.log(`✅ Redis limpo para agente ${aiAgentId} (account: ${accountId || 'n/a'}, inbox: ${inboxId || 'n/a'}, conversation: ${conversationId}, phone: ${phoneNumber || 'n/a'})`);
+  } catch (e) {
+    console.error('⚠️ Erro ao limpar Redis da conversa para o agente IA:', e.message);
+  }
+}
+
 const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
@@ -330,9 +395,21 @@ function isWhatsAppAPIInbox(inbox) {
   return inbox.channel_type === 'Channel::Whatsapp';
 }
 
+// Função utilitária para identificar caixas de entrada do tipo Website
+function isWebsiteInbox(inbox) {
+  return inbox.channel_type === 'Channel::Website' || 
+         inbox.channel_type === 'Channel::Web' ||
+         inbox.channel_type === 'Channel::LiveChat' ||
+         inbox.channel_type === 'Channel::WebWidget' ||
+         (inbox.name && inbox.name.toLowerCase().includes('website')) ||
+         (inbox.name && inbox.name.toLowerCase().includes('site')) ||
+         (inbox.name && inbox.name.toLowerCase().includes('web')) ||
+         (inbox.name && inbox.name.toLowerCase().includes('livechat'));
+}
+
 // Função utilitária para verificar se uma caixa é suportada
 function isSupportedInbox(inbox) {
-  return isWhatsAppAPIInbox(inbox) || isEvolutionAPIInbox(inbox);
+  return isWhatsAppAPIInbox(inbox) || isEvolutionAPIInbox(inbox) || isWebsiteInbox(inbox);
 }
 
 // Cache para informações de caixas (evitar chamadas repetidas à API)
@@ -758,72 +835,22 @@ async function initializeDatabase() {
       ON button_debounce(processed_at);
     `);
 
-    // NOVA: Tabela para agentes IA
+    // Tabela simples para vincular workflows a agentes IA
     await pool.query(`
-      CREATE TABLE IF NOT EXISTS ai_agents (
-        id VARCHAR(36) PRIMARY KEY,
-        name VARCHAR(255) NOT NULL,
-        api_provider VARCHAR(50) DEFAULT 'groq',
-        model VARCHAR(100) NOT NULL,
-        summary_prompt TEXT NOT NULL,
-        custom_system_prompt TEXT NOT NULL,
-        pdf_filename VARCHAR(255),
-        vectorstore_path VARCHAR(500),
+      CREATE TABLE IF NOT EXISTS workflow_ai_agents (
+        id SERIAL PRIMARY KEY,
+        workflow_name VARCHAR(255) NOT NULL UNIQUE,
+        ai_agent_id VARCHAR(36) NOT NULL,
         is_active BOOLEAN DEFAULT true,
-        created_by INTEGER REFERENCES system_users(id),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
 
-    // NOVA: Tabela para vincular agentes IA aos workflows
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS workflow_ai_agents (
-        id SERIAL PRIMARY KEY,
-        workflow_name VARCHAR(255) NOT NULL,
-        ai_agent_id VARCHAR(36) REFERENCES ai_agents(id) ON DELETE SET NULL,
-        is_active BOOLEAN DEFAULT true,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE(workflow_name)
-      )
-    `);
-
-    // Migração: Alterar tipo de ID para VARCHAR se necessário
-    try {
-      await pool.query(`
-        ALTER TABLE ai_agents 
-        ALTER COLUMN id TYPE VARCHAR(36);
-      `);
-    } catch (error) {
-      // Ignorar erro se a coluna já for VARCHAR
-      console.log('Coluna ai_agents.id já é VARCHAR ou erro esperado:', error.message);
-    }
-    
-    try {
-      await pool.query(`
-        ALTER TABLE workflow_ai_agents 
-        ALTER COLUMN ai_agent_id TYPE VARCHAR(36);
-      `);
-    } catch (error) {
-      // Ignorar erro se a coluna já for VARCHAR
-      console.log('Coluna workflow_ai_agents.ai_agent_id já é VARCHAR ou erro esperado:', error.message);
-    }
-
-    // Criar índices para agentes IA
-    await pool.query(`
-      CREATE INDEX IF NOT EXISTS idx_ai_agents_active 
-      ON ai_agents(is_active);
-    `);
-    
+    // Criar índice para workflow_ai_agents
     await pool.query(`
       CREATE INDEX IF NOT EXISTS idx_workflow_ai_agents_workflow 
       ON workflow_ai_agents(workflow_name);
-    `);
-
-    await pool.query(`
-      CREATE INDEX IF NOT EXISTS idx_workflow_ai_agents_agent 
-      ON workflow_ai_agents(ai_agent_id);
     `);
 
     console.log('✅ Banco de dados inicializado com sucesso');
@@ -3042,8 +3069,24 @@ async function processChatwootConversation(conversation, accountId = CHATWOOT_AC
     const conversationId = conversation.id;
     const inboxId = conversation.inbox_id; // Detectar automaticamente o inbox_id
     
-    // VERIFICAÇÃO: Ignorar conversas de grupo
-    if (
+    // VERIFICAÇÃO: Verificar se a caixa de entrada é suportada
+    let inboxInfo = null;
+    try {
+      inboxInfo = await getInboxInfo(accountId, inboxId);
+      if (!inboxInfo || !isSupportedInbox(inboxInfo)) {
+        console.log(`🚫 Ignorando conversa de caixa não suportada - ID: ${conversationId}, Inbox: ${inboxId}, Tipo: ${inboxInfo?.channel_type || 'desconhecido'}`);
+        return;
+      }
+      //console.log(`✅ Processando conversa de caixa suportada - ID: ${conversationId}, Inbox: ${inboxId}, Tipo: ${inboxInfo.channel_type}`);
+    } catch (error) {
+      console.warn(`⚠️ Erro ao verificar informações da caixa ${inboxId}:`, error.message);
+      // Continuar processamento mesmo com erro na verificação da caixa
+    }
+    
+    // VERIFICAÇÃO: Ignorar conversas de grupo (exceto para caixas de Website)
+    const isWebsiteChannel = inboxInfo && isWebsiteInbox(inboxInfo);
+    
+    if (!isWebsiteChannel && (
         conversation.phone_number === null ||
         conversation.conversation_type === 'group' || 
         conversation.conversation_type === 'team' ||
@@ -3053,8 +3096,22 @@ async function processChatwootConversation(conversation, accountId = CHATWOOT_AC
         conversation.meta?.channel_type === 'multiple' ||
         conversation.meta?.sender?.phone_number === null ||
         (conversation.meta?.sender?.name && conversation.meta.sender.name.toLowerCase().includes('(group)')) ||
-        (conversation.meta?.sender?.identifier && conversation.meta.sender.identifier.includes('@g.us'))) {
+        (conversation.meta?.sender?.identifier && conversation.meta.sender.identifier.includes('@g.us')))) {
       //console.log(`👥 Ignorando conversa de grupo/team - ID: ${conversationId}, Name: ${conversation.meta?.sender?.name}`);
+      return;
+    }
+    
+    // Para caixas de Website, verificar apenas conversas de grupo (não telefone)
+    if (isWebsiteChannel && (
+        conversation.conversation_type === 'group' || 
+        conversation.conversation_type === 'team' ||
+        conversation.conversation_type === 'multiple' ||
+        conversation.meta?.channel_type === 'group' ||
+        conversation.meta?.channel_type === 'team' ||
+        conversation.meta?.channel_type === 'multiple' ||
+        (conversation.meta?.sender?.name && conversation.meta.sender.name.toLowerCase().includes('(group)')) ||
+        (conversation.meta?.sender?.identifier && conversation.meta.sender.identifier.includes('@g.us')))) {
+      //console.log(`👥 Ignorando conversa de grupo em Website - ID: ${conversationId}, Name: ${conversation.meta?.sender?.name}`);
       return;
     }
     
@@ -3066,8 +3123,14 @@ async function processChatwootConversation(conversation, accountId = CHATWOOT_AC
       ? conversation.meta.sender.phone_number
       : null;
     
-    // Usar o ID real do contato se disponível, senão usar o número de telefone como fallback
-    const contactId = realContactId || phoneNumber;
+    // Para caixas de Website, usar apenas o ID do contato (não telefone)
+    // Para outras caixas, usar ID do contato ou telefone como fallback
+    let contactId;
+    if (isWebsiteChannel) {
+      contactId = realContactId;
+    } else {
+      contactId = realContactId || phoneNumber;
+    }
     
     if (!contactId) {
       console.error('❌ Não foi possível extrair o contactId da conversa:', JSON.stringify(conversation));
@@ -3075,16 +3138,17 @@ async function processChatwootConversation(conversation, accountId = CHATWOOT_AC
     }
     
     // ===== VERIFICAÇÃO DE CONTATO EVOLUTIONAPI =====
-    // Verificar se o contato é o EvolutionAPI pelo nome ou telefone
+    // Verificar se o contato é o EvolutionAPI pelo nome ou telefone (apenas para caixas não-Website)
     const contactName = conversation.meta?.sender?.name || '';
     
-    const isEvolutionAPI = contactName.toLowerCase().includes('evolutionapi') || 
-                          phoneNumber.includes('+123456') ||
-                          phoneNumber.includes('123456');
-    
-    if (isEvolutionAPI) {
-      //console.log(`🚫 Ignorando conversa do contato EvolutionAPI: ${contactName} (${phoneNumber}) - ID: ${conversationId}`);
-      return; // Não processar conversas do EvolutionAPI
+    if (!isWebsiteChannel) {
+      const isEvolutionAPI = contactName.toLowerCase().includes('evolutionapi') || 
+                            (phoneNumber && (phoneNumber.includes('+123456') || phoneNumber.includes('123456')));
+      
+      if (isEvolutionAPI) {
+        //console.log(`🚫 Ignorando conversa do contato EvolutionAPI: ${contactName} (${phoneNumber}) - ID: ${conversationId}`);
+        return; // Não processar conversas do EvolutionAPI
+      }
     }
     
     //console.log(`🔍 Processando conversa - ID: ${conversationId}, Inbox: ${inboxId}, Contato: ${contactId}, Conta: ${accountId}`);
@@ -3443,42 +3507,29 @@ async function processAgentCommand(contactId, conversationId, agentMessage, inbo
       // Remover todos os labels da conversa
       await removeAllLabelsFromConversation(conversationId, accountId);
       
-      // Limpar dados do Redis do agente IA (horários sugeridos e informações de agendamento)
-      try {
-        // Buscar o telefone do contato para limpar dados específicos do Redis
-        const contactResponse = await axios.get(
-          `${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/contacts/${contactId}`,
-          { headers: { 'api_access_token': CHATWOOT_API_TOKEN } }
-        );
-        
-        if (contactResponse.data && contactResponse.data.payload) {
-          const phoneNumber = contactResponse.data.payload.phone_number || '';
-          
-          // Buscar agente IA vinculado ao workflow (se houver)
-          const inboxWorkflow = await inboxWorkflowManager.getInboxWorkflow(accountId, inboxId);
-          if (inboxWorkflow && inboxWorkflow.workflow_name) {
-            const aiAgent = await getAIAgentByWorkflow(inboxWorkflow.workflow_name);
-            if (aiAgent && aiAgent.id) {
-              // Limpar horários sugeridos do Redis
-              const suggestedTimesKey = `agent:last_suggested_times:${aiAgent.id}:${phoneNumber}`;
-              await redis.del(suggestedTimesKey);
-              
-              // Limpar informações de agendamento do Redis
-              const schedulingInfoKey = `agent:last_scheduling_info:${aiAgent.id}`;
-              await redis.del(schedulingInfoKey);
-              
-              console.log(`✅ Dados do Redis limpos para agente IA ${aiAgent.id}`);
-            }
-          }
-        }
-      } catch (error) {
-        console.error('⚠️ Erro ao limpar dados do Redis:', error.message);
-        // Não bloquear o reset se houver erro ao limpar Redis
-      }
+      // Limpesa de Redis desativada temporariamente no comando !reset
+      // try {
+      //   const contactResponse = await axios.get(
+      //     `${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/contacts/${contactId}`,
+      //     { headers: { 'api_access_token': CHATWOOT_API_TOKEN } }
+      //   );
+      //   if (contactResponse.data && contactResponse.data.payload) {
+      //     const phoneNumber = contactResponse.data.payload.phone_number || '';
+      //     const inboxWorkflow = await inboxWorkflowManager.getInboxWorkflow(accountId, inboxId);
+      //     if (inboxWorkflow && inboxWorkflow.workflow_name) {
+      //       const aiAgent = await getAIAgentByWorkflow(inboxWorkflow.workflow_name);
+      //       if (aiAgent && aiAgent.id) {
+      //         await clearAgentRedisForConversation(aiAgent.id, accountId, inboxId, conversationId, phoneNumber);
+      //       }
+      //     }
+      //   }
+      // } catch (error) {
+      //   console.error('⚠️ Erro ao limpar dados do Redis:', error.message);
+      // }
       
       // Reativar o bot após reset
       await reactivateBotForConversation(conversationId, contactId, `agent_${agentId}_reset`);
-      await sendChatwootMessage(conversationId, '🔄 **Comando de Agente Executado**\n\nFluxo reiniciado com sucesso! Todos os dados foram limpos:\n✅ Conversas e interações\n✅ Labels (contato e conversa)\n✅ Dados do agente IA (Redis)\n\nO bot foi reativado e está pronto para uma nova conversa.', [], null, accountId, inboxId);
+      await sendChatwootMessage(conversationId, '🔄 **Comando de Agente Executado**\n\nFluxo reiniciado com sucesso! Foram limpos:\n✅ Conversas e interações\n✅ Labels (contato e conversa)\n\nO bot foi reativado e está pronto para uma nova conversa.', [], null, accountId, inboxId);
       return;
     }
     
@@ -3626,38 +3677,25 @@ async function processUserMessage(contactId, conversationId, userMessage, inboxI
       // Remover todos os labels da conversa
       await removeAllLabelsFromConversation(conversationId, accountId);
       
-      // Limpar dados do Redis do agente IA (horários sugeridos e informações de agendamento)
-      try {
-        // Buscar o telefone do contato para limpar dados específicos do Redis
-        const contactResponse = await axios.get(
-          `${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/contacts/${contactId}`,
-          { headers: { 'api_access_token': CHATWOOT_API_TOKEN } }
-        );
-        
-        if (contactResponse.data && contactResponse.data.payload) {
-          const phoneNumber = contactResponse.data.payload.phone_number || '';
-          
-          // Buscar agente IA vinculado ao workflow (se houver)
-          const inboxWorkflow = await inboxWorkflowManager.getInboxWorkflow(accountId, inboxId);
-          if (inboxWorkflow && inboxWorkflow.workflow_name) {
-            const aiAgent = await getAIAgentByWorkflow(inboxWorkflow.workflow_name);
-            if (aiAgent && aiAgent.id) {
-              // Limpar horários sugeridos do Redis
-              const suggestedTimesKey = `agent:last_suggested_times:${aiAgent.id}:${phoneNumber}`;
-              await redis.del(suggestedTimesKey);
-              
-              // Limpar informações de agendamento do Redis
-              const schedulingInfoKey = `agent:last_scheduling_info:${aiAgent.id}`;
-              await redis.del(schedulingInfoKey);
-              
-              console.log(`✅ Dados do Redis limpos para agente IA ${aiAgent.id}`);
-            }
-          }
-        }
-      } catch (error) {
-        console.error('⚠️ Erro ao limpar dados do Redis:', error.message);
-        // Não bloquear o reset se houver erro ao limpar Redis
-      }
+      // Limpesa de Redis desativada temporariamente no comando !reset
+      // try {
+      //   const contactResponse = await axios.get(
+      //     `${CHATWOOT_BASE_URL}/api/v1/accounts/${accountId}/contacts/${contactId}`,
+      //     { headers: { 'api_access_token': CHATWOOT_API_TOKEN } }
+      //   );
+      //   if (contactResponse.data && contactResponse.data.payload) {
+      //     const phoneNumber = contactResponse.data.payload.phone_number || '';
+      //     const inboxWorkflow = await inboxWorkflowManager.getInboxWorkflow(accountId, inboxId);
+      //     if (inboxWorkflow && inboxWorkflow.workflow_name) {
+      //       const aiAgent = await getAIAgentByWorkflow(inboxWorkflow.workflow_name);
+      //       if (aiAgent && aiAgent.id) {
+      //         await clearAgentRedisForConversation(aiAgent.id, accountId, inboxId, conversationId, phoneNumber);
+      //       }
+      //     }
+      //   }
+      // } catch (error) {
+      //   console.error('⚠️ Erro ao limpar dados do Redis:', error.message);
+      // }
       
       // Reativar o bot após reset
       console.log(`🔄 Iniciando reativação do bot para conversa ${conversationId}...`);
@@ -3668,7 +3706,7 @@ async function processUserMessage(contactId, conversationId, userMessage, inboxI
       const statusAfterReset = await getBotConversationStatus(conversationId, contactId);
       console.log(`🔍 Status do bot APÓS reset: bot_active=${statusAfterReset.bot_active}, paused_reason=${statusAfterReset.paused_reason}, reactivated_at=${statusAfterReset.reactivated_at}`);
       
-      await sendChatwootMessage(conversationId, 'Fluxo reiniciado com sucesso! Todos os dados foram limpos (conversas, labels e dados do agente IA). Agora você pode iniciar a conversa novamente. Tente dar um "oi".', [], null, accountId);
+      await sendChatwootMessage(conversationId, 'Fluxo reiniciado com sucesso! Conversas e labels foram limpos. Agora você pode iniciar a conversa novamente. Tente dar um "oi".', [], null, accountId);
       return;
     }
     
@@ -3837,7 +3875,7 @@ async function processUserMessage(contactId, conversationId, userMessage, inboxI
                 
                 console.log(`🤖 Enviando mensagem para agente IA, histórico: ${chatHistory.length} mensagens`);
                 
-                const aiResponse = await sendMessageToAIAgent(aiAgent.id, userMessage, chatHistory, contactId, accountId);
+                const aiResponse = await sendMessageToAIAgent(aiAgent.id, userMessage, chatHistory, contactId, accountId, inboxId, conversationId);
                 
                 if (aiResponse && (aiResponse.answer || aiResponse.response)) {
                   // Usar answer se disponível, senão usar response (para compatibilidade)
@@ -3980,7 +4018,7 @@ async function processUserMessage(contactId, conversationId, userMessage, inboxI
             // Enviar mensagem para o agente IA
             console.log(`🤖 Enviando mensagem para agente IA, histórico: ${chatHistory.length} mensagens`);
             
-            const aiResponse = await sendMessageToAIAgent(aiAgent.id, processedMessage, chatHistory, contactId, accountId);
+            const aiResponse = await sendMessageToAIAgent(aiAgent.id, processedMessage, chatHistory, contactId, accountId, inboxId, conversationId);
             
             if (aiResponse && (aiResponse.answer || aiResponse.response)) {
               // Usar answer se disponível, senão usar response (para compatibilidade)
@@ -5762,10 +5800,10 @@ app.post('/api/ai-agents', authenticateToken, authorizeAccount, async (req, res)
     const agentData = req.body;
     
     // Validações básicas
-    if (!agentData.name || !agentData.model || !agentData.summary_prompt || !agentData.custom_system_prompt) {
+    if (!agentData.name || !agentData.model || !agentData.system_prompt) {
       return res.status(400).json({ 
         success: false, 
-        error: 'Nome, modelo, summary_prompt e custom_system_prompt são obrigatórios' 
+        error: 'Nome, modelo e system_prompt são obrigatórios' 
       });
     }
     
@@ -7034,7 +7072,7 @@ function createTempIcsFile(icsContent, filename) {
   }
 }
 
-async function sendMessageToAIAgent(agentId, message, conversationHistory = [], contactId = null, accountId = CHATWOOT_ACCOUNT_ID) {
+async function sendMessageToAIAgent(agentId, message, conversationHistory = [], contactId = null, accountId = CHATWOOT_ACCOUNT_ID, inboxId = null, conversationId = null) {
   try {
     let whatsapp = null;
     let contactName = null;
@@ -7070,11 +7108,11 @@ async function sendMessageToAIAgent(agentId, message, conversationHistory = [], 
             ? contactResponse.data.payload[0] 
             : contactResponse.data.payload;
             
-          const phoneNumber = contact.phone_number || contact.phone || contactId;
+          const phoneNumber = contact.phone_number || contact.phone;
           contactName = contact.name || null;
           
-          // Formatar o número do Chatwoot para formato brasileiro
-          if (phoneNumber) {
+          // Formatar o número do Chatwoot para formato brasileiro (apenas se for string)
+          if (phoneNumber && typeof phoneNumber === 'string') {
             const cleanNumber = phoneNumber.replace(/[^\d]/g, '');
             if (cleanNumber.length >= 10) {
               if (cleanNumber.length === 11) {
@@ -7086,6 +7124,10 @@ async function sendMessageToAIAgent(agentId, message, conversationHistory = [], 
               }
               console.log(`📱 WhatsApp extraído do contato: ${phoneNumber} → ${whatsapp}`);
             }
+          } else if (phoneNumber) {
+            // Se phoneNumber não é string, usar diretamente
+            whatsapp = String(phoneNumber);
+            console.log(`📱 WhatsApp extraído do contato (não-string): ${phoneNumber} → ${whatsapp}`);
           }
           
           if (contactName) {
@@ -7100,7 +7142,7 @@ async function sendMessageToAIAgent(agentId, message, conversationHistory = [], 
         }
         
         // Fallback: se contactId parece ser um número de telefone, usar diretamente
-        if (/^[\d\s\(\)\-\+]+$/.test(contactId)) {
+        if (typeof contactId === 'string' && /^[\d\s\(\)\-\+]+$/.test(contactId)) {
           const cleanNumber = contactId.replace(/[^\d]/g, '');
           if (cleanNumber.length >= 10) {
             if (cleanNumber.length === 11) {
@@ -7112,6 +7154,10 @@ async function sendMessageToAIAgent(agentId, message, conversationHistory = [], 
             }
             console.log(`📱 WhatsApp extraído como fallback: ${contactId} → ${whatsapp}`);
           }
+        } else if (typeof contactId === 'number') {
+          // Se contactId é um número (ID do contato), usar como fallback simples
+          whatsapp = String(contactId);
+          console.log(`📱 ContactId numérico usado como fallback: ${contactId} → ${whatsapp}`);
         }
       }
     }
@@ -7133,7 +7179,10 @@ async function sendMessageToAIAgent(agentId, message, conversationHistory = [], 
         message: message,
         chat_history: conversationHistory,
         whatsapp: whatsapp,
-        contact_name: contactName
+        contact_name: contactName,
+        conversation_id: conversationId,
+        account_id: accountId,
+        inbox_id: inboxId
       })
     });
     
@@ -8810,6 +8859,148 @@ app.get('/providers/:name/models', async (req, res) => {
     console.error('Erro ao buscar modelos do provider:', error);
     res.status(500).json({
       success: false,
+      error: 'Erro interno do servidor',
+      details: error.message
+    });
+  }
+});
+
+// Endpoint para criar provider
+app.post('/providers', async (req, res) => {
+  try {
+    const response = await fetch(`${IA_AGENT_URL}/providers`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(req.body)
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || `Erro ao criar provider: ${response.status}`);
+    }
+
+    const data = await response.json();
+    res.json(data);
+  } catch (error) {
+    console.error('Erro ao criar provider:', error);
+    res.status(500).json({
+      error: 'Erro interno do servidor',
+      details: error.message
+    });
+  }
+});
+
+// Endpoint para atualizar provider
+app.put('/providers/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const response = await fetch(`${IA_AGENT_URL}/providers/${id}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(req.body)
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || `Erro ao atualizar provider: ${response.status}`);
+    }
+
+    const data = await response.json();
+    res.json(data);
+  } catch (error) {
+    console.error('Erro ao atualizar provider:', error);
+    res.status(500).json({
+      error: 'Erro interno do servidor',
+      details: error.message
+    });
+  }
+});
+
+// Endpoint para excluir provider
+app.delete('/providers/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const response = await fetch(`${IA_AGENT_URL}/providers/${id}`, {
+      method: 'DELETE',
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || `Erro ao excluir provider: ${response.status}`);
+    }
+
+    const data = await response.json();
+    res.json(data);
+  } catch (error) {
+    console.error('Erro ao excluir provider:', error);
+    res.status(500).json({
+      error: 'Erro interno do servidor',
+      details: error.message
+    });
+  }
+});
+
+// Endpoint para upload de PDF do agente
+app.post('/agents/:agentId/upload-pdf', upload.single('pdf_file'), async (req, res) => {
+  try {
+    const { agentId } = req.params;
+    
+    console.log('📁 Upload de PDF recebido:', {
+      agentId,
+      file: req.file ? {
+        originalname: req.file.originalname,
+        mimetype: req.file.mimetype,
+        size: req.file.size,
+        path: req.file.path
+      } : 'Nenhum arquivo'
+    });
+    
+    if (!req.file) {
+      return res.status(400).json({ error: 'Nenhum arquivo PDF enviado' });
+    }
+
+    // Criar FormData para enviar ao agente de IA
+    const FormData = require('form-data');
+    const formData = new FormData();
+    
+    // Adicionar o arquivo ao FormData
+    formData.append('pdf_file', fs.createReadStream(req.file.path), {
+      filename: req.file.originalname,
+      contentType: req.file.mimetype
+    });
+
+    console.log('🔄 Enviando para agente de IA:', `${IA_AGENT_URL}/agents/${agentId}/upload-pdf`);
+    console.log('📋 FormData fields:', formData.getHeaders());
+
+    // Fazer requisição para o agente de IA usando axios para melhor compatibilidade
+    const axios = require('axios');
+    const response = await axios.post(`${IA_AGENT_URL}/agents/${agentId}/upload-pdf`, formData, {
+      headers: {
+        ...formData.getHeaders()
+      },
+      maxContentLength: Infinity,
+      maxBodyLength: Infinity
+    });
+
+    console.log('📡 Resposta do agente de IA:', response.status, response.statusText);
+
+    // Limpar arquivo temporário
+    fs.unlinkSync(req.file.path);
+
+    console.log('✅ Upload concluído com sucesso');
+    res.json(response.data);
+  } catch (error) {
+    console.error('Erro ao fazer upload do PDF:', error);
+    res.status(500).json({
       error: 'Erro interno do servidor',
       details: error.message
     });

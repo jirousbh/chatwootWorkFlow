@@ -16,6 +16,11 @@ O sistema de workflows agora suporta **caixas de entrada da EvolutionAPI** além
 - **Ícone**: 🔄
 - **Descrição**: Caixas configuradas com a EvolutionAPI
 
+### 3. **Website/LiveChat**
+- **Tipos**: `Channel::Website`, `Channel::Web`, `Channel::LiveChat`, `Channel::WebWidget`
+- **Ícone**: 🌐
+- **Descrição**: Caixas de entrada para chat ao vivo em websites
+
 ## 🔍 Como o Sistema Identifica Caixas da EvolutionAPI
 
 O sistema identifica automaticamente caixas da EvolutionAPI através de:
@@ -61,6 +66,7 @@ inbox.provider_config?.webhook_url?.includes('evolution')
 
 - **📱 WhatsApp API**: Caixas da API oficial do WhatsApp
 - **🔄 Evolution API**: Caixas da EvolutionAPI
+- **🌐 Website**: Caixas de entrada para chat ao vivo em websites
 - **❌ Não suportado**: Outros tipos de caixa
 
 ### Validação Automática
