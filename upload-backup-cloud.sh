@@ -9,6 +9,7 @@ set -e
 
 # Configurações
 BACKUP_DIR="./backup"
+STORAGE_BACKUP_DIR="./backup/storage-weekly"
 CLOUD_CONFIG_FILE="./cloud-backup.conf"
 LOG_FILE="./cloud-upload.log"
 
@@ -391,20 +392,41 @@ test_connection() {
 list_backups() {
     log "Backups disponíveis:"
     
-    if [ ! -d "$BACKUP_DIR" ]; then
-        log "Diretório de backup não encontrado"
-        return 0
+    local found_any=0
+    
+    # Listar backups normais do chatwoot
+    if [ -d "$BACKUP_DIR" ]; then
+        echo ""
+        echo "Backups Chatwoot (principais):"
+        while IFS= read -r line; do
+            backup_name=$(echo "$line" | awk '{print $9}')
+            if [ -n "$backup_name" ]; then
+                size=$(du -sh "$BACKUP_DIR/$backup_name" 2>/dev/null | cut -f1)
+                date=$(echo "$backup_name" | sed 's/chatwoot_backup_//' | sed 's/_/ /')
+                echo "  $backup_name ($size) - $date"
+                found_any=1
+            fi
+        done < <(ls -la "$BACKUP_DIR" 2>/dev/null | grep "chatwoot_backup_")
     fi
     
-    echo ""
-    ls -la "$BACKUP_DIR" | grep "chatwoot_backup_" | while read line; do
-        backup_name=$(echo "$line" | awk '{print $9}')
-        if [ -n "$backup_name" ]; then
-            size=$(du -sh "$BACKUP_DIR/$backup_name" 2>/dev/null | cut -f1)
-            date=$(echo "$backup_name" | sed 's/chatwoot_backup_//' | sed 's/_/ /')
-            echo "  $backup_name ($size) - $date"
-        fi
-    done
+    # Listar backups semanais de storage
+    if [ -d "$STORAGE_BACKUP_DIR" ]; then
+        echo ""
+        echo "Backups Storage (semanais):"
+        while IFS= read -r line; do
+            backup_name=$(echo "$line" | awk '{print $9}')
+            if [ -n "$backup_name" ]; then
+                size=$(du -sh "$STORAGE_BACKUP_DIR/$backup_name" 2>/dev/null | cut -f1)
+                date=$(echo "$backup_name" | sed 's/storage_weekly_backup_//' | sed 's/_/ /')
+                echo "  $backup_name ($size) - $date"
+                found_any=1
+            fi
+        done < <(ls -la "$STORAGE_BACKUP_DIR" 2>/dev/null | grep "storage_weekly_backup_")
+    fi
+    
+    if [ $found_any -eq 0 ]; then
+        log "Nenhum backup encontrado"
+    fi
     echo ""
 }
 
@@ -473,13 +495,26 @@ upload_to_onedrive() {
     
     log "Fazendo upload para OneDrive..."
     
+    # Determinar o tipo de backup e criar a estrutura adequada
+    if [[ "$backup_name" == storage_weekly_backup_* ]]; then
+        # É um backup semanal de storage
+        target_folder="$FOLDER_NAME/storage-weekly/$backup_name"
+        log "Fazendo upload para pasta storage-weekly..."
+    else
+        # É um backup normal do chatwoot
+        target_folder="$FOLDER_NAME/$backup_name"
+    fi
+    
     # Criar pasta no OneDrive se não existir
-    rclone mkdir "onedrive:$FOLDER_NAME/$backup_name" 2>/dev/null || true
+    if [[ "$backup_name" == storage_weekly_backup_* ]]; then
+        rclone mkdir "onedrive:$FOLDER_NAME/storage-weekly" 2>/dev/null || true
+    fi
+    rclone mkdir "onedrive:$target_folder" 2>/dev/null || true
     
     # Upload do diretório completo
-    if rclone copy "$backup_path" "onedrive:$FOLDER_NAME/$backup_name" --progress; then
+    if rclone copy "$backup_path" "onedrive:$target_folder" --progress --transfers=2 --checkers=2; then
         log "✓ Upload para OneDrive concluído"
-        log "Pasta: $FOLDER_NAME/$backup_name"
+        log "Pasta: $target_folder"
         log "Acesse: https://onedrive.live.com/"
     else
         log "ERRO: Falha no upload para OneDrive"
@@ -530,7 +565,14 @@ upload_to_digitalocean_spaces() {
 # Função para upload
 upload_backup() {
     local backup_name="$1"
-    local backup_path="$BACKUP_DIR/$backup_name"
+    local backup_path=""
+    
+    # Verificar se é backup de storage ou backup normal
+    if [[ "$backup_name" == storage_weekly_backup_* ]]; then
+        backup_path="$STORAGE_BACKUP_DIR/$backup_name"
+    else
+        backup_path="$BACKUP_DIR/$backup_name"
+    fi
     
     if [ ! -d "$backup_path" ]; then
         log "ERRO: Backup não encontrado: $backup_path"

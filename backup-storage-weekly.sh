@@ -8,7 +8,6 @@
 
 # Configurações
 BACKUP_DIR="./backup/storage-weekly"
-CLOUD_CONFIG_FILE="./cloud-backup.conf"
 DATE=$(date +%Y%m%d_%H%M%S)
 BACKUP_NAME="storage_weekly_backup_$DATE"
 BACKUP_PATH="$BACKUP_DIR/$BACKUP_NAME"
@@ -140,88 +139,6 @@ cleanup_old_backups() {
     log "✓ Limpeza de backups antigos concluída"
 }
 
-# Função para carregar configuração do cloud
-load_cloud_config() {
-    if [ ! -f "$CLOUD_CONFIG_FILE" ]; then
-        log "AVISO: Arquivo de configuração cloud não encontrado, pulando upload"
-        return 1
-    fi
-    
-    source "$CLOUD_CONFIG_FILE"
-    
-    # Verificar se o provedor é onedrive
-    if [ "$PROVIDER" != "onedrive" ]; then
-        log "AVISO: Provedor cloud não configurado como onedrive, pulando upload"
-        return 1
-    fi
-    
-    return 0
-}
-
-# Função para verificar/instalar rclone
-check_rclone() {
-    if ! command -v rclone >/dev/null 2>&1; then
-        log "Instalando rclone..."
-        curl https://rclone.org/install.sh | bash
-    fi
-    
-    log "✓ rclone disponível"
-}
-
-# Função para testar conexão OneDrive
-test_onedrive_connection() {
-    if rclone lsd "onedrive:$FOLDER_NAME" >/dev/null 2>&1; then
-        log "✓ Conexão OneDrive OK"
-        return 0
-    else
-        log "ERRO: Falha na conexão OneDrive"
-        log "Execute: rclone config"
-        return 1
-    fi
-}
-
-# Função para upload para OneDrive
-upload_to_onedrive() {
-    local backup_path="$1"
-    local backup_name="$2"
-    
-    log "Fazendo upload para OneDrive..."
-    
-    # Criar pasta no OneDrive se não existir
-    rclone mkdir "onedrive:$FOLDER_NAME/storage-weekly" 2>/dev/null || true
-    rclone mkdir "onedrive:$FOLDER_NAME/storage-weekly/$backup_name" 2>/dev/null || true
-    
-    # Upload do diretório completo
-    if rclone copy "$backup_path" "onedrive:$FOLDER_NAME/storage-weekly/$backup_name" --progress --transfers=2 --checkers=2; then
-        log "✓ Upload para OneDrive concluído"
-        log "Pasta: $FOLDER_NAME/storage-weekly/$backup_name"
-        log "Acesse: https://onedrive.live.com/"
-    else
-        log "ERRO: Falha no upload para OneDrive"
-        return 1
-    fi
-}
-
-# Função para fazer upload do backup
-upload_backup_to_cloud() {
-    # Carregar configuração
-    if ! load_cloud_config; then
-        return 0
-    fi
-    
-    # Verificar/instalar rclone
-    check_rclone
-    
-    # Testar conexão
-    if ! test_onedrive_connection; then
-        log "AVISO: Pulando upload por falha na conexão"
-        return 0
-    fi
-    
-    # Fazer upload
-    upload_to_onedrive "$BACKUP_PATH" "$BACKUP_NAME"
-}
-
 # Função para calcular estatísticas
 show_statistics() {
     log "Calculando estatísticas do backup..."
@@ -255,14 +172,14 @@ main() {
     # Limpeza de backups antigos
     cleanup_old_backups
     
-    # Upload para OneDrive
-    upload_backup_to_cloud
-    
     # Resumo final
     log "=== BACKUP SEMANAL DO STORAGE CONCLUÍDO COM SUCESSO ==="
     log "Diretório do backup: $BACKUP_PATH"
     log "Tamanho total: $(du -sh "$BACKUP_PATH" | cut -f1)"
     log "Backup salvo em: $BACKUP_PATH"
+    log ""
+    log "Para fazer upload deste backup para a nuvem, execute:"
+    log "./upload-backup-cloud.sh --upload $BACKUP_NAME"
 }
 
 # Executar função principal
