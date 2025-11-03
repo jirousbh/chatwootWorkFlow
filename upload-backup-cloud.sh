@@ -496,13 +496,10 @@ upload_to_onedrive() {
     log "Fazendo upload para OneDrive..."
     
     # Determinar o tipo de backup e criar a estrutura adequada
+    local target_folder=$(get_cloud_target_folder "$backup_name")
+    
     if [[ "$backup_name" == storage_weekly_backup_* ]]; then
-        # É um backup semanal de storage
-        target_folder="$FOLDER_NAME/storage-weekly/$backup_name"
         log "Fazendo upload para pasta storage-weekly..."
-    else
-        # É um backup normal do chatwoot
-        target_folder="$FOLDER_NAME/$backup_name"
     fi
     
     # Criar pasta no OneDrive se não existir
@@ -617,17 +614,124 @@ upload_backup() {
     log "=== UPLOAD CONCLUÍDO COM SUCESSO ==="
 }
 
+# Função auxiliar para determinar pasta de destino no cloud
+get_cloud_target_folder() {
+    local backup_name="$1"
+    
+    if [[ "$backup_name" == storage_weekly_backup_* ]]; then
+        echo "$FOLDER_NAME/storage-weekly/$backup_name"
+    else
+        echo "$FOLDER_NAME/$backup_name"
+    fi
+}
+
+# Função para verificar se backup já foi enviado para o cloud
+check_backup_uploaded() {
+    local backup_name="$1"
+    
+    # Carregar configuração
+    if ! load_config; then
+        return 1
+    fi
+    
+    # Verificar baseado no provedor
+    case "$PROVIDER" in
+        onedrive)
+            local target_folder=$(get_cloud_target_folder "$backup_name")
+            if rclone lsd "onedrive:$target_folder" >/dev/null 2>&1; then
+                return 0  # Já enviado
+            else
+                return 1  # Não enviado
+            fi
+            ;;
+        google_drive)
+            local target_folder=$(get_cloud_target_folder "$backup_name")
+            if rclone lsd "gdrive:$target_folder" >/dev/null 2>&1; then
+                return 0  # Já enviado
+            else
+                return 1  # Não enviado
+            fi
+            ;;
+        *)
+            # Para outros provedores, assumir que não foi enviado
+            return 1
+            ;;
+    esac
+}
+
 # Função para upload do backup mais recente
 upload_latest() {
-    local latest_backup=$(ls -t "$BACKUP_DIR" | grep "chatwoot_backup_" | head -1)
+    local latest_chatwoot=""
+    local latest_storage=""
     
-    if [ -z "$latest_backup" ]; then
+    # Pegar o backup mais recente do chatwoot
+    if [ -d "$BACKUP_DIR" ]; then
+        latest_chatwoot=$(ls -t "$BACKUP_DIR" 2>/dev/null | grep "chatwoot_backup_" | head -1)
+    fi
+    
+    # Pegar o backup mais recente de storage
+    if [ -d "$STORAGE_BACKUP_DIR" ]; then
+        latest_storage=$(ls -t "$STORAGE_BACKUP_DIR" 2>/dev/null | grep "storage_weekly_backup_" | head -1)
+    fi
+    
+    # Verificar se há backups
+    if [ -z "$latest_chatwoot" ] && [ -z "$latest_storage" ]; then
         log "ERRO: Nenhum backup encontrado"
         return 1
     fi
     
-    log "Backup mais recente: $latest_backup"
-    upload_backup "$latest_backup"
+    # Verificar quais foram enviados
+    local chatwoot_uploaded=1
+    local storage_uploaded=1
+    
+    if [ -n "$latest_chatwoot" ]; then
+        if check_backup_uploaded "$latest_chatwoot" 2>/dev/null; then
+            chatwoot_uploaded=0
+            log "Backup principal $latest_chatwoot já foi enviado"
+        else
+            log "Backup principal $latest_chatwoot ainda não foi enviado"
+        fi
+    fi
+    
+    if [ -n "$latest_storage" ]; then
+        if check_backup_uploaded "$latest_storage" 2>/dev/null; then
+            storage_uploaded=0
+            log "Backup de storage $latest_storage já foi enviado"
+        else
+            log "Backup de storage $latest_storage ainda não foi enviado"
+        fi
+    fi
+    
+    # Decidir o que fazer upload
+    if [ $chatwoot_uploaded -eq 1 ] && [ $storage_uploaded -eq 1 ]; then
+        # Ambos não foram enviados, enviar o mais recente
+        if [ -n "$latest_chatwoot" ] && [ -n "$latest_storage" ]; then
+            # Comparar datas
+            if [ "$BACKUP_DIR/$latest_chatwoot" -ot "$STORAGE_BACKUP_DIR/$latest_storage" ]; then
+                log "Fazendo upload do backup mais recente (storage): $latest_storage"
+                upload_backup "$latest_storage"
+            else
+                log "Fazendo upload do backup mais recente (principal): $latest_chatwoot"
+                upload_backup "$latest_chatwoot"
+            fi
+        elif [ -n "$latest_storage" ]; then
+            log "Fazendo upload do backup de storage: $latest_storage"
+            upload_backup "$latest_storage"
+        elif [ -n "$latest_chatwoot" ]; then
+            log "Fazendo upload do backup principal: $latest_chatwoot"
+            upload_backup "$latest_chatwoot"
+        fi
+    elif [ $storage_uploaded -eq 1 ]; then
+        # Apenas storage não foi enviado
+        log "Fazendo upload do backup de storage: $latest_storage"
+        upload_backup "$latest_storage"
+    elif [ $chatwoot_uploaded -eq 1 ]; then
+        # Apenas principal não foi enviado
+        log "Fazendo upload do backup principal: $latest_chatwoot"
+        upload_backup "$latest_chatwoot"
+    else
+        log "Todos os backups já foram enviados"
+    fi
 }
 
 # Função principal
