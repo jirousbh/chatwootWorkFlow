@@ -3285,11 +3285,27 @@ async function processChatwootConversation(conversation, accountId = CHATWOOT_AC
         if (message.message_type === 0) {  // 0 = incoming (usuário)
           await processUserMessage(contactId, conversationId, message.content, inboxId, accountId);
         } else if (message.message_type === 1) {  // 1 = outgoing (sistema/agente)
-          // VERIFICAÇÕES PARA EVITAR LOOP - Ignorar mensagens do próprio bot
-          const isBotMessage = 
+          // NOVA LÓGICA: user_id = 1 é o bot, qualquer outro user_id != 1 é agente humano
+          // Também verificar sender.id como alternativa caso user_id não esteja disponível
+          const hasUserId = message.user_id !== null && message.user_id !== undefined;
+          const hasSenderId = message.sender && message.sender.id !== null && message.sender.id !== undefined;
+          
+          // Verificar se é bot: user_id = 1 OU sender.id = 1
+          const isBotUserId = hasUserId && message.user_id === 1;
+          const isBotSenderId = hasSenderId && message.sender.id === 1;
+          const isBot = isBotUserId || isBotSenderId;
+          
+          // Verificar se é agente humano: (user_id != 1) OU (sender.id != 1 e não é bot por conteúdo)
+          const isHumanAgent = (hasUserId && message.user_id !== 1) || 
+                              (hasSenderId && message.sender.id !== 1 && !isBot);
+          
+          // VERIFICAÇÕES ADICIONAIS PARA MENSAGENS SEM user_id (sistema/bot antigo)
+          const isBotByType = 
             !message.sender || // Sem sender (sistema)
             message.sender.type === 'AgentBot' || 
-            message.sender.type === 'Bot' ||
+            message.sender.type === 'Bot';
+          
+          const isBotByContent = 
             message.content.includes('**Bot Pausado Automaticamente**') || // Mensagem específica do bot
             message.content.includes('**Comando de Agente Executado**') ||
             message.content.startsWith('🤖') || // Mensagens que começam com emoji de bot
@@ -3299,19 +3315,18 @@ async function processChatwootConversation(conversation, accountId = CHATWOOT_AC
             message.content.includes('Status do Bot') || // Mensagem de status
             message.content.includes('assistente virtual') || // Mensagens típicas do bot
             message.content.includes('👋') || // Mensagens com emoji de saudação (comum em bots)
-            (message.sender && message.sender.name && message.sender.name.includes('Admin CRM')) || // Sender do sistema/bot
-            // NOVA VERIFICAÇÃO: Verificar se user_id é null/undefined (mensagens do sistema)
-            (!message.user_id || message.user_id === null || message.user_id === undefined) ||
             // VERIFICAÇÃO DE PADRÕES ESPECÍFICOS DO BOT DA WIZARD
             (message.content.includes('Wizard') && message.content.includes('assistente virtual')) ||
             (message.content.includes('Você já é nosso aluno') && message.content.includes('👋'));
           
+          // É bot se: tem user_id = 1 OU sender.id = 1 OU (não tem user_id/sender.id e tem padrões de bot)
+          const isBotMessage = isBot || (!hasUserId && !hasSenderId && (isBotByType || isBotByContent));
+          
           if (isBotMessage) {
             console.log(`🤖 Mensagem de bot ignorada: ${message.sender?.type || 'Sistema'} - ${message.content.substring(0, 50)}...`);
-          } else if (message.sender) {
-            // Log detalhado para debug
-            console.log(`👤 DEBUG: Mensagem outgoing - ID: ${message.id}, User_ID: ${message.user_id}, Sender: ${JSON.stringify(message.sender)}, Content: ${message.content.substring(0, 100)}`);
-            console.log(`👤 Mensagem de agente humano detectada: ${message.sender.name || message.user_id} - ${message.content}`);
+          } else if (isHumanAgent && message.sender) {
+            // Agente humano detectado: user_id != 1
+            console.log(`👤 Mensagem de agente humano detectada (user_id=${message.user_id}): ${message.sender.name || message.user_id} - ${message.content}`);
             await processAgentCommand(contactId, conversationId, message.content, inboxId, accountId, message.user_id);
           }
         }
@@ -5395,17 +5410,20 @@ async function checkRecentAgentActivity(conversationId, accountId = CHATWOOT_ACC
     const recentAgentMessages = messages.filter(msg => {
       const messageTime = new Date(msg.created_at);
       
-      // Verificar se é mensagem de agente (outgoing) e não é bot
+      // NOVA LÓGICA: user_id = 1 é o bot, qualquer outro user_id != 1 é agente humano
+      const hasUserId = msg.user_id !== null && msg.user_id !== undefined;
+      const isHumanAgent = hasUserId && msg.user_id !== 1; // user_id != 1 é agente humano
+      
+      // Verificar se é mensagem de agente (outgoing) e é agente humano
       const isAgentMessage = msg.message_type === 1 && // outgoing message
-                            msg.sender && 
-                            msg.sender.type !== 'AgentBot' && // não é bot
-                            msg.sender.type !== 'Bot'; // não é bot (outro tipo)
+                            isHumanAgent && // user_id != 1 (não é o bot)
+                            msg.sender; // tem sender
       
       // Verificar se é recente (última hora)
       const isRecent = messageTime > oneHourAgo;
       
       if (isAgentMessage && isRecent) {
-        console.log(`👤 Mensagem de agente detectada: ${msg.sender?.name || msg.sender?.type} - ${msg.content} (${messageTime.toLocaleTimeString()})`);
+        console.log(`👤 Mensagem de agente detectada (user_id=${msg.user_id}): ${msg.sender?.name || msg.user_id} - ${msg.content} (${messageTime.toLocaleTimeString()})`);
       }
       
       return isAgentMessage && isRecent;
