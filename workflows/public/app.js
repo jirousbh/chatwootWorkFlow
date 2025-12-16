@@ -257,6 +257,17 @@ class ChatwootWorkflowsApp {
             }
         }
         
+        // Mostrar/ocultar menu de gerenciamento de templates Evolution API
+        const evolutionApiTemplatesItem = document.getElementById('menuGerenciarEvolutionApiTemplatesItem');
+        
+        if (evolutionApiTemplatesItem) {
+            if (isAdmin) {
+                evolutionApiTemplatesItem.classList.remove('d-none');
+            } else {
+                evolutionApiTemplatesItem.classList.add('d-none');
+            }
+        }
+        
         // Configurar interface está completo
     }
 
@@ -378,10 +389,14 @@ class ChatwootWorkflowsApp {
                      return false;
                  }
                  
+                 // Evolution API: apenas admins podem criar campanhas
                  if (isEvolutionAPIInbox(inboxInfo)) {
-                     console.warn('⚠️ Campanhas não são permitidas com Evolution API');
-                     this.showEvolutionAPIModal(inboxInfo.name);
-                     return false;
+                     if (this.user.role !== 'admin') {
+                         console.warn('⚠️ Campanhas Evolution API são permitidas apenas para administradores');
+                         this.showEvolutionAPIModal(inboxInfo.name);
+                         return false;
+                     }
+                     console.log('✅ Admin detectado - Campanhas Evolution API permitidas');
                  } else {
                      console.log('✅ Caixa de entrada é uma API oficial do WhatsApp');
                  }
@@ -393,10 +408,14 @@ class ChatwootWorkflowsApp {
                      return false;
                  }
                  
+                 // Evolution API: apenas admins podem criar campanhas
                  if (isEvolutionAPIInbox(selectedInboxInfo)) {
-                     console.warn('⚠️ Campanhas não são permitidas com Evolution API');
-                     this.showEvolutionAPIModal(selectedInboxInfo.name);
-                     return false;
+                     if (this.user.role !== 'admin') {
+                         console.warn('⚠️ Campanhas Evolution API são permitidas apenas para administradores');
+                         this.showEvolutionAPIModal(selectedInboxInfo.name);
+                         return false;
+                     }
+                     console.log('✅ Admin detectado - Campanhas Evolution API permitidas');
                  } else {
                      console.log('✅ Caixa de entrada é uma API oficial do WhatsApp');
                  }
@@ -1224,15 +1243,19 @@ class ChatwootWorkflowsApp {
             return;
         }
 
-        // Validar se a caixa de entrada não é Evolution API
+        // Validar se a caixa de entrada é Evolution API (apenas admins podem usar)
         try {
             const accountInboxes = await this.loadInboxesForAccount(selectedAccountId);
             const selectedInboxInfo = accountInboxes.find(inbox => String(inbox.id) === String(selectedInboxId));
             
             if (selectedInboxInfo && isEvolutionAPIInbox(selectedInboxInfo)) {
-                console.warn('⚠️ Campanhas não são permitidas com Evolution API');
-                this.showEvolutionAPIModal(selectedInboxInfo.name);
-                return;
+                // Apenas admins podem criar campanhas Evolution API
+                if (this.user.role !== 'admin') {
+                    console.warn('⚠️ Campanhas Evolution API são permitidas apenas para administradores');
+                    this.showEvolutionAPIModal(selectedInboxInfo.name);
+                    return;
+                }
+                console.log('✅ Admin detectado - Campanhas Evolution API permitidas');
             }
         } catch (error) {
             console.error('❌ Erro ao validar tipo da caixa de entrada:', error);
@@ -3310,7 +3333,97 @@ class ChatwootWorkflowsApp {
             
             console.log(`📋 Usando Account ID: ${accountId}, Inbox ID: ${inboxId}`);
             
-            // Construir URL com parâmetros se disponíveis
+            // Usar o ID correto do formulário unificado
+            const select = document.getElementById('templateSelect');
+            if (!select) {
+                console.error('❌ Elemento templateSelect não encontrado!');
+                return;
+            }
+            
+            select.innerHTML = '<option value="">Selecione um modelo</option>';
+            
+            // Verificar se é Evolution API (apenas para admins)
+            let isEvolutionAPI = false;
+            if (this.user.role === 'admin' && accountId && inboxId) {
+                try {
+                    // Primeiro tentar usar dados já carregados
+                    const existingInbox = this.inboxes?.find(inbox => 
+                        String(inbox.id) === String(inboxId) && 
+                        String(inbox.account_id) === String(accountId)
+                    );
+                    
+                    if (existingInbox) {
+                        isEvolutionAPI = isEvolutionAPIInbox(existingInbox);
+                        console.log(`✅ Tipo de caixa detectado dos dados carregados: ${isEvolutionAPI ? 'Evolution API' : 'WhatsApp API'}`);
+                    } else {
+                        // Se não estiver nos dados carregados, buscar
+                        console.log('🔄 Buscando informações da caixa...');
+                        const accountInboxes = await this.loadInboxesForAccount(accountId);
+                        const selectedInboxInfo = accountInboxes.find(inbox => String(inbox.id) === String(inboxId));
+                        if (selectedInboxInfo) {
+                            isEvolutionAPI = isEvolutionAPIInbox(selectedInboxInfo);
+                            console.log(`✅ Tipo de caixa detectado: ${isEvolutionAPI ? 'Evolution API' : 'WhatsApp API'}`);
+                        }
+                    }
+                } catch (error) {
+                    console.warn('⚠️ Erro ao verificar tipo de caixa:', error);
+                    // Em caso de erro, assumir que não é Evolution API para não bloquear
+                    isEvolutionAPI = false;
+                }
+            }
+            
+            // Carregar templates Evolution API se for admin e caixa for Evolution API
+            if (isEvolutionAPI && this.user.role === 'admin') {
+                console.log('🔄 Caixa Evolution API detectada - Carregando apenas templates Evolution API');
+                try {
+                    const evoResponse = await fetch('/api/evolution-api-templates?active_only=true', {
+                        headers: { 'Authorization': `Bearer ${getAuthToken()}` }
+                    });
+                    
+                    if (evoResponse.ok) {
+                        const evoTemplates = await evoResponse.json();
+                        if (evoTemplates.length > 0) {
+                            const evoOptgroup = document.createElement('optgroup');
+                            evoOptgroup.label = `🔄 Evolution API Templates (${evoTemplates.length})`;
+                            evoTemplates.forEach(template => {
+                                const option = document.createElement('option');
+                                option.value = template.name;
+                                option.textContent = template.name;
+                                option.dataset.evolutionApi = 'true';
+                                option.title = `Template Evolution API | Variáveis: ${(template.variables || []).join(', ') || 'Nenhuma'}`;
+                                evoOptgroup.appendChild(option);
+                            });
+                            select.appendChild(evoOptgroup);
+                            console.log(`✅ ${evoTemplates.length} templates Evolution API carregados`);
+                        } else {
+                            const option = document.createElement('option');
+                            option.value = '';
+                            option.textContent = 'Nenhum template Evolution API cadastrado. Crie um template primeiro.';
+                            option.disabled = true;
+                            select.appendChild(option);
+                        }
+                    } else {
+                        console.warn('Erro ao carregar templates Evolution API:', evoResponse.status);
+                        const option = document.createElement('option');
+                        option.value = '';
+                        option.textContent = 'Erro ao carregar templates Evolution API';
+                        option.disabled = true;
+                        select.appendChild(option);
+                    }
+                } catch (evoError) {
+                    console.error('Erro ao carregar templates Evolution API:', evoError);
+                    const option = document.createElement('option');
+                    option.value = '';
+                    option.textContent = 'Erro ao carregar templates Evolution API';
+                    option.disabled = true;
+                    select.appendChild(option);
+                }
+                
+                // NÃO carregar templates da API oficial quando for Evolution API
+                return;
+            }
+            
+            // Carregar templates da API oficial do WhatsApp (apenas se NÃO for Evolution API)
             let url = '/api/whatsapp/templates';
             const params = new URLSearchParams();
             if (accountId) params.append('accountId', accountId);
@@ -3327,15 +3440,6 @@ class ChatwootWorkflowsApp {
             
             const templates = await response.json();
             console.log('📋 Templates recebidos:', templates);
-            
-            // Usar o ID correto do formulário unificado
-            const select = document.getElementById('templateSelect');
-            if (!select) {
-                console.error('❌ Elemento templateSelect não encontrado!');
-                return;
-            }
-            
-            select.innerHTML = '<option value="">Selecione um modelo</option>';
             
             if (Array.isArray(templates) && templates.length > 0) {
                 // Mostrar templates da API oficial
@@ -3362,6 +3466,7 @@ class ChatwootWorkflowsApp {
                 }
                 console.log(`✅ ${templates.length} templates carregados com sucesso`);
             } else {
+                // Só mostrar erro se não for Evolution API ou não for admin
                 console.warn('⚠️ Nenhum template encontrado');
                 const option = document.createElement('option');
                 option.value = '';
@@ -3644,15 +3749,28 @@ class ChatwootWorkflowsApp {
             return;
         }
 
-        // Validar se a caixa de entrada não é Evolution API
+        // Verificar se é Evolution API e se o usuário tem permissão
+        let isEvolutionAPI = false;
         try {
             const accountInboxes = await this.loadInboxesForAccount(accountId);
             const selectedInboxInfo = accountInboxes.find(inbox => String(inbox.id) === String(inboxId));
             
             if (selectedInboxInfo && isEvolutionAPIInbox(selectedInboxInfo)) {
-                console.warn('⚠️ Campanhas não são permitidas com Evolution API');
-                this.showEvolutionAPIModal(selectedInboxInfo.name);
-                return;
+                // Apenas admins podem criar campanhas Evolution API
+                if (this.user.role !== 'admin') {
+                    console.warn('⚠️ Campanhas Evolution API são permitidas apenas para administradores');
+                    this.showEvolutionAPIModal(selectedInboxInfo.name);
+                    return;
+                }
+                isEvolutionAPI = true;
+                
+                // Verificar se o template selecionado é Evolution API
+                const templateSelectElement = document.getElementById('templateSelect');
+                const selectedOption = templateSelectElement.options[templateSelectElement.selectedIndex];
+                if (!selectedOption || !selectedOption.dataset.evolutionApi) {
+                    this.showAlert('Por favor, selecione um template Evolution API para esta caixa', 'warning');
+                    return;
+                }
             }
         } catch (error) {
             console.error('❌ Erro ao validar tipo da caixa de entrada:', error);
@@ -3664,7 +3782,8 @@ class ChatwootWorkflowsApp {
         const campaignData = {
             name: campaignName,
             type: methodType,
-            template_name: templateSelect
+            template_name: templateSelect,
+            use_evolution_api: isEvolutionAPI
         };
 
         // Adicionar dados da conta e caixa (ambos os roles)
@@ -8361,4 +8480,218 @@ document.addEventListener('DOMContentLoaded', function() {
     if (closeProviderManagerBtn) {
         closeProviderManagerBtn.addEventListener('click', hideProviderManager);
     }
+    
+    // Formulário de template Evolution API
+    const evolutionApiTemplateForm = document.getElementById('evolutionApiTemplateForm');
+    if (evolutionApiTemplateForm) {
+        evolutionApiTemplateForm.addEventListener('submit', handleEvolutionApiTemplateSubmit);
+    }
+    
+    // Detectar variáveis no conteúdo do template
+    const evolutionApiTemplateContent = document.getElementById('evolutionApiTemplateContent');
+    if (evolutionApiTemplateContent) {
+        evolutionApiTemplateContent.addEventListener('input', detectEvolutionApiTemplateVariables);
+    }
+    
+    // Botão fechar gerenciador de templates Evolution API
+    const closeEvolutionApiTemplatesManagerBtn = document.getElementById('closeEvolutionApiTemplatesManager');
+    if (closeEvolutionApiTemplatesManagerBtn) {
+        closeEvolutionApiTemplatesManagerBtn.addEventListener('click', hideEvolutionApiTemplatesManager);
+    }
 });
+
+// ===== FUNÇÕES PARA GERENCIAR TEMPLATES EVOLUTION API =====
+
+let currentEvolutionApiTemplateId = null;
+
+function showEvolutionApiTemplatesManager() {
+    document.getElementById('evolutionApiTemplatesManagerDiv').classList.remove('d-none');
+    loadEvolutionApiTemplates();
+}
+
+function hideEvolutionApiTemplatesManager() {
+    document.getElementById('evolutionApiTemplatesManagerDiv').classList.add('d-none');
+}
+
+async function loadEvolutionApiTemplates() {
+    try {
+        const response = await fetch('/api/evolution-api-templates?active_only=false', {
+            headers: { 'Authorization': `Bearer ${getAuthToken()}` }
+        });
+        
+        if (!response.ok) {
+            throw new Error('Erro ao carregar templates');
+        }
+        
+        const templates = await response.json();
+        const listDiv = document.getElementById('evolutionApiTemplatesList');
+        
+        if (templates.length === 0) {
+            listDiv.innerHTML = '<div class="alert alert-info">Nenhum template cadastrado ainda.</div>';
+            return;
+        }
+        
+        listDiv.innerHTML = templates.map(template => `
+            <div class="card mb-3">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div>
+                            <h5 class="card-title">
+                                ${template.name}
+                                ${template.is_active ? '<span class="badge bg-success ms-2">Ativo</span>' : '<span class="badge bg-secondary ms-2">Inativo</span>'}
+                            </h5>
+                            <p class="card-text text-muted">${template.description || 'Sem descrição'}</p>
+                            <p class="card-text"><small class="text-muted">Variáveis: ${(template.variables || []).join(', ') || 'Nenhuma'}</small></p>
+                            <pre class="bg-light p-2 rounded" style="max-height: 150px; overflow-y: auto;">${template.content}</pre>
+                        </div>
+                        <div class="d-flex gap-2">
+                            <button class="btn btn-sm btn-primary" onclick="editEvolutionApiTemplate(${template.id})">
+                                <i class="fas fa-edit"></i> Editar
+                            </button>
+                            <button class="btn btn-sm btn-danger" onclick="deleteEvolutionApiTemplate(${template.id}, '${template.name}')">
+                                <i class="fas fa-trash"></i> Excluir
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `).join('');
+    } catch (error) {
+        console.error('Erro ao carregar templates Evolution API:', error);
+        showAlert('Erro ao carregar templates Evolution API', 'danger');
+    }
+}
+
+function showCreateEvolutionApiTemplateForm() {
+    currentEvolutionApiTemplateId = null;
+    document.getElementById('evolutionApiTemplateFormTitle').textContent = 'Novo Template Evolution API';
+    document.getElementById('evolutionApiTemplateForm').reset();
+    document.getElementById('evolutionApiTemplateId').value = '';
+    document.getElementById('evolutionApiTemplateActive').checked = true;
+    document.getElementById('evolutionApiTemplateVariables').innerHTML = '<small>As variáveis serão detectadas automaticamente do conteúdo</small>';
+    document.getElementById('evolutionApiTemplateFormDiv').classList.remove('d-none');
+}
+
+function hideEvolutionApiTemplateForm() {
+    document.getElementById('evolutionApiTemplateFormDiv').classList.add('d-none');
+    currentEvolutionApiTemplateId = null;
+}
+
+async function editEvolutionApiTemplate(id) {
+    try {
+        const response = await fetch(`/api/evolution-api-templates/${id}`, {
+            headers: { 'Authorization': `Bearer ${getAuthToken()}` }
+        });
+        
+        if (!response.ok) {
+            throw new Error('Erro ao carregar template');
+        }
+        
+        const template = await response.json();
+        currentEvolutionApiTemplateId = template.id;
+        
+        document.getElementById('evolutionApiTemplateFormTitle').textContent = 'Editar Template Evolution API';
+        document.getElementById('evolutionApiTemplateId').value = template.id;
+        document.getElementById('evolutionApiTemplateName').value = template.name;
+        document.getElementById('evolutionApiTemplateDescription').value = template.description || '';
+        document.getElementById('evolutionApiTemplateContent').value = template.content;
+        document.getElementById('evolutionApiTemplateActive').checked = template.is_active;
+        
+        detectEvolutionApiTemplateVariables();
+        
+        document.getElementById('evolutionApiTemplateFormDiv').classList.remove('d-none');
+    } catch (error) {
+        console.error('Erro ao carregar template:', error);
+        showAlert('Erro ao carregar template', 'danger');
+    }
+}
+
+function detectEvolutionApiTemplateVariables() {
+    const content = document.getElementById('evolutionApiTemplateContent').value;
+    const variablesDiv = document.getElementById('evolutionApiTemplateVariables');
+    
+    const matches = content.match(/\{\{(\w+)\}\}/g);
+    if (matches) {
+        const uniqueVars = [...new Set(matches.map(m => m.replace(/\{\{|\}\}/g, '')))];
+        variablesDiv.innerHTML = `<small><strong>Variáveis detectadas:</strong> ${uniqueVars.join(', ') || 'Nenhuma'}</small>`;
+    } else {
+        variablesDiv.innerHTML = '<small>Nenhuma variável detectada</small>';
+    }
+}
+
+async function handleEvolutionApiTemplateSubmit(e) {
+    e.preventDefault();
+    
+    const formData = new FormData(e.target);
+    const templateData = {
+        name: formData.get('name'),
+        content: formData.get('content'),
+        description: formData.get('description'),
+        is_active: formData.get('is_active') === 'on'
+    };
+    
+    // Extrair variáveis do conteúdo
+    const matches = templateData.content.match(/\{\{(\w+)\}\}/g);
+    if (matches) {
+        templateData.variables = [...new Set(matches.map(m => m.replace(/\{\{|\}\}/g, '')))];
+    } else {
+        templateData.variables = [];
+    }
+    
+    try {
+        const url = currentEvolutionApiTemplateId 
+            ? `/api/evolution-api-templates/${currentEvolutionApiTemplateId}`
+            : '/api/evolution-api-templates';
+        
+        const method = currentEvolutionApiTemplateId ? 'PUT' : 'POST';
+        
+        const response = await fetch(url, {
+            method: method,
+            headers: {
+                'Authorization': `Bearer ${getAuthToken()}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(templateData)
+        });
+        
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.error || `Erro ${response.status}: ${response.statusText}`);
+        }
+        
+        const data = await response.json();
+        
+        const action = currentEvolutionApiTemplateId ? 'atualizado' : 'criado';
+        showAlert(`Template Evolution API ${action} com sucesso!`, 'success');
+        hideEvolutionApiTemplateForm();
+        await loadEvolutionApiTemplates();
+        
+    } catch (error) {
+        console.error('Erro ao salvar template Evolution API:', error);
+        showAlert('Erro ao salvar template: ' + error.message, 'danger');
+    }
+}
+
+async function deleteEvolutionApiTemplate(id, name) {
+    if (!confirm(`Tem certeza que deseja excluir o template "${name}"?`)) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/api/evolution-api-templates/${id}`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${getAuthToken()}` }
+        });
+        
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.error || 'Erro ao excluir template');
+        }
+        
+        showAlert('Template excluído com sucesso!', 'success');
+        await loadEvolutionApiTemplates();
+    } catch (error) {
+        console.error('Erro ao excluir template:', error);
+        showAlert('Erro ao excluir template: ' + error.message, 'danger');
+    }
+}

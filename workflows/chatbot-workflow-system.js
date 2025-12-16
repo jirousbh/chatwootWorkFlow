@@ -101,6 +101,12 @@ const CHATWOOT_ACCOUNT_ID = process.env.CHATWOOT_ACCOUNT_ID || '1'; // Mantido p
 const IA_AGENT_URL = process.env.IA_AGENT_URL || 'http://ia-agent-dev:3006';
 const IA_AGENT_PORT = process.env.IA_AGENT_PORT || '3006';
 
+// Configuração de delays para campanhas (em milissegundos)
+// API Oficial: 1 segundo - limite mais flexível da Meta
+// Evolution API: 2 segundos - mais conservador para evitar bloqueios
+const CAMPAIGN_DELAY_WHATSAPP_API = parseInt(process.env.CAMPAIGN_DELAY_WHATSAPP_API) || 1000; // 1 segundo
+const CAMPAIGN_DELAY_EVOLUTION_API = parseInt(process.env.CAMPAIGN_DELAY_EVOLUTION_API) || 5000; // 5 segundos
+
 // Cache de contas disponíveis
 let availableAccounts = [];
 let accountsCacheExpiry = 0;
@@ -851,6 +857,32 @@ async function initializeDatabase() {
     await pool.query(`
       CREATE INDEX IF NOT EXISTS idx_workflow_ai_agents_workflow 
       ON workflow_ai_agents(workflow_name);
+    `);
+
+    // NOVA: Tabela para templates Evolution API
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS evolution_api_templates (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(255) NOT NULL UNIQUE,
+        content TEXT NOT NULL,
+        variables JSONB DEFAULT '[]'::jsonb,
+        description TEXT,
+        is_active BOOLEAN DEFAULT true,
+        created_by INTEGER REFERENCES system_users(id),
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+
+    // Criar índices para templates Evolution API
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_evolution_api_templates_name 
+      ON evolution_api_templates(name);
+    `);
+    
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_evolution_api_templates_active 
+      ON evolution_api_templates(is_active);
     `);
 
     console.log('✅ Banco de dados inicializado com sucesso');
@@ -7288,30 +7320,51 @@ async function processCampaign(campaignId) {
       throw new Error('Caixa de entrada não encontrada');
     }
     
-    const config = inboxDetails.provider_config;
-    if (!config?.business_account_id || !config?.api_key || !config?.phone_number_id) {
-      throw new Error('Credenciais da API oficial do WhatsApp não configuradas para esta caixa');
-    }
-    
-    // Buscar template na API oficial do WhatsApp
+    // Verificar se é Evolution API (variável para a caixa de entrada)
+    const usingEvolutionAPI = isEvolutionAPIInbox(inboxDetails);
+    let evolutionApiTemplate = null;
+    let selectedTemplate = null;
     let templateLanguage = campaign.template_language || 'pt_BR';
-    const whatsappTemplatesResponse = await axios.get(
-      `https://graph.facebook.com/v23.0/${config.business_account_id}/message_templates`,
-      {
-        headers: { 'Authorization': `Bearer ${config.api_key}` },
-        params: { fields: 'name,status,category,language,components', limit: 100 }
+    
+    if (usingEvolutionAPI) {
+      // Buscar template Evolution API do banco de dados
+      console.log(`🔄 Campanha usando Evolution API - Buscando template: ${campaign.template_name}`);
+      const templateResult = await pool.query(
+        'SELECT * FROM evolution_api_templates WHERE name = $1 AND is_active = true',
+        [campaign.template_name]
+      );
+      
+      if (templateResult.rows.length === 0) {
+        throw new Error(`Template Evolution API '${campaign.template_name}' não encontrado ou inativo`);
       }
-    );
-    
-    const templates = (whatsappTemplatesResponse.data.data || []).filter(t => t.status === 'APPROVED');
-    const selectedTemplate = templates.find(t => t.name === campaign.template_name);
-    
-    if (!selectedTemplate) {
-      throw new Error(`Template '${campaign.template_name}' não encontrado ou não aprovado`);
+      
+      evolutionApiTemplate = templateResult.rows[0];
+      console.log(`📋 Template Evolution API encontrado: ${evolutionApiTemplate.name}`);
+    } else {
+      // Buscar template na API oficial do WhatsApp
+      const config = inboxDetails.provider_config;
+      if (!config?.business_account_id || !config?.api_key || !config?.phone_number_id) {
+        throw new Error('Credenciais da API oficial do WhatsApp não configuradas para esta caixa');
+      }
+      
+      const whatsappTemplatesResponse = await axios.get(
+        `https://graph.facebook.com/v23.0/${config.business_account_id}/message_templates`,
+        {
+          headers: { 'Authorization': `Bearer ${config.api_key}` },
+          params: { fields: 'name,status,category,language,components', limit: 100 }
+        }
+      );
+      
+      const templates = (whatsappTemplatesResponse.data.data || []).filter(t => t.status === 'APPROVED');
+      selectedTemplate = templates.find(t => t.name === campaign.template_name);
+      
+      if (!selectedTemplate) {
+        throw new Error(`Template '${campaign.template_name}' não encontrado ou não aprovado`);
+      }
+      
+      templateLanguage = selectedTemplate.language || templateLanguage;
+      console.log(`📋 Template encontrado: ${campaign.template_name} (${templateLanguage})`);
     }
-    
-    templateLanguage = selectedTemplate.language || templateLanguage;
-    console.log(`📋 Template encontrado: ${campaign.template_name} (${templateLanguage})`);
     
     // Inserir registros iniciais nas tabelas de controle
     console.log(`📝 Criando registros de controle para ${contacts.length} contatos...`);
@@ -7401,77 +7454,173 @@ async function processCampaign(campaignId) {
           // Ignorar erro de busca de conversa, não é crítico
         }
         
-        // Montar payload para API oficial do WhatsApp
-        const bodyComponent = selectedTemplate.components?.find(c => c.type === 'BODY');
+        // Processar envio baseado no tipo de API
+        let sendResponse = null;
+        let messageId = null;
         
-        console.log(`[INFO] Template text: ${bodyComponent?.text}`);
-        console.log(`[INFO] Template example:`, JSON.stringify(bodyComponent?.example, null, 2));
-        
-        const paramValues = [contact.name || 'Cliente', contact.phone || '', campaign.name || '', new Date().toLocaleDateString(templateLanguage === 'pt_BR' ? 'pt-BR' : 'en-US')];
-        const parameters = [];
-        
-        // Verificar se template tem parâmetros nomeados ou numerados
-        if (bodyComponent && bodyComponent.text) {
-          // Primeiro verificar se há parâmetros nomeados na estrutura example
-          if (bodyComponent.example && bodyComponent.example.body_text_named_params) {
-            // Template com parâmetros nomeados - usar estrutura com parameter_name
-            bodyComponent.example.body_text_named_params.forEach((namedParam, index) => {
-              parameters.push({
-                type: 'text',
-                parameter_name: namedParam.param_name,
-                text: paramValues[index] || ''
-              });
-            });
-            console.log(`[INFO] Using named parameters structure, count: ${parameters.length}`);
-          } else {
-            // Template com parâmetros numerados ou sem exemplo específico
-            const numberedParams = bodyComponent.text.match(/\{\{\d+\}\}/g) || [];
-            const namedParams = bodyComponent.text.match(/\{\{[a-zA-Z_][a-zA-Z0-9_]*\}\}/g) || [];
-            const totalParams = Math.max(numberedParams.length, namedParams.length);
+        if (usingEvolutionAPI) {
+          // ===== ENVIO VIA EVOLUTION API =====
+          // Nota: Enviamos via Chatwoot que já está configurado para repassar para Evolution API
+          // Não precisamos do webhook_url, pois o Chatwoot gerencia a comunicação
+          
+          // Substituir variáveis no template
+          let messageContent = evolutionApiTemplate.content;
+          const variables = evolutionApiTemplate.variables || [];
+          
+          // Valores padrão para variáveis comuns
+          const variableValues = {
+            nome: contact.name || 'Cliente',
+            telefone: contact.phone || '',
+            campanha: campaign.name || '',
+            data: new Date().toLocaleDateString('pt-BR'),
+            hora: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+          };
+          
+          // Substituir variáveis no formato {{variavel}}
+          messageContent = messageContent.replace(/\{\{(\w+)\}\}/g, (match, varName) => {
+            const key = varName.toLowerCase();
+            return variableValues[key] || match;
+          });
+          
+          console.log(`🔄 Enviando via Evolution API para ${normalizedPhone}: ${messageContent.substring(0, 50)}...`);
+          
+          // Enviar mensagem via Evolution API (via Chatwoot que repassa para Evolution API)
+          // O Evolution API funciona através do Chatwoot, então usamos a API do Chatwoot
+          // Primeiro, criar ou obter conversa
+          if (!conversationId) {
+            // Buscar contato no Chatwoot
+            const contactResponse = await axios.get(
+              `${CHATWOOT_BASE_URL}/api/v1/accounts/${campaign.chatwoot_account_id}/contacts/search`,
+              {
+                headers: { 'api_access_token': CHATWOOT_API_TOKEN },
+                params: { q: normalizedPhone }
+              }
+            );
             
-            for (let i = 0; i < totalParams; i++) {
-              parameters.push({ 
-                type: 'text', 
-                text: paramValues[i] || '' 
-              });
+            let chatwootContactId = null;
+            if (contactResponse.data?.payload?.length > 0) {
+              chatwootContactId = contactResponse.data.payload[0].id;
+            } else {
+              // Criar contato se não existir
+              const createContactResponse = await axios.post(
+                `${CHATWOOT_BASE_URL}/api/v1/accounts/${campaign.chatwoot_account_id}/contacts`,
+                {
+                  phone_number: normalizedPhone,
+                  name: contact.name || 'Cliente'
+                },
+                { headers: { 'api_access_token': CHATWOOT_API_TOKEN } }
+              );
+              chatwootContactId = createContactResponse.data?.payload?.id;
             }
-            console.log(`[INFO] Using positional parameters, count: ${totalParams}`);
+            
+            if (chatwootContactId) {
+              // Criar conversa
+              const createConvResponse = await axios.post(
+                `${CHATWOOT_BASE_URL}/api/v1/accounts/${campaign.chatwoot_account_id}/conversations`,
+                {
+                  source_id: chatwootContactId,
+                  inbox_id: campaign.chatwoot_inbox_id
+                },
+                { headers: { 'api_access_token': CHATWOOT_API_TOKEN } }
+              );
+              conversationId = createConvResponse.data?.id;
+            }
           }
+          
+          if (conversationId) {
+            // Enviar mensagem via Chatwoot (que repassa para Evolution API)
+            const chatwootMessageResponse = await axios.post(
+              `${CHATWOOT_BASE_URL}/api/v1/accounts/${campaign.chatwoot_account_id}/conversations/${conversationId}/messages`,
+              {
+                content: messageContent,
+                message_type: 'outgoing'
+              },
+              { headers: { 'api_access_token': CHATWOOT_API_TOKEN } }
+            );
+            
+            messageId = chatwootMessageResponse.data?.id?.toString() || `evo-${Date.now()}`;
+            sendResponse = { data: { messages: [{ id: messageId }] } };
+          } else {
+            throw new Error('Não foi possível criar ou encontrar conversa para envio via Evolution API');
+          }
+          
+          console.log(`✅ Mensagem enviada via Evolution API para ${normalizedPhone} (${contact.name})`);
+        } else {
+          // ===== ENVIO VIA API OFICIAL DO WHATSAPP =====
+          const config = inboxDetails.provider_config;
+          
+          // Montar payload para API oficial do WhatsApp
+          const bodyComponent = selectedTemplate.components?.find(c => c.type === 'BODY');
+          
+          console.log(`[INFO] Template text: ${bodyComponent?.text}`);
+          console.log(`[INFO] Template example:`, JSON.stringify(bodyComponent?.example, null, 2));
+          
+          const paramValues = [contact.name || 'Cliente', contact.phone || '', campaign.name || '', new Date().toLocaleDateString(templateLanguage === 'pt_BR' ? 'pt-BR' : 'en-US')];
+          const parameters = [];
+          
+          // Verificar se template tem parâmetros nomeados ou numerados
+          if (bodyComponent && bodyComponent.text) {
+            // Primeiro verificar se há parâmetros nomeados na estrutura example
+            if (bodyComponent.example && bodyComponent.example.body_text_named_params) {
+              // Template com parâmetros nomeados - usar estrutura com parameter_name
+              bodyComponent.example.body_text_named_params.forEach((namedParam, index) => {
+                parameters.push({
+                  type: 'text',
+                  parameter_name: namedParam.param_name,
+                  text: paramValues[index] || ''
+                });
+              });
+              console.log(`[INFO] Using named parameters structure, count: ${parameters.length}`);
+            } else {
+              // Template com parâmetros numerados ou sem exemplo específico
+              const numberedParams = bodyComponent.text.match(/\{\{\d+\}\}/g) || [];
+              const namedParams = bodyComponent.text.match(/\{\{[a-zA-Z_][a-zA-Z0-9_]*\}\}/g) || [];
+              const totalParams = Math.max(numberedParams.length, namedParams.length);
+              
+              for (let i = 0; i < totalParams; i++) {
+                parameters.push({ 
+                  type: 'text', 
+                  text: paramValues[i] || '' 
+                });
+              }
+              console.log(`[INFO] Using positional parameters, count: ${totalParams}`);
+            }
+          }
+          
+          const bodyComponentObj = { type: 'body' };
+          if (parameters.length > 0) {
+            bodyComponentObj.parameters = parameters;
+          }
+          
+          const payload = {
+            messaging_product: 'whatsapp',
+            to: normalizedPhone,
+            type: 'template',
+            template: {
+              name: campaign.template_name,
+              language: { code: templateLanguage },
+              components: [bodyComponentObj]
+            }
+          };
+          
+          // Enviar mensagem via API oficial do WhatsApp
+          sendResponse = await axios.post(
+            `https://graph.facebook.com/v23.0/${config.phone_number_id}/messages`,
+            payload,
+            { headers: { Authorization: `Bearer ${config.api_key}` } }
+          );
+          
+          messageId = sendResponse.data.messages?.[0]?.id || null;
+          console.log(`✅ Mensagem enviada para ${normalizedPhone} (${contact.name})`);
+          console.log("Resposta da api do whatsapp: ",JSON.stringify(sendResponse.data, null, 2));
         }
         
-        //console.log(`[INFO] Final parameters:`, JSON.stringify(parameters, null, 2));
-        
-        const bodyComponentObj = { type: 'body' };
-        if (parameters.length > 0) {
-          bodyComponentObj.parameters = parameters;
-        }
-        
-        const payload = {
-          messaging_product: 'whatsapp',
-          to: normalizedPhone,
-          type: 'template',
-          template: {
-            name: campaign.template_name,
-            language: { code: templateLanguage },
-            components: [bodyComponentObj]
-          }
-        };
-        
-        // Enviar mensagem via API oficial do WhatsApp
-        const sendResponse = await axios.post(
-          `https://graph.facebook.com/v23.0/${config.phone_number_id}/messages`,
-          payload,
-          { headers: { Authorization: `Bearer ${config.api_key}` } }
-        );
-        
-        console.log(`✅ Mensagem enviada para ${normalizedPhone} (${contact.name})`);
-        console.log("Resposta da api do whatsapp: ",JSON.stringify(sendResponse.data, null, 2));
         successCount++;
         
         // Atualizar status de sucesso
         await pool.query(
           'UPDATE campaign_status SET status = $1, message_id = $2, error_message = NULL, sent_at = NOW() WHERE campaign_id = $3 AND contact_id = $4',
-          ['sent', sendResponse.data.messages?.[0]?.id || null, campaignId, contact.id]
+          ['sent', messageId, campaignId, contact.id]
         );
         
         await pool.query(
@@ -7499,8 +7648,15 @@ async function processCampaign(campaignId) {
         );
       }
       
-      // Pequena pausa entre envios para evitar rate limiting
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // Delay entre envios para evitar rate limiting
+      // Usar delay maior para Evolution API (mais conservador)
+      const delay = usingEvolutionAPI ? CAMPAIGN_DELAY_EVOLUTION_API : CAMPAIGN_DELAY_WHATSAPP_API;
+      
+      if (contact !== contacts[contacts.length - 1]) { // Não fazer delay após o último contato
+        const delaySeconds = (delay / 1000).toFixed(1);
+        console.log(`⏳ Aguardando ${delaySeconds}s antes do próximo envio (${usingEvolutionAPI ? 'Evolution API' : 'WhatsApp API'})...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
     }
     
     // Atualizar status final da campanha
@@ -7528,9 +7684,41 @@ async function processCampaign(campaignId) {
 // Criar campanha (por tag ou CSV)
 app.post('/api/campaigns', authenticateToken, authorizeAccount, async (req, res) => {
   try {
-    const { name, type, tag_name, template_name, scheduled_at, chatwoot_account_id, chatwoot_inbox_id } = req.body;
+    const { name, type, tag_name, template_name, scheduled_at, chatwoot_account_id, chatwoot_inbox_id, use_evolution_api } = req.body;
     if (!name || !type || !template_name || !chatwoot_account_id || !chatwoot_inbox_id) {
       return res.status(400).json({ error: 'Campos obrigatórios ausentes' });
+    }
+    
+    // Verificar se é campanha Evolution API - apenas admins podem criar
+    if (use_evolution_api && req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Apenas administradores podem criar campanhas com Evolution API' });
+    }
+    
+    // Verificar se a caixa de entrada é Evolution API quando use_evolution_api é true
+    if (use_evolution_api) {
+      try {
+        const inboxResponse = await axios.get(`${CHATWOOT_BASE_URL}/api/v1/accounts/${chatwoot_account_id}/inboxes/${chatwoot_inbox_id}`, {
+          headers: { 'api_access_token': CHATWOOT_API_TOKEN }
+        });
+        
+        const inboxDetails = inboxResponse.data.payload || inboxResponse.data;
+        if (!isEvolutionAPIInbox(inboxDetails)) {
+          return res.status(400).json({ error: 'A caixa de entrada selecionada não é Evolution API' });
+        }
+        
+        // Verificar se o template Evolution API existe
+        const templateResult = await pool.query(
+          'SELECT * FROM evolution_api_templates WHERE name = $1 AND is_active = true',
+          [template_name]
+        );
+        
+        if (templateResult.rows.length === 0) {
+          return res.status(400).json({ error: `Template Evolution API '${template_name}' não encontrado ou inativo` });
+        }
+      } catch (inboxError) {
+        console.error('Erro ao validar caixa Evolution API:', inboxError);
+        return res.status(400).json({ error: 'Erro ao validar caixa de entrada Evolution API' });
+      }
     }
     
     // Log para debug do scheduled_at
@@ -8568,6 +8756,173 @@ app.get('/api/campaigns/:id/execution-stats', authenticateToken, async (req, res
   } catch (error) {
     console.error('Erro ao calcular estatísticas de execução:', error);
     res.status(500).json({ error: 'Erro ao calcular estatísticas de execução' });
+  }
+});
+
+// ===== ROTAS CRUD DE TEMPLATES EVOLUTION API (APENAS ADMIN) =====
+
+// Listar todos os templates Evolution API
+app.get('/api/evolution-api-templates', authenticateToken, async (req, res) => {
+  try {
+    // Verificar se é admin
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Acesso restrito a administradores' });
+    }
+    
+    const { active_only } = req.query;
+    let query = 'SELECT * FROM evolution_api_templates';
+    const params = [];
+    
+    if (active_only === 'true') {
+      query += ' WHERE is_active = true';
+    }
+    
+    query += ' ORDER BY created_at DESC';
+    
+    const result = await pool.query(query, params);
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Erro ao listar templates Evolution API:', error);
+    res.status(500).json({ error: 'Erro ao listar templates' });
+  }
+});
+
+// Obter template Evolution API por ID
+app.get('/api/evolution-api-templates/:id', authenticateToken, async (req, res) => {
+  try {
+    // Verificar se é admin
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Acesso restrito a administradores' });
+    }
+    
+    const { id } = req.params;
+    const result = await pool.query('SELECT * FROM evolution_api_templates WHERE id = $1', [id]);
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Template não encontrado' });
+    }
+    
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Erro ao obter template Evolution API:', error);
+    res.status(500).json({ error: 'Erro ao obter template' });
+  }
+});
+
+// Criar novo template Evolution API
+app.post('/api/evolution-api-templates', authenticateToken, async (req, res) => {
+  try {
+    // Verificar se é admin
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Acesso restrito a administradores' });
+    }
+    
+    const { name, content, variables, description, is_active } = req.body;
+    
+    if (!name || !content) {
+      return res.status(400).json({ error: 'Nome e conteúdo são obrigatórios' });
+    }
+    
+    // Extrair variáveis do conteúdo se não fornecidas
+    let extractedVariables = variables || [];
+    if (!variables || variables.length === 0) {
+      const variableMatches = content.match(/\{\{(\w+)\}\}/g);
+      if (variableMatches) {
+        extractedVariables = [...new Set(variableMatches.map(v => v.replace(/\{\{|\}\}/g, '')))];
+      }
+    }
+    
+    const result = await pool.query(
+      `INSERT INTO evolution_api_templates (name, content, variables, description, is_active, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      [name, content, JSON.stringify(extractedVariables), description || null, is_active !== false, req.user.id]
+    );
+    
+    console.log(`✅ Template Evolution API criado: ${name} (ID: ${result.rows[0].id})`);
+    res.json({ success: true, template: result.rows[0] });
+  } catch (error) {
+    console.error('Erro ao criar template Evolution API:', error);
+    if (error.message.includes('unique constraint')) {
+      return res.status(400).json({ error: 'Já existe um template com este nome' });
+    }
+    res.status(500).json({ error: 'Erro ao criar template' });
+  }
+});
+
+// Atualizar template Evolution API
+app.put('/api/evolution-api-templates/:id', authenticateToken, async (req, res) => {
+  try {
+    // Verificar se é admin
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Acesso restrito a administradores' });
+    }
+    
+    const { id } = req.params;
+    const { name, content, variables, description, is_active } = req.body;
+    
+    // Verificar se template existe
+    const existing = await pool.query('SELECT * FROM evolution_api_templates WHERE id = $1', [id]);
+    if (existing.rows.length === 0) {
+      return res.status(404).json({ error: 'Template não encontrado' });
+    }
+    
+    // Extrair variáveis do conteúdo se não fornecidas
+    let extractedVariables = variables;
+    if (!variables && content) {
+      const variableMatches = content.match(/\{\{(\w+)\}\}/g);
+      if (variableMatches) {
+        extractedVariables = [...new Set(variableMatches.map(v => v.replace(/\{\{|\}\}/g, '')))];
+      } else {
+        extractedVariables = [];
+      }
+    }
+    
+    const result = await pool.query(
+      `UPDATE evolution_api_templates 
+       SET name = COALESCE($1, name),
+           content = COALESCE($2, content),
+           variables = COALESCE($3::jsonb, variables),
+           description = COALESCE($4, description),
+           is_active = COALESCE($5, is_active),
+           updated_at = NOW()
+       WHERE id = $6 RETURNING *`,
+      [name, content, extractedVariables ? JSON.stringify(extractedVariables) : null, description, is_active, id]
+    );
+    
+    console.log(`✅ Template Evolution API atualizado: ${result.rows[0].name} (ID: ${id})`);
+    res.json({ success: true, template: result.rows[0] });
+  } catch (error) {
+    console.error('Erro ao atualizar template Evolution API:', error);
+    if (error.message.includes('unique constraint')) {
+      return res.status(400).json({ error: 'Já existe um template com este nome' });
+    }
+    res.status(500).json({ error: 'Erro ao atualizar template' });
+  }
+});
+
+// Deletar template Evolution API
+app.delete('/api/evolution-api-templates/:id', authenticateToken, async (req, res) => {
+  try {
+    // Verificar se é admin
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Acesso restrito a administradores' });
+    }
+    
+    const { id } = req.params;
+    
+    // Verificar se template existe
+    const existing = await pool.query('SELECT * FROM evolution_api_templates WHERE id = $1', [id]);
+    if (existing.rows.length === 0) {
+      return res.status(404).json({ error: 'Template não encontrado' });
+    }
+    
+    await pool.query('DELETE FROM evolution_api_templates WHERE id = $1', [id]);
+    
+    console.log(`✅ Template Evolution API deletado: ${existing.rows[0].name} (ID: ${id})`);
+    res.json({ success: true, message: 'Template deletado com sucesso' });
+  } catch (error) {
+    console.error('Erro ao deletar template Evolution API:', error);
+    res.status(500).json({ error: 'Erro ao deletar template' });
   }
 });
 

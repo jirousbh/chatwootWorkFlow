@@ -438,6 +438,132 @@
         </div>
     </div>
 
+    <!-- Evolution API Templates Manager Div -->
+    <div id="evolutionApiTemplatesManagerDiv" class="d-none position-fixed top-0 start-0 w-100 h-100 bg-white p-4 overflow-auto" style="z-index: 9999;">
+        <div class="container">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h3><i class="fas fa-code me-2"></i>Gerenciamento de Templates Evolution API</h3>
+                <button class="btn btn-secondary" id="closeEvolutionApiTemplatesManager">
+                    <i class="fas fa-times"></i> Fechar
+                </button>
+            </div>
+            
+            <!-- Botão para criar novo template -->
+            <div class="mb-4">
+                <button class="btn btn-success" onclick="showCreateEvolutionApiTemplateForm()">
+                    <i class="fas fa-plus me-2"></i>Novo Template Evolution API
+                </button>
+            </div>
+            
+            <!-- Lista de templates -->
+            <div class="card">
+                <div class="card-header">
+                    <h6 class="mb-0">
+                        <i class="fas fa-list me-2"></i>Templates Evolution API Cadastrados
+                    </h6>
+                </div>
+                <div class="card-body">
+                    <div id="evolutionApiTemplatesList">
+                        <div class="text-center">
+                            <div class="spinner-border" role="status">
+                                <span class="visually-hidden">Carregando...</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Evolution API Template Form Div -->
+    <div id="evolutionApiTemplateFormDiv" class="d-none position-fixed top-0 start-0 w-100 h-100 bg-white p-4 overflow-auto" style="z-index: 9999;">
+        <div class="container">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h3 id="evolutionApiTemplateFormTitle"><i class="fas fa-code me-2"></i>Novo Template Evolution API</h3>
+                <button class="btn btn-secondary" onclick="hideEvolutionApiTemplateForm()">
+                    <i class="fas fa-times"></i> Fechar
+                </button>
+            </div>
+            
+            <form id="evolutionApiTemplateForm">
+                <input type="hidden" id="evolutionApiTemplateId" name="id">
+                
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="card">
+                            <div class="card-header">
+                                <h6 class="mb-0">Informações Básicas</h6>
+                            </div>
+                            <div class="card-body">
+                                <div class="mb-3">
+                                    <label for="evolutionApiTemplateName" class="form-label">Nome do Template *</label>
+                                    <input type="text" class="form-control" id="evolutionApiTemplateName" name="name" required 
+                                           placeholder="ex: boas_vindas, promocao_especial">
+                                    <small class="form-text text-muted">
+                                        Nome único para identificar o template (sem espaços, use underscore)
+                                    </small>
+                                </div>
+                                
+                                <div class="mb-3">
+                                    <label for="evolutionApiTemplateDescription" class="form-label">Descrição</label>
+                                    <textarea class="form-control" id="evolutionApiTemplateDescription" name="description" rows="3" 
+                                              placeholder="Descrição do template..."></textarea>
+                                </div>
+                                
+                                <div class="mb-3">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="evolutionApiTemplateActive" name="is_active" checked>
+                                        <label class="form-check-label" for="evolutionApiTemplateActive">
+                                            Template ativo
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-6">
+                        <div class="card">
+                            <div class="card-header">
+                                <h6 class="mb-0">Conteúdo do Template</h6>
+                            </div>
+                            <div class="card-body">
+                                <div class="mb-3">
+                                    <label for="evolutionApiTemplateContent" class="form-label">Mensagem *</label>
+                                    <textarea class="form-control" id="evolutionApiTemplateContent" name="content" rows="10" required 
+                                              placeholder="Olá {{nome}}! Esta é uma mensagem de teste. Seu telefone é {{telefone}}."></textarea>
+                                    <small class="form-text text-muted">
+                                        Use {{variavel}} para variáveis. Variáveis disponíveis: nome, telefone, campanha, data, hora
+                                    </small>
+                                </div>
+                                
+                                <div class="mb-3">
+                                    <label class="form-label">Variáveis Detectadas</label>
+                                    <div id="evolutionApiTemplateVariables" class="alert alert-info">
+                                        <small>As variáveis serão detectadas automaticamente do conteúdo</small>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="row mt-4">
+                    <div class="col-12">
+                        <div class="d-flex gap-2">
+                            <button type="submit" class="btn btn-primary" id="saveEvolutionApiTemplateBtn">
+                                <i class="fas fa-save me-2"></i>Salvar Template
+                            </button>
+                            <button type="button" class="btn btn-secondary" onclick="hideEvolutionApiTemplateForm()">
+                                <i class="fas fa-times me-2"></i>Cancelar
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <!-- Provider Form Div -->
     <div id="providerFormDiv" class="d-none position-fixed top-0 start-0 w-100 h-100 bg-white p-4 overflow-auto" style="z-index: 9999;">
         <div class="container">
@@ -584,6 +710,7 @@
                             <li><a class="dropdown-item text-dark" href="#" onclick="showChangePasswordDiv()"><i class="fas fa-key me-2"></i>Mudar senha</a></li>
                             <li id="menuGerenciarUsuariosItem" class="d-none"><a class="dropdown-item text-dark" href="#" onclick="window.app.showUserManagement()"><i class="fas fa-users me-2"></i>Gerenciar Usuários</a></li>
                             <li id="menuGerenciarProvedoresItem" class="d-none"><a class="dropdown-item text-dark" href="#" onclick="window.app.showProviderManagement()"><i class="fas fa-server me-2"></i>Gerenciar Provedores IA</a></li>
+                            <li id="menuGerenciarEvolutionApiTemplatesItem" class="d-none"><a class="dropdown-item text-dark" href="#" onclick="showEvolutionApiTemplatesManager()"><i class="fas fa-code me-2"></i>Gerenciar Templates Evolution API</a></li>
                             <li><hr class="dropdown-divider"></li>
                             <li><a class="dropdown-item text-danger" href="#" onclick="logout()"><i class="fas fa-sign-out-alt me-2"></i>Sair</a></li>
                         </ul>
