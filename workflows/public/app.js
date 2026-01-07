@@ -3319,8 +3319,16 @@ class ChatwootWorkflowsApp {
 
     // Carregar templates para o formulário unificado
     async loadUnifiedTemplates(accountId = null, inboxId = null) {
-        try {
-            console.log('🔍 Carregando templates do WhatsApp para formulário unificado...');
+        // Prevenir execuções simultâneas
+        if (this._loadingTemplates) {
+            console.log('⏳ Carregamento de templates já em andamento, aguardando...');
+            await this._loadingTemplates;
+            return;
+        }
+        
+        this._loadingTemplates = (async () => {
+            try {
+                console.log('🔍 Carregando templates do WhatsApp para formulário unificado...');
             
             // Se não foram passados, obter dos selects do dashboard
             if (!accountId || !inboxId) {
@@ -3340,7 +3348,16 @@ class ChatwootWorkflowsApp {
                 return;
             }
             
-            select.innerHTML = '<option value="">Selecione um modelo</option>';
+            // Limpar completamente o select antes de adicionar novos templates
+            // Remover todos os optgroups e options
+            select.innerHTML = '';
+            const defaultOption = document.createElement('option');
+            defaultOption.value = '';
+            defaultOption.textContent = 'Selecione um modelo';
+            select.appendChild(defaultOption);
+            
+            // Conjunto para rastrear templates já adicionados (evitar duplicatas)
+            const addedTemplates = new Set();
             
             // Verificar se é Evolution API (apenas para admins)
             let isEvolutionAPI = false;
@@ -3383,18 +3400,50 @@ class ChatwootWorkflowsApp {
                     if (evoResponse.ok) {
                         const evoTemplates = await evoResponse.json();
                         if (evoTemplates.length > 0) {
-                            const evoOptgroup = document.createElement('optgroup');
-                            evoOptgroup.label = `🔄 Evolution API Templates (${evoTemplates.length})`;
-                            evoTemplates.forEach(template => {
-                                const option = document.createElement('option');
-                                option.value = template.name;
-                                option.textContent = template.name;
-                                option.dataset.evolutionApi = 'true';
-                                option.title = `Template Evolution API | Variáveis: ${(template.variables || []).join(', ') || 'Nenhuma'}`;
-                                evoOptgroup.appendChild(option);
+                            // Filtrar templates duplicados
+                            const uniqueEvoTemplates = evoTemplates.filter(template => {
+                                if (addedTemplates.has(template.name)) {
+                                    console.warn(`⚠️ Template Evolution API duplicado ignorado: ${template.name}`);
+                                    return false;
+                                }
+                                addedTemplates.add(template.name);
+                                return true;
                             });
-                            select.appendChild(evoOptgroup);
-                            console.log(`✅ ${evoTemplates.length} templates Evolution API carregados`);
+                            
+                            if (uniqueEvoTemplates.length > 0) {
+                                // Verificar se já existe um optgroup Evolution API (evitar duplicatas)
+                                const existingEvoOptgroup = Array.from(select.querySelectorAll('optgroup')).find(
+                                    og => og.label.includes('Evolution API Templates')
+                                );
+                                
+                                if (existingEvoOptgroup) {
+                                    console.warn('⚠️ Optgroup Evolution API já existe, removendo anterior...');
+                                    existingEvoOptgroup.remove();
+                                }
+                                
+                                const evoOptgroup = document.createElement('optgroup');
+                                evoOptgroup.label = `🔄 Evolution API Templates (${uniqueEvoTemplates.length})`;
+                                uniqueEvoTemplates.forEach(template => {
+                                    // Verificar se a option já existe
+                                    const existingOption = Array.from(select.querySelectorAll('option')).find(
+                                        opt => opt.value === template.name && opt.dataset.evolutionApi === 'true'
+                                    );
+                                    
+                                    if (!existingOption) {
+                                        const option = document.createElement('option');
+                                        option.value = template.name;
+                                        option.textContent = template.name;
+                                        option.dataset.evolutionApi = 'true';
+                                        option.title = `Template Evolution API | Variáveis: ${(template.variables || []).join(', ') || 'Nenhuma'}`;
+                                        evoOptgroup.appendChild(option);
+                                    }
+                                });
+                                
+                                if (evoOptgroup.children.length > 0) {
+                                    select.appendChild(evoOptgroup);
+                                    console.log(`✅ ${evoOptgroup.children.length} templates Evolution API carregados (${evoTemplates.length - uniqueEvoTemplates.length} duplicados removidos)`);
+                                }
+                            }
                         } else {
                             const option = document.createElement('option');
                             option.value = '';
@@ -3442,29 +3491,65 @@ class ChatwootWorkflowsApp {
             console.log('📋 Templates recebidos:', templates);
             
             if (Array.isArray(templates) && templates.length > 0) {
-                // Mostrar templates da API oficial
-                const inboxSpecificTemplates = templates.filter(t => t.inboxId);
-                let label = `🚀 API Oficial WhatsApp (${templates.length})`;
-                if (inboxSpecificTemplates.length > 0) {
-                    const inboxName = inboxSpecificTemplates[0].inboxName;
-                    label = `🚀 ${inboxName} - API Oficial (${templates.length})`;
-                }
-                const optgroup = document.createElement('optgroup');
-                optgroup.label = label;
-                templates.forEach(template => {
-                    const option = document.createElement('option');
-                    option.value = template.name;
-                    option.textContent = template.displayName || template.name;
-                    const sourceText = template.inboxName ? `Caixa: ${template.inboxName}` : 'API Oficial';
-                    option.title = `Fonte: ${sourceText} | Status: ${template.status} | Categoria: ${template.category} | Idioma: ${template.language}`;
-                    optgroup.appendChild(option);
+                // Filtrar templates duplicados
+                const uniqueTemplates = templates.filter(template => {
+                    if (addedTemplates.has(template.name)) {
+                        console.warn(`⚠️ Template WhatsApp API duplicado ignorado: ${template.name}`);
+                        return false;
+                    }
+                    addedTemplates.add(template.name);
+                    return true;
                 });
-                select.appendChild(optgroup);
-                // Mostrar indicador se templates são específicos de uma caixa
-                if (inboxSpecificTemplates.length > 0) {
-                    this.showInboxTemplateIndicator(inboxSpecificTemplates[0].inboxName, templates.length);
+                
+                if (uniqueTemplates.length > 0) {
+                    // Verificar se já existe um optgroup WhatsApp API (evitar duplicatas)
+                    const existingWhatsAppOptgroup = Array.from(select.querySelectorAll('optgroup')).find(
+                        og => og.label.includes('API Oficial WhatsApp') || og.label.includes('API Oficial')
+                    );
+                    
+                    if (existingWhatsAppOptgroup) {
+                        console.warn('⚠️ Optgroup WhatsApp API já existe, removendo anterior...');
+                        existingWhatsAppOptgroup.remove();
+                    }
+                    
+                    // Mostrar templates da API oficial
+                    const inboxSpecificTemplates = uniqueTemplates.filter(t => t.inboxId);
+                    let label = `🚀 API Oficial WhatsApp (${uniqueTemplates.length})`;
+                    if (inboxSpecificTemplates.length > 0) {
+                        const inboxName = inboxSpecificTemplates[0].inboxName;
+                        label = `🚀 ${inboxName} - API Oficial (${uniqueTemplates.length})`;
+                    }
+                    const optgroup = document.createElement('optgroup');
+                    optgroup.label = label;
+                    uniqueTemplates.forEach(template => {
+                        // Verificar se a option já existe
+                        const existingOption = Array.from(select.querySelectorAll('option')).find(
+                            opt => opt.value === template.name && !opt.dataset.evolutionApi
+                        );
+                        
+                        if (!existingOption) {
+                            const option = document.createElement('option');
+                            option.value = template.name;
+                            option.textContent = template.displayName || template.name;
+                            const sourceText = template.inboxName ? `Caixa: ${template.inboxName}` : 'API Oficial';
+                            option.title = `Fonte: ${sourceText} | Status: ${template.status} | Categoria: ${template.category} | Idioma: ${template.language}`;
+                            optgroup.appendChild(option);
+                        }
+                    });
+                    
+                    if (optgroup.children.length > 0) {
+                        select.appendChild(optgroup);
+                    }
+                    
+                    // Mostrar indicador se templates são específicos de uma caixa
+                    if (inboxSpecificTemplates.length > 0) {
+                        this.showInboxTemplateIndicator(inboxSpecificTemplates[0].inboxName, uniqueTemplates.length);
+                    }
+                    
+                    console.log(`✅ ${uniqueTemplates.length} templates WhatsApp API carregados (${templates.length - uniqueTemplates.length} duplicados removidos)`);
+                } else {
+                    console.warn('⚠️ Todos os templates foram filtrados como duplicados');
                 }
-                console.log(`✅ ${templates.length} templates carregados com sucesso`);
             } else {
                 // Só mostrar erro se não for Evolution API ou não for admin
                 console.warn('⚠️ Nenhum template encontrado');
@@ -3483,8 +3568,14 @@ class ChatwootWorkflowsApp {
                 select.innerHTML = '<option value="">Erro ao carregar templates - Verifique as credenciais da API oficial e clique em Sincronizar</option>';
             }
             
-            this.showAlert('Erro ao carregar modelos de mensagem. Verifique as credenciais da API oficial e tente sincronizar os templates.', 'danger');
-        }
+                this.showAlert('Erro ao carregar modelos de mensagem. Verifique as credenciais da API oficial e tente sincronizar os templates.', 'danger');
+            } finally {
+                // Limpar flag de carregamento
+                this._loadingTemplates = null;
+            }
+        })();
+        
+        await this._loadingTemplates;
     }
 
     // Mostrar indicador de templates específicos da caixa
